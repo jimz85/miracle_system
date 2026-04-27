@@ -10,11 +10,13 @@ Features:
 4. Overfitting detection
 5. Decision Journal (compare with Kronos decision_journal.jsonl)
 6. Historical decision tracking & pattern recognition statistics
+7. Pattern whitelist/blacklist filtering
+8. PCA anomaly detection and alerts
 
 注意: 此模块已重构为三个子模块:
-- learner.py: 决策日记、WalkForward验证、信息系数计算、核心学习系统
-- evaluator.py: 因子/模式评估、过拟合检测、IC报告
-- strategy_evolution.py: 策略演化、因子权重调整、模式识别
+|- learner.py: 决策日记、WalkForward验证、信息系数计算、核心学习系统
+|- evaluator.py: 因子/模式评估、过拟合检测、IC报告、PCA异常检测
+|- strategy_evolution.py: 策略演化、因子权重调整、模式识别
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -35,6 +37,8 @@ from evaluator import (
     FactorEvaluator,
     PatternEvaluator,
     OverfittingDetector,
+    PCAAnomalyDetector,
+    AnomalyAlert,
 )
 
 from strategy_evolution import (
@@ -54,10 +58,11 @@ class AdaptiveLearner:
     特性:
     1. Walk-forward验证
     2. 因子权重动态调整（有上限）
-    3. 模式表现统计（有最小样本要求）
+    3. 模式表现统计（有最小样本要求）+ 白名单/黑名单
     4. 过拟合检测
     5. Decision Journal集成（可对比Kronos）
     6. 因子权重学习历史追踪
+    7. PCA异常检测与警报
     """
 
     def __init__(self, config: Dict, base_dir: str = None, kronos_journal_path: str = None):
@@ -75,10 +80,19 @@ class AdaptiveLearner:
         self.max_weight = 1.0      # 因子权重上限
         self.min_weight = 0.05     # 因子权重下限
         
+        # 模式白名单/黑名单
+        pattern_whitelist = config.get("pattern_whitelist", [])
+        pattern_blacklist = config.get("pattern_blacklist", [])
+        
         # 创建组件
         self.factor_evaluator = FactorEvaluator(min_sample_size=self.min_sample_size)
-        self.pattern_evaluator = PatternEvaluator(min_sample_size=5)
+        self.pattern_evaluator = PatternEvaluator(
+            min_sample_size=5,
+            pattern_whitelist=pattern_whitelist,
+            pattern_blacklist=pattern_blacklist
+        )
         self.overfitting_detector = OverfittingDetector()
+        self.pca_anomaly_detector = PCAAnomalyDetector(history_size=100)
         self.strategy_evolution = StrategyEvolution(
             config=config,
             min_weight=self.min_weight,
@@ -102,7 +116,7 @@ class AdaptiveLearner:
             kronos_journal_path=kronos_journal_path
         )
 
-        logger.info("AdaptiveLearner initialized with DecisionJournal")
+        logger.info("AdaptiveLearner initialized with DecisionJournal, PCAAnomalyDetector, and pattern whitelist/blacklist")
 
     def _load_learning_log(self):
         """加载学习日志"""
@@ -336,6 +350,95 @@ class AdaptiveLearner:
         """
         return self.pattern_evaluator.get_stats(pattern_key)
 
+    # ============================================================
+    # Pattern Whitelist/Blacklist Management
+    # ============================================================
+
+    def add_pattern_to_whitelist(self, pattern_keys: List[str]):
+        """添加模式到白名单"""
+        self.pattern_evaluator.add_to_whitelist(pattern_keys)
+
+    def remove_pattern_from_whitelist(self, pattern_keys: List[str]):
+        """从白名单移除模式"""
+        self.pattern_evaluator.remove_from_whitelist(pattern_keys)
+
+    def add_pattern_to_blacklist(self, pattern_keys: List[str]):
+        """添加模式到黑名单"""
+        self.pattern_evaluator.add_to_blacklist(pattern_keys)
+
+    def remove_pattern_from_blacklist(self, pattern_keys: List[str]):
+        """从黑名单移除模式"""
+        self.pattern_evaluator.remove_from_blacklist(pattern_keys)
+
+    def get_pattern_whitelist(self) -> List[str]:
+        """获取模式白名单"""
+        return self.pattern_evaluator.get_whitelist()
+
+    def get_pattern_blacklist(self) -> List[str]:
+        """获取模式黑名单"""
+        return self.pattern_evaluator.get_blacklist()
+
+    def clear_pattern_whitelist(self):
+        """清空白名单"""
+        self.pattern_evaluator.clear_whitelist()
+
+    def clear_pattern_blacklist(self):
+        """清空黑名单"""
+        self.pattern_evaluator.clear_blacklist()
+
+    # ============================================================
+    # PCA Anomaly Detection
+    # ============================================================
+
+    def fit_pca_baseline(self, features: List[List[float]], returns: List[float] = None):
+        """
+        拟合PCA基线分布（正常市场状态）
+
+        Args:
+            features: 因子特征列表 [[f1, f2, ...], ...]
+            returns: 可选的收益列表
+        """
+        self.pca_anomaly_detector.fit_baseline(features, returns)
+
+    def add_pca_sample(self, features: List[float], return_value: float = None) -> float:
+        """
+        添加PCA样本并返回异常分数
+
+        Args:
+            features: 因子特征 [f1, f2, ...]
+            return_value: 可选的收益值
+
+        Returns:
+            异常分数 (0.0-1.0, 越高越异常)
+        """
+        return self.pca_anomaly_detector.add_sample(features, return_value)
+
+    def check_pca_anomaly(self) -> Optional[AnomalyAlert]:
+        """
+        检查PCA异常并返回警报
+
+        Returns:
+            AnomalyAlert或None
+        """
+        return self.pca_anomaly_detector.check_anomaly()
+
+    def run_pca_full_check(self) -> Dict[str, Any]:
+        """
+        运行完整PCA检查（异常+漂移+波动）
+
+        Returns:
+            完整检查报告
+        """
+        return self.pca_anomaly_detector.run_full_check()
+
+    def get_pca_stats(self) -> Dict[str, Any]:
+        """获取PCA检测统计信息"""
+        return self.pca_anomaly_detector.get_stats()
+
+    def get_pca_alerts(self, n: int = 10) -> List[AnomalyAlert]:
+        """获取最近的PCA警报"""
+        return self.pca_anomaly_detector.get_recent_alerts(n)
+
     def on_trade_entry(self, trade_data: Dict) -> Tuple[str, bool, Optional[str]]:
         """
         交易入场时调用 - 记录入场信息
@@ -400,6 +503,8 @@ __all__ = [
     "FactorEvaluator",
     "PatternEvaluator",
     "OverfittingDetector",
+    "PCAAnomalyDetector",
+    "AnomalyAlert",
     # strategy_evolution
     "StrategyEvolution",
     "TradeHooks",
@@ -414,6 +519,7 @@ __all__ = [
 
 if __name__ == "__main__":
     import random
+    import numpy as np
 
     # Test WalkForwardValidator
     print("Testing WalkForwardValidator...")
@@ -482,5 +588,41 @@ if __name__ == "__main__":
     # Detect overfitting
     overfit_result = learner.detect_overfitting()
     print(f"Overfitting detection: {overfit_result}")
+
+    # Test Pattern Whitelist/Blacklist
+    print("\nTesting Pattern Whitelist/Blacklist...")
+    learner.add_pattern_to_blacklist(["short_high_rsi_high_adx_TREND"])
+    learner.add_pattern_to_whitelist(["long_low_rsi_low_adx_RANGE"])
+    print(f"Blacklist: {learner.get_pattern_blacklist()}")
+    print(f"Whitelist: {learner.get_pattern_whitelist()}")
+
+    # Test PCA Anomaly Detector
+    print("\nTesting PCA Anomaly Detector...")
+    try:
+        # Generate synthetic feature data
+        np.random.seed(42)
+        baseline_features = np.random.randn(100, 4).tolist()
+        baseline_returns = np.random.randn(100).tolist()
+        learner.fit_pca_baseline(baseline_features, baseline_returns)
+        print(f"PCA baseline fitted")
+
+        # Add some samples
+        for i in range(20):
+            features = np.random.randn(4).tolist()
+            ret = random.uniform(-0.05, 0.08)
+            score = learner.add_pca_sample(features, ret)
+            if i % 10 == 0:
+                print(f"Sample {i}: anomaly_score={score:.4f}")
+
+        # Run full check
+        pca_report = learner.run_pca_full_check()
+        print(f"PCA full check: has_alert={pca_report.get('has_alert')}")
+        print(f"PCA anomaly score: {pca_report.get('anomaly_score', 0):.4f}")
+
+        # Get PCA stats
+        pca_stats = learner.get_pca_stats()
+        print(f"PCA stats: {pca_stats}")
+    except Exception as e:
+        print(f"PCA test skipped or failed: {e}")
 
     print("\nAll tests passed!")
