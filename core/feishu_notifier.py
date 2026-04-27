@@ -1,314 +1,264 @@
 #!/usr/bin/env python3
 """
-feishu_notifier.py - 飞书通知模块
-=================================
+Feishu Notifier - 分级告警系统 (P2.3)
+=====================================
 
-Miracle System 的飞书通知功能，基于 Kronos 的 feishu_notifier.py 实现。
+三级告警:
+- P0 (CRITICAL): 资金安全/系统崩溃 - 立即推送
+- P1 (WARNING): 异常交易/熔断触发 - 正常推送
+- P2 (INFO): 正常心跳/性能报告 - 静默(本地日志)
 
-主要功能:
-    - push_feishu(): 发送文本消息到飞书群
+配置:
+- 环境变量: FEISHU_WEBHOOK_URL
+- 交付方式: 本地静默 / 飞书推送
 
-配置项 (环境变量):
-    - FEISHU_APP_ID: 飞书应用 App ID
-    - FEISHU_APP_SECRET: 飞书应用 App Secret  
-    - FEISHU_CHAT_ID: 飞书群 Chat ID (可选，默认使用配置的值)
-
-版本: 1.0.1
+Usage:
+    from core.feishu_notifier import FeishuNotifier, AlertLevel
+    
+    notifier = FeishuNotifier()
+    notifier.critical('资金安全', 'BTC多头触发止损')
+    notifier.warning('熔断触发', 'DOGE连续3亏')
+    notifier.info('心跳', '系统正常运行')
 """
 
 import os
+import sys
 import json
 import logging
-from typing import Optional
+from enum import Enum
+from datetime import datetime
+from typing import Optional, Dict, Any
 
-import requests
+logger = logging.getLogger(__name__)
 
-logger = logging.getLogger("miracle.feishu")
+# ==================== 配置 ====================
 
-# 飞书 API 配置
-FEISHU_API_BASE = "https://open.feishu.cn/open-apis"
+FEISHU_WEBHOOK_URL = os.getenv('FEISHU_WEBHOOK_URL', '')
+DELIVERY_MODE = os.getenv('FEISHU_DELIVERY', 'local')  # 'local' | 'feishu'
+OUTPUT_DIR = os.path.expanduser('~/.miracle_memory/feishu_alerts/')
 
-# 默认 Chat ID (如果环境变量未设置)
-DEFAULT_CHAT_ID = "oc_bfd8a7cc1a606f190b53e3fd0167f5a0"
+
+class AlertLevel(Enum):
+    """告警级别"""
+    CRITICAL = 'P0'  # 资金安全/系统崩溃
+    WARNING = 'P1'    # 异常交易/熔断
+    INFO = 'P2'       # 心跳/性能报告
+
+
+class AlertLevelConfig:
+    """告警级别配置"""
+    CONFIG = {
+        AlertLevel.CRITICAL: {
+            'name': 'CRITICAL',
+            'emoji': '🚨',
+            'deliver': 'feishu',  # 强制推送
+            'file_level': 'ERROR',
+        },
+        AlertLevel.WARNING: {
+            'name': 'WARNING', 
+            'emoji': '⚠️',
+            'deliver': 'feishu',  # 推送
+            'file_level': 'WARNING',
+        },
+        AlertLevel.INFO: {
+            'name': 'INFO',
+            'emoji': '💤',
+            'deliver': 'local',  # 静默
+            'file_level': 'INFO',
+        },
+    }
 
 
 class FeishuNotifier:
     """
-    飞书通知器类
+    飞书分级告警系统
     
-    提供飞书消息推送功能，支持:
-    - 文本消息发送
-    - 错误告警
-    - 系统状态通知
+    设计原则:
+    - P0/P1: 必须推送飞书
+    - P2: 默认静默(本地日志)
+    - 本地持久化: 所有告警都写入日志文件
     """
-    
-    _instance: Optional['FeishuNotifier'] = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
-    def __init__(self):
-        if self._initialized:
+
+    def __init__(self, webhook_url: str = None, delivery_mode: str = None):
+        self.webhook_url = webhook_url or FEISHU_WEBHOOK_URL
+        self.delivery_mode = delivery_mode or DELIVERY_MODE
+        
+        # 确保输出目录存在
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        # 告警计数器
+        self._counters = {
+            AlertLevel.CRITICAL: 0,
+            AlertLevel.WARNING: 0,
+            AlertLevel.INFO: 0,
+        }
+        
+        # 最近的告警 (内存缓存)
+        self._recent_alerts = []
+        self._max_recent = 100
+
+    def _log_alert(self, level: AlertLevel, title: str, message: str, data: Dict = None):
+        """写入本地日志"""
+        config = AlertLevelConfig.CONFIG[level]
+        timestamp = datetime.now().isoformat()
+        
+        log_entry = {
+            'timestamp': timestamp,
+            'level': level.value,
+            'title': title,
+            'message': message,
+            'data': data or {},
+        }
+        
+        # 添加到最近告警缓存
+        self._recent_alerts.append(log_entry)
+        if len(self._recent_alerts) > self._max_recent:
+            self._recent_alerts.pop(0)
+        
+        # 写入日志文件
+        log_file = os.path.join(OUTPUT_DIR, f'alerts_{datetime.now().strftime("%Y%m%d")}.jsonl')
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        
+        # 日志输出
+        log_func = getattr(logging, config['file_level'].lower())
+        log_func(f"[{level.value}] {title}: {message}")
+
+    def _send_to_feishu(self, level: AlertLevel, title: str, message: str, data: Dict = None):
+        """发送飞书消息"""
+        if not self.webhook_url:
+            logger.debug(f"飞书Webhook未配置,跳过推送: {title}")
             return
-        self._app_id: str = ''
-        self._app_secret: str = ''
-        self._chat_id: str = ''
-        self._token: Optional[str] = None
-        self._token_expires_at: float = 0
-        self._initialized = True
-        self._load_config()
-    
-    def _load_config(self):
-        """从环境变量加载飞书配置"""
-        self._app_id = os.environ.get('FEISHU_APP_ID', '')
-        self._app_secret = os.environ.get('FEISHU_APP_SECRET', '')
-        self._chat_id = os.environ.get('FEISHU_CHAT_ID', DEFAULT_CHAT_ID)
         
-        if self._app_id and self._app_secret:
-            logger.info("飞书配置已加载")
-        else:
-            logger.warning("飞书配置未完成 (APP_ID/APP_SECRET 未设置)")
-    
-    @property
-    def is_configured(self) -> bool:
-        """检查飞书是否已配置"""
-        return bool(self._app_id and self._app_secret)
-    
-    def _get_token(self) -> Optional[str]:
-        """
-        获取飞书 Tenant Access Token
+        config = AlertLevelConfig.CONFIG[level]
+        emoji = config['emoji']
         
-        使用缓存机制，避免频繁请求
-        """
-        import time
+        # 构建消息内容
+        content = {
+            'msg_type': 'text',
+            'content': {
+                'text': f"{emoji} **[{level.value}] {title}**\n\n{message}"
+            }
+        }
         
-        # 检查缓存的 token 是否有效 (提前5分钟过期)
-        if self._token and time.time() < (self._token_expires_at - 300):
-            return self._token
-        
-        if not self.is_configured:
-            return None
+        # 如果有额外数据,添加详情
+        if data:
+            data_str = '\n'.join([f'- {k}: {v}' for k, v in data.items()])
+            content['content']['text'] += f"\n\n📊 **详情:**\n{data_str}"
         
         try:
-            url = f"{FEISHU_API_BASE}/auth/v3/tenant_access_token/internal"
-            payload = {
-                'app_id': self._app_id,
-                'app_secret': self._app_secret
-            }
-            
-            response = requests.post(url, json=payload, timeout=10)
-            data = response.json()
-            
-            if data.get('code') == 0:
-                self._token = data.get('tenant_access_token')
-                # 飞书 token 有效期约2小时，这里设置为1.5小时
-                self._token_expires_at = time.time() + 5400
-                logger.debug("获取飞书 Token 成功")
-                return self._token
-            else:
-                logger.error(f"获取飞书 Token 失败: code={data.get('code')}, msg={data.get('msg')}")
-                return None
-                
-        except requests.RequestException as e:
-            logger.error(f"获取飞书 Token 网络错误: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"获取飞书 Token 异常: {e}")
-            return None
-    
-    def send_message(self, message: str, chat_id: Optional[str] = None) -> bool:
-        """
-        发送文本消息到飞书
-        
-        Args:
-            message: 要发送的消息内容 (最多4000字符)
-            chat_id: 可选的群 ID，默认使用配置的 CHAT_ID
-        
-        Returns:
-            bool: 发送是否成功
-        """
-        if not self.is_configured:
-            logger.warning("飞书未配置，跳过消息发送")
-            return False
-        
-        token = self._get_token()
-        if not token:
-            logger.error("无法获取飞书 Token，发送失败")
-            return False
-        
-        try:
-            headers = {
-                'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json'
-            }
-            
-            # 截断消息到4000字符
-            truncated_message = message[:4000]
-            
-            payload = {
-                'receive_id': chat_id or self._chat_id,
-                'msg_type': 'text',
-                'content': json.dumps({'text': truncated_message})
-            }
-            
-            params = {'receive_id_type': 'chat_id'}
-            
-            url = f"{FEISHU_API_BASE}/im/v1/messages"
-            response = requests.post(
-                url, 
-                headers=headers, 
-                json=payload, 
-                params=params, 
-                timeout=10
+            import urllib.request
+            req = urllib.request.Request(
+                self.webhook_url,
+                data=json.dumps(content).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
             )
-            
-            result = response.json()
-            
-            if result.get('code') == 0:
-                logger.info("飞书消息发送成功")
-                return True
-            else:
-                logger.error(f"飞书消息发送失败: code={result.get('code')}, msg={result.get('msg')}")
-                # Token 过期时清除缓存，下次重试
-                if result.get('code') == 99991663:
-                    self._token = None
-                return False
-                
-        except requests.RequestException as e:
-            logger.error(f"飞书消息发送网络错误: {e}")
-            return False
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    logger.info(f"飞书推送成功: {title}")
+                else:
+                    logger.warning(f"飞书推送失败: {resp.status}")
         except Exception as e:
-            logger.error(f"飞书消息发送异常: {e}")
-            return False
-    
-    def send_alert(self, title: str, message: str) -> bool:
+            logger.error(f"飞书推送异常: {e}")
+
+    def notify(self, level: AlertLevel, title: str, message: str, data: Dict = None):
         """
-        发送告警消息 (带标题)
+        发送告警
         
         Args:
+            level: 告警级别
             title: 告警标题
-            message: 告警详情
-        
-        Returns:
-            bool: 发送是否成功
+            message: 告警消息
+            data: 额外数据
         """
-        alert_message = f"🚨 {title}\n\n{message}"
-        return self.send_message(alert_message)
-    
-    def send_report(self, title: str, content: str) -> bool:
-        """
-        发送报告消息 (带标题)
+        self._counters[level] += 1
         
-        Args:
-            title: 报告标题
-            content: 报告内容
+        # 1. 写入本地日志 (所有级别)
+        self._log_alert(level, title, message, data)
         
-        Returns:
-            bool: 发送是否成功
-        """
-        report_message = f"📊 {title}\n\n{content}"
-        return self.send_message(report_message)
-    
-    def reload_config(self):
-        """重新加载配置"""
-        self._token = None
-        self._token_expires_at = 0
-        self._load_config()
+        # 2. 判断是否推送飞书
+        config = AlertLevelConfig.CONFIG[level]
+        should_deliver_feishu = (
+            config['deliver'] == 'feishu' or 
+            self.delivery_mode == 'feishu' or
+            level == AlertLevel.CRITICAL  # P0强制推送
+        )
+        
+        if should_deliver_feishu:
+            self._send_to_feishu(level, title, message, data)
+
+    def critical(self, title: str, message: str, data: Dict = None):
+        """P0级告警: 资金安全/系统崩溃"""
+        self.notify(AlertLevel.CRITICAL, title, message, data)
+
+    def warning(self, title: str, message: str, data: Dict = None):
+        """P1级告警: 异常交易/熔断触发"""
+        self.notify(AlertLevel.WARNING, title, message, data)
+
+    def info(self, title: str, message: str, data: Dict = None):
+        """P2级告警: 心跳/性能报告 (静默)"""
+        self.notify(AlertLevel.INFO, title, message, data)
+
+    def get_counters(self) -> Dict[str, int]:
+        """获取告警计数"""
+        return {level.value: count for level, count in self._counters.items()}
+
+    def get_recent_alerts(self, level: AlertLevel = None, limit: int = 10) -> list:
+        """获取最近告警"""
+        alerts = self._recent_alerts
+        if level:
+            alerts = [a for a in alerts if a['level'] == level.value]
+        return alerts[-limit:]
 
 
-# 全局实例
-_notifier_instance: Optional[FeishuNotifier] = None
+# ==================== 便捷函数 ====================
+
+_notifier: Optional[FeishuNotifier] = None
 
 
 def get_notifier() -> FeishuNotifier:
-    """获取全局飞书通知器实例"""
-    global _notifier_instance
-    if _notifier_instance is None:
-        _notifier_instance = FeishuNotifier()
-    return _notifier_instance
+    """获取全局notifier单例"""
+    global _notifier
+    if _notifier is None:
+        _notifier = FeishuNotifier()
+    return _notifier
 
 
-def push_feishu(message: str, chat_id: Optional[str] = None) -> bool:
-    """
-    发送消息到飞书 (便捷函数)
-    
-    这是从 Kronos 移植的便捷接口，保持向后兼容。
-    
-    Args:
-        message: 要发送的消息内容
-        chat_id: 可选的群 ID
-    
-    Returns:
-        bool: 发送是否成功
-    
-    Example:
-        >>> push_feishu("Kronos 交易信号: BTC 多头")
-        True
-    """
-    notifier = get_notifier()
-    return notifier.send_message(message, chat_id)
+def notify_critical(title: str, message: str, data: Dict = None):
+    """发送P0告警"""
+    get_notifier().critical(title, message, data)
 
 
-def push_feishu_alert(title: str, message: str) -> bool:
-    """
-    发送告警到飞书 (便捷函数)
-    
-    Args:
-        title: 告警标题
-        message: 告警详情
-    
-    Returns:
-        bool: 发送是否成功
-    
-    Example:
-        >>> push_feishu_alert("止损触发", "BTC 多单止损 @ $50000")
-        True
-    """
-    notifier = get_notifier()
-    return notifier.send_alert(title, message)
+def notify_warning(title: str, message: str, data: Dict = None):
+    """发送P1告警"""
+    get_notifier().warning(title, message, data)
 
 
-def push_feishu_report(title: str, content: str) -> bool:
-    """
-    发送报告到飞书 (便捷函数)
-    
-    Args:
-        title: 报告标题
-        content: 报告内容
-    
-    Returns:
-        bool: 发送是否成功
-    
-    Example:
-        >>> push_feishu_report("每日交易报告", "今日收益: +2.5%")
-        True
-    """
-    notifier = get_notifier()
-    return notifier.send_report(title, content)
+def notify_info(title: str, message: str, data: Dict = None):
+    """发送P2告警 (静默)"""
+    get_notifier().info(title, message, data)
 
 
-def is_feishu_configured() -> bool:
-    """检查飞书是否已配置"""
-    return get_notifier().is_configured
+# ==================== 自检 ====================
 
-
-# 向后兼容: 直接使用模块级函数
-if __name__ == "__main__":
-    # 测试代码
-    import sys
+if __name__ == '__main__':
+    import pprint
     
-    # 检查配置
-    if not is_feishu_configured():
-        print("⚠️ 飞书未配置，请设置环境变量:")
-        print("   FEISHU_APP_ID")
-        print("   FEISHU_APP_SECRET")
-        print("   FEISHU_CHAT_ID (可选)")
-        sys.exit(1)
+    print("=== 飞书分级告警系统 (P2.3) ===\n")
     
-    # 发送测试消息
-    test_msg = "Miracle System 飞书通知测试\n时间: 测试"
-    success = push_feishu(test_msg)
-    print(f"测试消息发送{'成功' if success else '失败'}")
+    notifier = FeishuNotifier()
+    
+    # 测试各级别告警
+    print("发送测试告警...")
+    notifier.critical('资金安全测试', '模拟P0告警', {'equity': 50000, 'position': 'LONG'})
+    notifier.warning('熔断触发测试', '模拟P1告警', {'consecutive_losses': 3})
+    notifier.info('心跳测试', '系统正常运行', {'uptime_hours': 24})
+    
+    print("\n告警计数:")
+    pprint.pprint(notifier.get_counters())
+    
+    print("\n最近告警:")
+    pprint.pprint(notifier.get_recent_alerts())
+    
+    print("\n=== 自检完成 ===")
