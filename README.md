@@ -1,185 +1,321 @@
-# Miracle 1.0.1
+# Miracle 2.0 — 自主学习量化交易系统
 
-**高频趋势跟踪 + 事件驱动混合交易系统**
-
-赔率优先：赢了要赢很多，输了只输一点。
+**版本**: 2.0  
+**定位**: 大语言模型 + 多Agent协同的自主学习交易系统  
+**核心理念**: 赔率优先 + LLM驱动的自适应学习 + Autoresearch持续进化
 
 ---
 
 ## 系统架构
 
 ```
-Agent-M (市场情报) → Agent-S (信号生成) → Agent-R (风险管理) → Agent-E (执行) → Agent-L (学习)
+┌──────────────────────────────────────────────────────────────────┐
+│                    Miracle 2.0 自主学习系统                       │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌──────────────────────────────────────────────────────────┐   │
+│   │              Orchestrator (LLM大脑)                       │   │
+│   │         任务分解 + 结果聚合 + 自我反思                    │   │
+│   └──────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│          ┌───────────────────┼───────────────────┐            │
+│          ▼                   ▼                   ▼                │
+│   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐        │
+│   │  Agent-M    │   │  Agent-S    │   │  Agent-L    │        │
+│   │  市场情报    │──▶│  信号生成    │──▶│  学习迭代    │        │
+│   │  (LLM增强)  │   │  (LLM增强)  │   │  (核心)     │        │
+│   └─────────────┘   └─────────────┘   └─────────────┘        │
+│          │                   │                   │                │
+│          │                   ▼                   │                │
+│          │           ┌─────────────┐            │                │
+│          └──────────▶│  Agent-R    │◀───────────┘                │
+│                      │  风险管理   │                             │
+│                      └─────────────┘                             │
+│                              │                                   │
+│                              ▼                                   │
+│                      ┌─────────────┐                            │
+│                      │  Agent-E    │                            │
+│                      │  执行引擎   │                            │
+│                      └─────────────┘                             │
+│                                                                  │
+│   ┌──────────────────────────────────────────────────────────┐   │
+│   │              Memory System (记忆系统)                     │   │
+│   │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │   │
+│   │  │向量记忆 │  │结构化  │  │示范库  │  │规则库  │   │   │
+│   │  │(Chroma)│  │经验库  │  │(Few-shot)│  │(Policy)│   │   │
+│   │  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │   │
+│   └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│   ┌──────────────────────────────────────────────────────────┐   │
+│   │              Autoresearch Loop (自主研究循环)              │   │
+│   │   数据收集 → 假设生成 → 回测验证 → 反思改进 → 持续进化     │   │
+│   └──────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
 ```
-
-| Agent | 职责 | 数据源 |
-|-------|------|--------|
-| **Agent-M** | 新闻情感、链上数据、钱包分布 | OKX + yfinance (免费) |
-| **Agent-S** | 多因子融合、趋势检测、信号生成 | 内部计算 |
-| **Agent-R** | 仓位计算、杠杆管理、熔断机制 | 内部计算 |
-| **Agent-E** | 交易所下单、持仓监控 | 需要 OKX API Key |
-| **Agent-L** | 自适应学习、参数优化 | 历史交易数据 |
 
 ---
 
-## 每币种参数优化 (Per-Coin Parameter Optimization)
+## 核心能力
 
-参考 Kronos `coin_strategy_map.json` 实现，支持每个币种独立的最优策略参数。
+### 1. 自主学习 (Agent-L)
 
-### 核心特性
+| 能力 | 1.0 | 2.0 |
+|------|------|------|
+| 学习触发 | 固定周期 | 每笔交易后即时学习 |
+| 因子调整 | IC阈值规则 | LLM分析因果 |
+| 模式发现 | 简单统计 | LLM语义聚类 |
+| 策略演化 | 月度淘汰 | 持续进化 |
+| 知识积累 | 规则存储 | 向量记忆检索 |
 
-- **独立参数**: 每个币种有自己专属的 RSI、ADX、ATR 等指标参数
-- **策略选择**: 根据币种特性选择最优策略 (RSI_MR / RSI_EMAn / VOL_BRK 等)
-- **Kronos 对比**: 自动对比 Kronos 的 coin_strategy_map.json 配置
-- **Walk-Forward 验证**: 确保参数在历史数据上的有效性
-
-### 相关文件
-
-| 文件 | 说明 |
-|------|------|
-| `coin_params.json` | 币种参数配置 (灵感来自 Kronos coin_strategy_map.json) |
-| `coin_optimizer.py` | 参数优化器模块 |
-
-### 使用示例
+### 2. Autoresearch 循环
 
 ```python
-from core import get_coin_optimizer, get_coin_signal_generator
-
-# 获取优化器
-optimizer = get_coin_optimizer()
-
-# 获取币种参数
-btc_params = optimizer.get_coin_params("BTC")
-print(f"BTC 策略: {btc_params.optimal_strategy}")
-
-# 获取信号参数
-signal_params = optimizer.get_signal_params("BTC")
-print(f"RSI 超卖阈值: {signal_params['rsi_oversold']}")
-
-# 获取已启用的币种列表
-enabled_coins = optimizer.get_enabled_coins()
-
-# 对比 Kronos
-comparison = optimizer.compare_with_kronos("ETH")
-print(comparison)
-
-# 生成优化报告
-print(optimizer.generate_optimization_report())
+# 完整闭环
+while True:
+    data = collect_market_data()        # 1. 收集数据
+    hypothesis = generate_hypothesis(data) # 2. 生成假设
+    result = backtest(hypothesis)          # 3. 回测验证
+    insight = reflect(result)              # 4. 反思改进
+    update_memory(insight)                # 5. 更新记忆
+    evolve_strategy(insight)              # 6. 演化策略
 ```
 
-### 策略类型
+### 3. 多Agent协同
 
-| 策略 | 说明 | 适用币种 |
-|------|------|----------|
-| RSI_MR | RSI 均值回归 | BTC, ETH, SOL, DOGE, ADA |
-| RSI_EMAn | RSI + EMA 共振 | BNB, XRP |
-| RSI_VOL | RSI + 成交量混合 | DOT |
-| VOL_BRK | 成交量突破 | 熊市/高波动环境 |
-| BB_TREND | 布林带趋势跟踪 | ADA |
+| Agent | 职责 | LLM增强 |
+|-------|------|---------|
+| **Orchestrator** | 全局规划、决策 | LLM推理 + 反思 |
+| **Agent-M** | 市场情报、情感分析 | LLM深度理解 |
+| **Agent-S** | 信号生成、因子融合 | LLM动态权重 |
+| **Agent-R** | 风险管理、熔断 | LLM风险评估 |
+| **Agent-L** | 学习迭代、策略演化 | LLM自我反思 |
+| **Agent-E** | 交易所执行 | - |
 
 ---
 
 ## 快速开始
 
+### 安装依赖
+
 ```bash
-# 安装依赖
+cd ~/miracle_system
 pip install -r requirements.txt
 
-# 查看系统信息
-python miracle.py --info
-
-# 扫描所有币种
-python miracle.py
-
-# 扫描指定币种
-python miracle.py --symbol BTC
-
-# 持续运行模式 (每30分钟扫描)
-python miracle.py --daemon --interval 30
+# 可选：安装ChromaDB（向量记忆）
+pip install chromadb
 ```
 
----
+### 基本使用
 
-## 核心参数
+```python
+from miracle_autonomous import MiracleAutonomous
 
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| 最小RR | 2.0 | 输了亏1%，赢了至少2% |
-| 最大杠杆 | 3x | 强趋势时使用 |
-| 最大仓位 | 15% | 单币种最大暴露 |
-| 日交易上限 | 5笔 | 每交易日最多5笔开仓 |
-| 日亏熔断 | 5% | 日亏损超5%停止交易 |
-| 回撤熔断 | 20% | 总回撤超20%停止交易 |
+# 初始化系统
+system = MiracleAutonomous(
+    symbols=["BTC", "ETH", "SOL", "DOGE"],
+    mode="simulation"
+)
 
----
+# 运行自主研究循环
+system.run_autonomous_cycle(experiments=50)
 
-## 数据源
-
-| 类型 | 来源 | 状态 |
-|------|------|------|
-| 价格数据 | OKX (实时) | ✅ 可用 |
-| K线数据 | OKX + yfinance | ✅ 可用 |
-| 新闻情感 | CryptoCompare + 价格动量代理 | ✅ 可用 |
-| 链上数据 | 模拟数据 | ⚠️ 需Glassnode API |
-| 交易所下单 | OKX | ⚠️ 需API Key |
-
----
-
-## 文件结构
-
-```
-miracle-1.0.1/
-├── miracle.py              # 主入口
-├── miracle_core.py         # 核心计算函数
-├── miracle_config.json     # 配置文件
-├── adaptive_learner.py     # 自适应学习模块
-├── requirements.txt        # 依赖
-├── agents/
-│   ├── agent_market_intel.py   # 市场情报
-│   ├── agent_signal.py         # 信号生成
-│   ├── agent_risk.py           # 风险管理
-│   ├── agent_executor.py       # 执行引擎
-│   └── agent_learner.py        # 学习迭代
-├── core/
-│   └── data_fetcher.py     # 统一数据源 (OKX/yfinance)
-├── data/                   # 数据目录
-└── logs/                   # 日志目录
+# 做交易决策
+decision = system.make_decision(market_data)
 ```
 
----
-
-## Pilot驾驶舱
-
-Miracle Pilot驾驶舱提供系统状态监控面板，对比Kronos的`kronos_pilot.py`实现。
+### 命令行使用
 
 ```bash
-# 完整日报（包含所有监控面板）
+# 运行完整自主研究
+python miracle_autonomous.py --experiments 50 --coins BTC,ETH,SOL,DOGE
+
+# 仅做决策
+python miracle.py --symbol BTC
+
+# 查看Pilot驾驶舱
 python miracle_pilot.py --full
-
-# 状态摘要
-python miracle_pilot.py --status
-
-# 持仓监控
-python miracle_pilot.py --positions
-
-# 信号列表
-python miracle_pilot.py --signals
-
-# 风险仪表盘
-python miracle_pilot.py --risk
-
-# 查看日志
-python miracle_pilot.py --log 50
 ```
 
-### 驾驶舱功能
+---
 
-| 功能 | 说明 |
-|------|------|
-| **状态摘要** | 系统模式、账户信息、熔断器状态 |
-| **持仓监控** | 活跃持仓、未实现盈亏、持仓时间 |
-| **信号列表** | 实时信号、置信度、趋势强度、质量评分 |
-| **风险仪表盘** | VaR、CVaR、最大回撤、Sharpe/Sortino比率、IC权重 |
+## 目录结构
+
+```
+miracle_system/
+├── miracle.py                    # 1.0主入口（兼容）
+├── miracle_autonomous.py         # 2.0主入口（自主学习）
+├── miracle_core.py               # 核心计算
+├── miracle_pilot.py              # 驾驶舱
+├── miracle_kronos.py             # Kronos兼容
+├── backtest.py                  # 回测引擎
+├── adaptive_learner.py           # 自适应学习
+├── coin_optimizer.py            # 每币种参数优化
+│
+├── core/
+│   ├── orchestrator.py          # 协调器（LLM大脑）
+│   ├── llm_provider.py          # LLM接口（Claude/GPT/Gemini/DeepSeek）
+│   ├── ic_weights.py            # IC动态权重
+│   ├── regime_classifier.py     # 市场状态分类
+│   ├── state_reconciler.py      # OKX状态同步
+│   ├── feishu_notifier.py       # 飞书通知
+│   ├── data_fetcher.py          # 数据获取
+│   └── memory/
+│       ├── vector_memory.py      # ChromaDB向量记忆
+│       ├── structured_memory.py  # SQLite结构化记忆
+│       └── system.py            # 记忆系统
+│
+├── agents/
+│   ├── agent_market_intel.py     # 市场情报
+│   ├── agent_signal.py           # 信号生成
+│   ├── agent_risk.py             # 风险管理
+│   ├── agent_executor.py         # 执行引擎
+│   └── agent_learner.py          # 学习迭代
+│
+├── data/
+│   ├── decision_journal/         # 决策日志
+│   └── cache/                   # 数据缓存
+│
+├── docs/
+│   ├── MIRACLE_LLM_ARCHITECTURE.md  # 详细架构设计
+│   ├── IC_WEIGHT_COMPARISON.md      # IC权重对比
+│   └── REGIME_CLASSIFIER_COMPARISON.md
+│
+├── tests/                       # 测试
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 关键特性
+
+### Autoresearch 循环
+
+```python
+class AutoresearchLoop:
+    """
+    自主研究循环：Keep/Discard策略淘汰机制
+    """
+
+    def run(self, experiments=50):
+        """
+        运行自主研究循环
+
+        1. 数据收集 - 多源市场数据
+        2. 假设生成 - 随机/趋势外推/聚焦优化
+        3. 回测验证 - Walk-Forward多窗口
+        4. 反思改进 - IC权重反馈闭环
+        """
+        for i in range(eximents):
+            # 生成新策略假设
+            hypothesis = self.generate_hypothesis()
+
+            # 回测验证
+            result = self.backtest(hypothesis)
+
+            # 反思改进
+            insight = self.reflect(hypothesis, result)
+
+            # 更新记忆
+            self.update_memory(insight)
+
+            # 演化策略
+            self.evolve_strategy(insight)
+```
+
+### LLM Provider 支持
+
+| Provider | 模型 | 用途 |
+|----------|------|------|
+| Claude | Sonnet 4 | 主力推理 |
+| GPT-4o | GPT-4o | 备用 |
+| Gemini | Flash 2.0 | 成本优化 |
+| DeepSeek | Chat | 研究循环 |
+
+### Memory System
+
+- **ChromaDB**: 向量记忆，语义检索历史经验
+- **SQLite**: 结构化记忆，交易记录、因子表现
+- **Few-shot**: 示范库，成功/失败模式
+
+---
+
+## 配置
+
+### 环境变量
+
+```bash
+# LLM API Keys
+export ANTHROPIC_API_KEY=sk-xxx        # Claude
+export OPENAI_API_KEY=sk-xxx           # GPT
+export GOOGLE_API_KEY=xxx               # Gemini
+export DEEPSEEK_API_KEY=sk-xxx         # DeepSeek
+
+# OKX API
+export OKX_API_KEY=xxx
+export OKX_SECRET_KEY=xxx
+export OKX_PASSPHRASE=xxx
+
+# 飞书通知
+export FEISHU_APP_ID=xxx
+export FEISHU_APP_SECRET=xxx
+export FEISHU_CHAT_ID=oc_xxx
+```
+
+### 配置文件
+
+```json
+{
+  "symbols": ["BTC", "ETH", "SOL", "DOGE", "BNB", "XRP", "ADA", "AVAX", "DOT", "LINK"],
+  "min_rr": 2.0,
+  "min_confidence": 0.6,
+  "max_trades_per_day": 5,
+  "max_position_pct": 15,
+  "leverage": 3,
+  "llm_provider": "claude",
+  "enable_autoresearch": true,
+  "enable_memory": true
+}
+```
+
+---
+
+## 与Kronos对比
+
+| 维度 | Kronos | Miracle 2.0 |
+|------|--------|-------------|
+| **学习方式** | IC权重规则 | LLM驱动的自主学习 |
+| **信号生成** | 固定公式 | LLM推理 + 动态权重 |
+| **知识积累** | JSON文件 | ChromaDB向量记忆 |
+| **策略演化** | 定期淘汰 | Autoresearch持续进化 |
+| **反思能力** | 有限 | 每笔交易即时反思 |
+| **多Agent** | 5 Agent | Orchestrator + 5 Agent |
+
+---
+
+## 开发指南
+
+### 添加新的Agent
+
+```python
+from agents.base_agent import BaseAgent
+
+class MyAgent(BaseAgent):
+    async def execute(self, context):
+        # 执行逻辑
+        return {"result": "..."}
+```
+
+### 添加新的工具
+
+```python
+from core.tools import register_tool
+
+@register_tool
+async def my_tool(param1, param2):
+    """工具描述"""
+    return await do_something(param1, param2)
+```
 
 ---
 
@@ -187,4 +323,28 @@ python miracle_pilot.py --log 50
 
 - ✅ 可用：已实现并测试通过
 - ⚠️ 需配置：需要API Key或其他配置
-- ❌ 未实现：功能未完成
+- 🔄 开发中：正在实现
+
+| 功能 | 状态 |
+|------|------|
+| Orchestrator | ✅ |
+| LLM Provider | ✅ |
+| Memory System | ✅ |
+| Agent-M | ✅ |
+| Agent-S | ✅ |
+| Agent-R | ✅ |
+| Agent-E | ✅ |
+| Agent-L | ✅ |
+| Autoresearch Loop | ✅ |
+| OKX集成 | ✅ |
+| 飞书通知 | ✅ |
+
+---
+
+## 许可证
+
+MIT License
+
+---
+
+**赔率优先，永不妥协。**

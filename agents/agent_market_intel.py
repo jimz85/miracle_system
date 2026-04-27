@@ -8,6 +8,19 @@ Miracle 1.0.1 — 高频趋势跟踪+事件驱动混合系统
 3. 钱包分布监控（持币地址集中度）
 4. 计算新闻/链上因子值
 5. 输出情报报告给Agent-S
+
+LLM增强版：
+    如需使用LLM增强的情感分析和链上分析，请使用 agent_market_intel_llm.py
+    该版本提供：
+    - LLM驱动的深度情感分析
+    - 智能链上模式识别
+    - 丰富上下文构建
+    - 多源数据融合
+
+用法：
+    from agent_market_intel_llm import MarketIntelAgentLLM
+    agent = MarketIntelAgentLLM(symbol="BTC")
+    report = agent.generate_intel_report_sync()
 """
 
 import time
