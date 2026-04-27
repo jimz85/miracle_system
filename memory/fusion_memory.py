@@ -281,7 +281,8 @@ def store_decision(
         updated_at=None
     )
     entry_id = _get_store().add_entry(entry)
-    logger.info(f"[FusionMemory] 存储决策 #{entry_id}: {ticker} {verdict} @{confidence:.2f}")
+    conf_str = f"{float(confidence):.2f}" if confidence else "N/A"
+    logger.info(f"[FusionMemory] 存储决策 #{entry_id}: {ticker} {verdict} @{conf_str}")
     return entry_id
 
 
