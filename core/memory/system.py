@@ -14,7 +14,7 @@ from enum import Enum
 from .vector_memory import VectorMemory, get_vector_memory, MemoryEntry
 from .structured_memory import (
     StructuredMemory, get_structured_memory,
-    TradeRecord, FactorPerformance, StrategyParams, Lesson
+    TradeRecord, FactorPerformance, StrategyParams, Lesson, MemoryType
 )
 
 logger = logging.getLogger(__name__)
@@ -301,10 +301,12 @@ class MemorySystem:
         
         # 1. 向量记忆检索
         try:
+            # VectorMemory.search 只支持单个 memory_type，取第一个
+            mem_type = memory_types[0] if memory_types else None
             vector_results = self.vector.search(
                 query=query,
                 k=k,
-                memory_types=memory_types
+                memory_type=mem_type
             )
             
             for mem in vector_results:

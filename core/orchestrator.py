@@ -178,12 +178,12 @@ class Orchestrator:
 请做出交易决策。"""
 
         try:
-            response = await self.llm.acomplete(
+            response = await self.llm.chat_simple(
                 prompt,
                 system=SYSTEM_PROMPT
             )
 
-            if response.success:
+            if not response.error:
                 content = response.content.strip()
                 # 提取JSON
                 if "```json" in content:
@@ -269,8 +269,8 @@ class Orchestrator:
 
 请分析: 为什么赚钱/亏损? 下次如何改进?
 """
-                response = await self.llm.acomplete(prompt, system="你是交易分析师。")
-                if response.success:
+                response = await self.llm.chat_simple(prompt, system="你是交易分析师。")
+                if not response.error:
                     return {"analysis": response.content, "outcome": outcome}
             except Exception as e:
                 logger.error(f"反思失败: {e}")

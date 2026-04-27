@@ -138,7 +138,7 @@ def get_system_status() -> Dict[str, Any]:
             status['errors'].append(f"配置加载失败: {e}")
     
     # 检查日志文件获取最后扫描时间
-    log_file = _log_dir / 'miracle.log'
+    log_file = SCRIPT_DIR / 'miracle.log'
     if log_file.exists():
         try:
             lines = log_file.read_text(encoding='utf-8').strip().split('\n')

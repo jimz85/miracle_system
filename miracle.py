@@ -295,9 +295,14 @@ class MiracleScanner:
             account_state = get_account_state()
             equity = account_state.get("total_equity", 0.0)
             if equity <= 0:
-                # API失败时：从缓存文件读取上次已知余额，不用虚假$100,000
+                # API失败时：从缓存文件读取上次已知余额
                 equity = _load_last_equity()
-                logger.warning(f"OKX API失败，使用缓存余额 ${equity:.2f}")
+                if equity <= 0:
+                    # 缓存也没有，使用默认模拟余额以支持回测/模拟交易
+                    equity = 10000.0
+                    logger.warning(f"OKX API失败且无缓存，使用默认模拟余额 ${equity:.2f}")
+                else:
+                    logger.warning(f"OKX API失败，使用缓存余额 ${equity:.2f}")
             else:
                 _save_last_equity(equity)
             account = AccountState(
@@ -521,8 +526,14 @@ def main():
     if args.daemon:
         logger.info(f"启动守护进程模式，间隔{args.interval}分钟")
         while True:
-            results = scanner.scan_all()
-            scanner.print_report(results)
+            try:
+                results = scanner.scan_all()
+                scanner.print_report(results)
+            except KeyboardInterrupt:
+                logger.info("收到中断信号，退出守护进程")
+                break
+            except Exception as e:
+                logger.error(f"扫描出错: {e}", exc_info=True)
             time.sleep(args.interval * 60)
     else:
         results = scanner.scan_all()

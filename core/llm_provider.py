@@ -624,6 +624,12 @@ def get_llm_manager() -> LLMProviderManager:
         _llm_manager = LLMProviderManager()
     return _llm_manager
 
-def get_llm_provider(provider: Optional[LLMProviderType] = None) -> Optional[BaseLLMProvider]:
+def get_llm_provider(provider: Optional[str] = None) -> Optional[BaseLLMProvider]:
     """获取LLM Provider快捷函数"""
+    if provider is not None and isinstance(provider, str):
+        try:
+            provider = LLMProviderType(provider.lower())
+        except ValueError:
+            logger.warning(f"Unknown LLM provider: {provider}, using default")
+            provider = None
     return get_llm_manager().get_provider(provider)

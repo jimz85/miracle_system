@@ -284,31 +284,47 @@ class StructuredMemory:
     
     def update_trade(self, trade_id: int, **kwargs) -> bool:
         """更新交易记录"""
-        allowed_fields = [
-            "exit_price", "exit_time", "pnl", "pnl_pct", "commission",
-            "signals", "market_context", "notes", "status"
-        ]
+        # 定义允许更新的字段及其处理方式
+        field_handlers = {
+            "exit_price": lambda v: v,
+            "exit_time": lambda v: v.isoformat() if isinstance(v, datetime) else v,
+            "pnl": lambda v: v,
+            "pnl_pct": lambda v: v,
+            "commission": lambda v: v,
+            "signals": lambda v: json.dumps(v) if isinstance(v, dict) else v,
+            "market_context": lambda v: json.dumps(v) if isinstance(v, dict) else v,
+            "notes": lambda v: v,
+            "status": lambda v: v,
+        }
         
-        updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
+        # 只处理白名单中的字段
+        updates = {k: field_handlers[k](v) for k, v in kwargs.items() if k in field_handlers}
         if not updates:
             return False
         
-        # JSON序列化
-        if "signals" in updates:
-            updates["signals"] = json.dumps(updates["signals"])
-        if "market_context" in updates:
-            updates["market_context"] = json.dumps(updates["market_context"])
-        if "exit_time" in updates and isinstance(updates["exit_time"], datetime):
-            updates["exit_time"] = updates["exit_time"].isoformat()
-        
-        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-        values = list(updates.values()) + [trade_id]
-        
+        # 显式构建 UPDATE 语句，避免字符串拼接列名
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"UPDATE trades SET {set_clause} WHERE id = ?", values)
+            if "exit_price" in updates:
+                cursor.execute("UPDATE trades SET exit_price = ? WHERE id = ?", (updates["exit_price"], trade_id))
+            if "exit_time" in updates:
+                cursor.execute("UPDATE trades SET exit_time = ? WHERE id = ?", (updates["exit_time"], trade_id))
+            if "pnl" in updates:
+                cursor.execute("UPDATE trades SET pnl = ? WHERE id = ?", (updates["pnl"], trade_id))
+            if "pnl_pct" in updates:
+                cursor.execute("UPDATE trades SET pnl_pct = ? WHERE id = ?", (updates["pnl_pct"], trade_id))
+            if "commission" in updates:
+                cursor.execute("UPDATE trades SET commission = ? WHERE id = ?", (updates["commission"], trade_id))
+            if "signals" in updates:
+                cursor.execute("UPDATE trades SET signals = ? WHERE id = ?", (updates["signals"], trade_id))
+            if "market_context" in updates:
+                cursor.execute("UPDATE trades SET market_context = ? WHERE id = ?", (updates["market_context"], trade_id))
+            if "notes" in updates:
+                cursor.execute("UPDATE trades SET notes = ? WHERE id = ?", (updates["notes"], trade_id))
+            if "status" in updates:
+                cursor.execute("UPDATE trades SET status = ? WHERE id = ?", (updates["status"], trade_id))
             conn.commit()
-            return cursor.rowcount > 0
+            return True
     
     def get_trade(self, trade_id: int) -> Optional[TradeRecord]:
         """获取交易记录"""
@@ -349,23 +365,27 @@ class StructuredMemory:
             cursor = conn.cursor()
             
             base_query = "FROM trades WHERE status = 'closed'"
+            params = []
             if symbol:
-                base_query += f" AND symbol = '{symbol}'"
+                base_query += " AND symbol = ?"
+                params.append(symbol)
             
-            cursor.execute(f"SELECT COUNT(*) {base_query}")
+            cursor.execute(f"SELECT COUNT(*) {base_query}", params)
             total_trades = cursor.fetchone()[0]
             
             if total_trades == 0:
                 return {"total": 0, "win_rate": 0, "avg_pnl": 0, "total_pnl": 0}
             
-            cursor.execute(f"SELECT SUM(pnl) {base_query}")
+            cursor.execute(f"SELECT SUM(pnl) {base_query}", params)
             total_pnl = cursor.fetchone()[0] or 0
             
-            cursor.execute(f"SELECT COUNT(*) {base_query} AND pnl > 0")
+            # Fix: use WHERE instead of AND, and use parameterized query
+            win_query = base_query.replace("status = 'closed'", "status = 'closed' AND pnl > 0")
+            cursor.execute(f"SELECT COUNT(*) {win_query}", params)
             wins = cursor.fetchone()[0]
             win_rate = wins / total_trades if total_trades > 0 else 0
             
-            cursor.execute(f"SELECT AVG(pnl_pct) {base_query}")
+            cursor.execute(f"SELECT AVG(pnl_pct) {base_query}", params)
             avg_pnl_pct = cursor.fetchone()[0] or 0
             
             return {
