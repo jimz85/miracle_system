@@ -610,7 +610,7 @@ def calc_factors(price_data: Dict, onchain_data: Optional[Dict] = None,
     """
     highs = price_data.get("highs", [])
     lows = price_data.get("lows", [])
-    closes = price_data.get("prices", [])
+    closes = price_data.get("closes", [])
     
     # 价格动量因子 (60%)
     rsi = calc_rsi(closes)

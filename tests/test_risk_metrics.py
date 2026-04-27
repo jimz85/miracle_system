@@ -205,7 +205,8 @@ class TestAdaptiveLearner:
 
         learner.update_factor_performance("test_factor", 0.5, 0.02)
 
-        perf = learner.factor_performance["test_factor"]
+        # Access via factor_evaluator
+        perf = learner.factor_evaluator.factor_performance["test_factor"]
         assert len(perf["signals"]) == 1
         assert len(perf["returns"]) == 1
 
@@ -216,7 +217,8 @@ class TestAdaptiveLearner:
 
         learner.update_pattern_performance("test_pattern", won=True, actual_rr=2.5)
 
-        stats = learner.pattern_performance["test_pattern"]
+        # Access via pattern_evaluator
+        stats = learner.pattern_evaluator.pattern_performance["test_pattern"]
         assert stats["total"] == 1
         assert stats["wins"] == 1
 
@@ -299,8 +301,8 @@ class TestAdaptiveLearner:
         for _ in range(5):
             learner.update_pattern_performance("low_win_pattern", won=False, actual_rr=0.5)
 
-        # Pattern should be blocked
-        is_allowed = learner._check_pattern_allowed("low_win_pattern")
+        # Pattern should be blocked (5 losses = 0% win rate < 40% threshold)
+        is_allowed = learner.pattern_evaluator.is_allowed("low_win_pattern")
         assert is_allowed == False
 
 

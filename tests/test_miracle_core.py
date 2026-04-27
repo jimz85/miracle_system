@@ -575,8 +575,9 @@ class TestFactorWeightUpdate:
             )
             for i in range(5)
         ]
-        weights = update_factor_weights(recent_trades)
-        # Weights should be reduced
+        # use_ic=False returns nested dict format: {'price_momentum': {'weight': 0.6}}
+        weights = update_factor_weights(recent_trades, use_ic=False)
+        # Weights should be reduced (price_momentum['weight'] < 0.6)
         assert weights["price_momentum"]["weight"] < 0.6
 
     def test_update_high_win_rate(self):
@@ -594,8 +595,9 @@ class TestFactorWeightUpdate:
             )
             for i in range(5)
         ]
-        weights = update_factor_weights(recent_trades)
-        # Weights should be increased
+        # use_ic=False returns nested dict format: {'price_momentum': {'weight': 0.6}}
+        weights = update_factor_weights(recent_trades, use_ic=False)
+        # Weights should be increased (price_momentum['weight'] > 0.6)
         assert weights["price_momentum"]["weight"] > 0.6
 
     def test_update_insufficient_data(self):
