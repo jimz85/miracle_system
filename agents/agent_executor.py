@@ -11,6 +11,14 @@ Miracle 1.0.1 — 高频趋势跟踪+事件驱动混合系统
 6. 向Agent-L（学习模块）反馈交易结果
 """
 
+import os
+import sys
+from pathlib import Path
+
+# 项目根目录
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from typing import Dict, Any, Optional, List, Callable, Tuple
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
@@ -21,9 +29,7 @@ import time
 import logging
 import threading
 import requests
-import os
 import base64
-from pathlib import Path
 from requests.exceptions import RequestException, Timeout
 
 # ============================================================
@@ -1454,6 +1460,88 @@ class Executor:
         # 更新管理器组件的客户端引用
         self.order_manager.client = self.active_client
         self.position_monitor.client = self.active_client
+    
+    def _check_emergency_stop(self) -> bool:
+        """
+        检查是否处于紧急停止状态。
+        检查优先级：
+        1. 环境变量 EMERGENCY_STOP_ENABLED=true
+        2. 本地emergency_stop状态文件
+        3. 远程紧急停止API（如果配置了）
+        """
+        import os
+        from pathlib import Path
+        
+        # 1. 检查环境变量
+        if os.getenv("EMERGENCY_STOP_ENABLED", "").lower() == "true":
+            emergency_file = Path(PROJECT_ROOT) / ".emergency_stop"
+            if emergency_file.exists():
+                try:
+                    data = emergency_file.read_text().strip()
+                    if data:
+                        logging.critical(f"🚨 紧急停止文件内容: {data}")
+                        return True
+                except Exception:
+                    pass
+        
+        # 2. 检查状态文件（由emergency_stop_api.py创建）
+        state_file = Path(PROJECT_ROOT) / "data" / ".emergency_stop_state"
+        if state_file.exists():
+            try:
+                import json
+                state = json.loads(state_file.read_text())
+                if state.get("emergency_stopped", False):
+                    reason = state.get("reason", "Unknown")
+                    logging.critical(f"🚨 紧急停止状态: {reason}")
+                    return True
+            except Exception:
+                pass
+        
+        # 3. 尝试连接远程紧急停止API（如果配置了）
+        emergency_api_url = os.getenv("EMERGENCY_STOP_API_URL")
+        if emergency_api_url:
+            try:
+                import requests
+                resp = requests.get(f"{emergency_api_url}/status", timeout=2)
+                if resp.status_code == 200:
+                    state = resp.json()
+                    if state.get("emergency_stopped", False):
+                        logging.critical(f"🚨 远程紧急停止: {state.get('reason', 'Unknown')}")
+                        return True
+            except Exception:
+                pass  # API不可用，不阻止交易
+        
+        return False
+    
+    def trigger_emergency_stop(self, reason: str = "Manual stop"):
+        """
+        触发紧急停止（写入状态文件，供交易进程检查）
+        """
+        import os
+        import json
+        from pathlib import Path
+        
+        state_file = Path(PROJECT_ROOT) / "data" / ".emergency_stop_state"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        state = {
+            "emergency_stopped": True,
+            "reason": reason,
+            "stop_time": datetime.now().isoformat(),
+            "stopped_by": "executor"
+        }
+        
+        state_file.write_text(json.dumps(state, indent=2))
+        logging.critical(f"🚨 紧急停止已触发: {reason}")
+        
+        # 尝试取消所有活跃订单
+        try:
+            pending = self.order_manager.get_pending_orders()
+            for order_id in list(pending.keys()):
+                self.order_manager.remove_pending_order(order_id)
+                logging.info(f"已移除待处理订单: {order_id}")
+        except Exception as e:
+            logging.error(f"取消订单时出错: {e}")
 
     def register_callback(self, event: str, callback: Callable):
         """注册回调函数"""
@@ -1487,6 +1575,13 @@ class Executor:
 
         返回: 交易记录 或 None (执行失败)
         """
+        # =====================================================
+        # 紧急停止检查 - 如果系统处于紧急停止状态，则拒绝执行
+        # =====================================================
+        if self._check_emergency_stop():
+            logging.warning("🚫 交易被拒绝: 系统处于紧急停止状态")
+            return None
+        
         symbol = approved_signal.get("symbol")
         side = approved_signal.get("side")
         leverage = approved_signal.get("leverage", 1)

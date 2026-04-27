@@ -52,15 +52,25 @@ class MemoryEntry:
     embedding: Optional[List[float]] = None
     created_at: datetime = field(default_factory=datetime.now)
     memory_type: str = "general"  # general, trade, market, lesson, pattern
+    expires_at: Optional[datetime] = None  # 过期时间，None表示永不过期
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "id": self.id,
             "content": self.content,
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
             "memory_type": self.memory_type
         }
+        if self.expires_at:
+            result["expires_at"] = self.expires_at.isoformat()
+        return result
+    
+    def is_expired(self) -> bool:
+        """检查记忆是否已过期"""
+        if self.expires_at is None:
+            return False
+        return datetime.now() > self.expires_at
 
 
 class VectorMemory:
@@ -162,7 +172,8 @@ class VectorMemory:
         return [[0.0] * 384 for _ in texts]
     
     def add(self, content: str, metadata: Optional[Dict[str, Any]] = None,
-            memory_type: str = "general", id: Optional[str] = None) -> str:
+            memory_type: str = "general", id: Optional[str] = None,
+            expires_at: Optional[datetime] = None) -> str:
         """
         添加记忆条目
         
@@ -171,6 +182,7 @@ class VectorMemory:
             metadata: 元数据
             memory_type: 记忆类型
             id: 可选指定ID
+            expires_at: 过期时间，None表示永不过期
             
         Returns:
             str: 记忆ID
@@ -185,24 +197,29 @@ class VectorMemory:
             id=entry_id,
             content=content,
             metadata=metadata,
-            memory_type=memory_type
+            memory_type=memory_type,
+            expires_at=expires_at
         )
         
         # 生成嵌入
         embedding = self._generate_embedding(content)
         
         try:
+            entry_metadata = {
+                **metadata,
+                "created_at": entry.created_at.isoformat(),
+                "memory_type": memory_type
+            }
+            if expires_at:
+                entry_metadata["expires_at"] = expires_at.isoformat()
+            
             self.collection.add(
                 ids=[entry_id],
                 documents=[content],
                 embeddings=[embedding],
-                metadatas=[{
-                    **metadata,
-                    "created_at": entry.created_at.isoformat(),
-                    "memory_type": memory_type
-                }]
+                metadatas=[entry_metadata]
             )
-            logger.debug(f"Added memory: {entry_id}, type={memory_type}")
+            logger.debug(f"Added memory: {entry_id}, type={memory_type}, expires={expires_at}")
             return entry_id
         except Exception as e:
             logger.error(f"Failed to add memory: {e}")
@@ -230,11 +247,15 @@ class VectorMemory:
             ids.append(entry.id)
             documents.append(entry.content)
             embeddings.append(self._generate_embedding(entry.content))
-            metadatas.append({
+            
+            entry_metadata = {
                 **entry.metadata,
                 "created_at": entry.created_at.isoformat(),
                 "memory_type": entry.memory_type
-            })
+            }
+            if entry.expires_at:
+                entry_metadata["expires_at"] = entry.expires_at.isoformat()
+            metadatas.append(entry_metadata)
         
         try:
             self.collection.add(
@@ -460,6 +481,169 @@ class VectorMemory:
             )
         
         return "\n".join(context_parts)
+
+    # ==================== Expiration Cleanup ====================
+    
+    def cleanup_expired(self, dry_run: bool = False) -> Dict[str, int]:
+        """
+        清理过期的记忆条目
+        
+        Args:
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 清理统计 {"deleted": N, "by_type": {...}}
+        """
+        from datetime import datetime as dt
+        
+        try:
+            # 获取所有记忆
+            all_data = self.collection.get(include=["metadatas", "documents", "ids"])
+            
+            if not all_data["ids"]:
+                return {"deleted": 0, "by_type": {}, "total_checked": 0}
+            
+            expired_ids = []
+            by_type = {}
+            total_checked = len(all_data["ids"])
+            
+            for i, mem_id in enumerate(all_data["ids"]):
+                meta = all_data["metadatas"][i]
+                expires_at_str = meta.get("expires_at")
+                
+                if expires_at_str:
+                    try:
+                        expires_at = dt.fromisoformat(expires_at_str)
+                        if dt.now() > expires_at:
+                            expired_ids.append(mem_id)
+                            mem_type = meta.get("memory_type", "unknown")
+                            by_type[mem_type] = by_type.get(mem_type, 0) + 1
+                    except (ValueError, TypeError):
+                        pass
+            
+            if not dry_run and expired_ids:
+                self.collection.delete(ids=expired_ids)
+                logger.info(f"VectorMemory: Cleaned up {len(expired_ids)} expired memories")
+            
+            return {
+                "deleted": len(expired_ids) if not dry_run else 0,
+                "would_delete": len(expired_ids) if dry_run else 0,
+                "by_type": by_type,
+                "total_checked": total_checked
+            }
+        except Exception as e:
+            logger.error(f"Failed to cleanup expired memories: {e}")
+            return {"deleted": 0, "by_type": {}, "error": str(e)}
+    
+    def cleanup_by_age(self, max_age_days: int = 30, 
+                      memory_types: Optional[List[str]] = None,
+                      dry_run: bool = False) -> Dict[str, int]:
+        """
+        按年龄清理记忆
+        
+        Args:
+            max_age_days: 最大保留天数
+            memory_types: 只清理这些类型，为None则清理所有
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 清理统计
+        """
+        from datetime import timedelta
+        
+        cutoff_time = dt.now() - timedelta(days=max_age_days)
+        
+        try:
+            all_data = self.collection.get(include=["metadatas", "ids"])
+            
+            if not all_data["ids"]:
+                return {"deleted": 0, "by_type": {}, "total_checked": 0}
+            
+            old_ids = []
+            by_type = {}
+            total_checked = 0
+            
+            for i, mem_id in enumerate(all_data["ids"]):
+                meta = all_data["metadatas"][i]
+                mem_type = meta.get("memory_type", "unknown")
+                
+                # 按类型过滤
+                if memory_types and mem_type not in memory_types:
+                    continue
+                
+                total_checked += 1
+                created_at_str = meta.get("created_at")
+                
+                if created_at_str:
+                    try:
+                        created_at = dt.fromisoformat(created_at_str)
+                        if created_at < cutoff_time:
+                            old_ids.append(mem_id)
+                            by_type[mem_type] = by_type.get(mem_type, 0) + 1
+                    except (ValueError, TypeError):
+                        pass
+            
+            if not dry_run and old_ids:
+                self.collection.delete(ids=old_ids)
+                logger.info(f"VectorMemory: Cleaned up {len(old_ids)} old memories (>{max_age_days} days)")
+            
+            return {
+                "deleted": len(old_ids) if not dry_run else 0,
+                "would_delete": len(old_ids) if dry_run else 0,
+                "by_type": by_type,
+                "total_checked": total_checked,
+                "max_age_days": max_age_days
+            }
+        except Exception as e:
+            logger.error(f"Failed to cleanup old memories: {e}")
+            return {"deleted": 0, "by_type": {}, "error": str(e)}
+    
+    def get_memory_stats_with_expiry(self) -> Dict[str, Any]:
+        """
+        获取包含过期信息的记忆统计
+        
+        Returns:
+            Dict: 统计信息
+        """
+        from datetime import datetime as dt, timedelta
+        
+        try:
+            all_data = self.collection.get(include=["metadatas"])
+            
+            if not all_data["ids"]:
+                return {"total": 0, "by_type": {}, "expired": 0, "expiring_soon": 0}
+            
+            total = len(all_data["ids"])
+            by_type = {}
+            expired = 0
+            expiring_soon = 0  # 7天内过期
+            
+            soon_cutoff = dt.now() + timedelta(days=7)
+            
+            for meta in all_data["metadatas"]:
+                mem_type = meta.get("memory_type", "unknown")
+                by_type[mem_type] = by_type.get(mem_type, 0) + 1
+                
+                expires_at_str = meta.get("expires_at")
+                if expires_at_str:
+                    try:
+                        expires_at = dt.fromisoformat(expires_at_str)
+                        if dt.now() > expires_at:
+                            expired += 1
+                        elif expires_at < soon_cutoff:
+                            expiring_soon += 1
+                    except (ValueError, TypeError):
+                        pass
+            
+            return {
+                "total": total,
+                "by_type": by_type,
+                "expired": expired,
+                "expiring_soon": expiring_soon
+            }
+        except Exception as e:
+            logger.error(f"Failed to get memory stats: {e}")
+            return {"error": str(e)}
 
 
 # 全局实例

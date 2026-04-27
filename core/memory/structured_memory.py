@@ -658,6 +658,191 @@ class StructuredMemory:
             created_at=datetime.fromisoformat(row["created_at"])
         )
     
+    # ==================== Expiration Cleanup ====================
+    
+    def cleanup_old_trades(self, days: int = 90, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        清理旧的交易记录
+        
+        Args:
+            days: 保留最近N天的交易
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 清理统计
+        """
+        from datetime import timedelta
+        
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 获取将被删除的交易
+            cursor.execute(
+                "SELECT id, symbol, entry_time FROM trades WHERE entry_time < ?",
+                (cutoff_date,)
+            )
+            old_trades = cursor.fetchall()
+            
+            stats = {
+                "would_delete": len(old_trades),
+                "deleted": 0,
+                "cutoff_date": cutoff_date,
+                "days": days
+            }
+            
+            if old_trades:
+                stats["by_symbol"] = {}
+                for row in old_trades:
+                    symbol = row[1]
+                    stats["by_symbol"][symbol] = stats["by_symbol"].get(symbol, 0) + 1
+            
+            if not dry_run and old_trades:
+                trade_ids = [str(row[0]) for row in old_trades]
+                placeholders = ",".join(["?" for _ in trade_ids])
+                cursor.execute(f"DELETE FROM trades WHERE id IN ({placeholders})", trade_ids)
+                conn.commit()
+                stats["deleted"] = len(old_trades)
+                logger.info(f"Cleaned up {len(old_trades)} old trades (>{days} days)")
+            
+            return stats
+    
+    def cleanup_low_value_lessons(self, min_success_rate: float = 0.3,
+                                  min_applied: int = 5,
+                                  dry_run: bool = False) -> Dict[str, Any]:
+        """
+        清理低价值教训（遗忘机制）
+        
+        Args:
+            min_success_rate: 最小成功率，低于此值的教训会被清理
+            min_applied: 最小应用次数，低于此值的教训会被清理
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 清理统计
+        """
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 找出低价值教训
+            cursor.execute("""
+                SELECT id, category, content, success_rate, applied_count 
+                FROM lessons 
+                WHERE success_rate < ? AND applied_count >= ?
+            """, (min_success_rate, min_applied))
+            
+            low_value = cursor.fetchall()
+            
+            stats = {
+                "would_delete": len(low_value),
+                "deleted": 0,
+                "min_success_rate": min_success_rate,
+                "min_applied": min_applied
+            }
+            
+            if low_value:
+                stats["by_category"] = {}
+                for row in low_value:
+                    cat = row[1]
+                    stats["by_category"][cat] = stats["by_category"].get(cat, 0) + 1
+            
+            if not dry_run and low_value:
+                lesson_ids = [str(row[0]) for row in low_value]
+                placeholders = ",".join(["?" for _ in lesson_ids])
+                cursor.execute(f"DELETE FROM lessons WHERE id IN ({placeholders})", lesson_ids)
+                conn.commit()
+                stats["deleted"] = len(low_value)
+                logger.info(f"Forgotten {len(low_value)} low-value lessons")
+            
+            return stats
+    
+    def cleanup_inactive_strategies(self, min_trades: int = 10,
+                                    min_performance: float = -0.1,
+                                    dry_run: bool = False) -> Dict[str, Any]:
+        """
+        清理不活跃/表现差的策略
+        
+        Args:
+            min_trades: 最小交易次数，低于此值且表现差的策略会被清理
+            min_performance: 最小收益率，低于此值的策略会被清理
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 清理统计
+        """
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 找出不活跃/表现差的策略
+            cursor.execute("""
+                SELECT id, strategy_name, symbol, performance, total_trades
+                FROM strategy_params 
+                WHERE total_trades < ? AND performance < ?
+            """, (min_trades, min_performance))
+            
+            inactive = cursor.fetchall()
+            
+            stats = {
+                "would_delete": len(inactive),
+                "deleted": 0,
+                "min_trades": min_trades,
+                "min_performance": min_performance
+            }
+            
+            if inactive:
+                stats["by_strategy"] = {}
+                for row in inactive:
+                    name = row[1]
+                    stats["by_strategy"][name] = stats["by_strategy"].get(name, 0) + 1
+            
+            if not dry_run and inactive:
+                strategy_ids = [str(row[0]) for row in inactive]
+                placeholders = ",".join(["?" for _ in strategy_ids])
+                cursor.execute(f"DELETE FROM strategy_params WHERE id IN ({placeholders})", strategy_ids)
+                conn.commit()
+                stats["deleted"] = len(inactive)
+                logger.info(f"Cleaned up {len(inactive)} inactive strategies")
+            
+            return stats
+    
+    def run_memory_maintenance(self, 
+                               trade_days: int = 90,
+                               lesson_success_rate: float = 0.3,
+                               lesson_min_applied: int = 5,
+                               strategy_min_trades: int = 10,
+                               strategy_min_perf: float = -0.1,
+                               dry_run: bool = False) -> Dict[str, Any]:
+        """
+        运行记忆系统维护（清理过期数据）
+        
+        Returns:
+            Dict: 各清理操作的统计
+        """
+        results = {}
+        
+        # 清理旧交易
+        results["old_trades"] = self.cleanup_old_trades(days=trade_days, dry_run=dry_run)
+        
+        # 清理低价值教训（遗忘机制）
+        results["low_value_lessons"] = self.cleanup_low_value_lessons(
+            min_success_rate=lesson_success_rate,
+            min_applied=lesson_min_applied,
+            dry_run=dry_run
+        )
+        
+        # 清理不活跃策略
+        results["inactive_strategies"] = self.cleanup_inactive_strategies(
+            min_trades=strategy_min_trades,
+            min_performance=strategy_min_perf,
+            dry_run=dry_run
+        )
+        
+        total_deleted = sum(r.get("deleted", 0) for r in results.values())
+        logger.info(f"Memory maintenance completed: {total_deleted} entries cleaned up")
+        
+        return results
+    
     # ==================== Utility Operations ====================
     
     def reset(self):

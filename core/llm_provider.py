@@ -508,11 +508,24 @@ class OllamaProvider(BaseLLMProvider):
 # ==================== Provider 管理器 ====================
 
 class LLMProviderManager:
-    """LLM Provider 管理器 - 支持多Provider切换"""
+    """LLM Provider 管理器 - 支持多Provider切换和自动故障转移"""
     
     _instance = None
     _providers: Dict[LLMProviderType, BaseLLMProvider] = {}
     _current_provider: Optional[LLMProviderType] = None
+    _fallback_provider: Optional[LLMProviderType] = None
+    _failure_count: Dict[LLMProviderType, int] = {}
+    _max_retries: int = 3
+    _auto_fallback_enabled: bool = True
+    
+    # Provider优先级列表（用于故障转移时的顺序）
+    _provider_priority = [
+        LLMProviderType.CLAUDE,
+        LLMProviderType.GPT,
+        LLMProviderType.DEEPSEEK,
+        LLMProviderType.GEMINI,
+        LLMProviderType.OLLAMA
+    ]
     
     def __new__(cls):
         if cls._instance is None:
@@ -522,6 +535,33 @@ class LLMProviderManager:
     def __init__(self):
         if not self._providers:
             self._init_providers()
+            self._load_fallback_config()
+    
+    def _load_fallback_config(self):
+        """从环境变量加载故障转移配置"""
+        import os
+        self._auto_fallback_enabled = os.getenv("LLM_AUTO_FALLBACK", "true").lower() == "true"
+        self._max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+        
+        # 设置备用provider
+        fallback_name = os.getenv("LLM_FALLBACK_PROVIDER", "deepseek")
+        try:
+            self._fallback_provider = LLMProviderType(fallback_name.lower())
+        except ValueError:
+            self._fallback_provider = LLMProviderType.DEEPSEEK
+        
+        # 设置主provider
+        primary_name = os.getenv("LLM_PRIMARY_PROVIDER", "claude")
+        try:
+            primary = LLMProviderType(primary_name.lower())
+            if primary in self._providers:
+                self._current_provider = primary
+        except ValueError:
+            pass
+        
+        logger.info(f"LLM Fallback config: auto_fallback={self._auto_fallback_enabled}, "
+                   f"max_retries={self._max_retries}, primary={self._current_provider}, "
+                   f"fallback={self._fallback_provider}")
     
     def _init_providers(self):
         """初始化所有可用的Provider"""
@@ -532,13 +572,13 @@ class LLMProviderManager:
                     provider = self._create_provider(provider_type, config)
                     if provider:
                         self._providers[provider_type] = provider
+                        self._failure_count[provider_type] = 0
                         logger.info(f"Initialized {provider_type.value} provider")
             except Exception as e:
                 logger.warning(f"Failed to initialize {provider_type.value}: {e}")
         
         if self._providers:
-            for priority in [LLMProviderType.CLAUDE, LLMProviderType.GPT, 
-                           LLMProviderType.DEEPSEEK, LLMProviderType.OLLAMA]:
+            for priority in self._provider_priority:
                 if priority in self._providers:
                     self._current_provider = priority
                     break
@@ -571,6 +611,49 @@ class LLMProviderManager:
             return True
         return False
     
+    def _record_failure(self, provider_type: LLMProviderType):
+        """记录provider失败次数"""
+        if provider_type not in self._failure_count:
+            self._failure_count[provider_type] = 0
+        self._failure_count[provider_type] += 1
+        logger.warning(f"{provider_type.value} failure count: {self._failure_count[provider_type]}/{self._max_retries}")
+        
+        if self._failure_count[provider_type] >= self._max_retries:
+            self._trigger_fallback(provider_type)
+    
+    def _record_success(self, provider_type: LLMProviderType):
+        """记录provider成功，重置失败计数"""
+        if provider_type in self._failure_count:
+            self._failure_count[provider_type] = 0
+    
+    def _trigger_fallback(self, failed_provider: LLMProviderType):
+        """触发故障转移"""
+        logger.warning(f"Triggering fallback from {failed_provider.value}")
+        
+        # 首先尝试配置的fallback provider
+        if self._fallback_provider and self._fallback_provider in self._providers:
+            if self._fallback_provider != failed_provider:
+                self.set_provider(self._fallback_provider)
+                logger.info(f"Fallback activated: using {self._fallback_provider.value}")
+                return
+        
+        # 否则按优先级找一个可用的provider
+        for provider in self._provider_priority:
+            if provider in self._providers and provider != failed_provider:
+                self.set_provider(provider)
+                logger.info(f"Auto-fallback activated: using {provider.value}")
+                return
+        
+        logger.error("No available fallback provider!")
+    
+    def reset_failure_count(self, provider_type: Optional[LLMProviderType] = None):
+        """重置失败计数"""
+        if provider_type:
+            self._failure_count[provider_type] = 0
+        else:
+            for pt in self._failure_count:
+                self._failure_count[pt] = 0
+    
     @property
     def current_provider(self) -> Optional[LLMProviderType]:
         return self._current_provider
@@ -580,7 +663,7 @@ class LLMProviderManager:
         return list(self._providers.keys())
     
     async def chat(self, messages: List[Message], provider: Optional[LLMProviderType] = None, **kwargs) -> LLMResponse:
-        """使用指定或当前Provider发送对话"""
+        """使用指定或当前Provider发送对话（带自动降级）"""
         prov = self.get_provider(provider)
         if not prov:
             return LLMResponse(
@@ -589,7 +672,78 @@ class LLMProviderManager:
                 model="",
                 error="No provider available"
             )
+        
+        # 如果启用自动降级，使用带降级的chat_with_fallback
+        if self._auto_fallback_enabled and provider is None:
+            return await self.chat_with_fallback(messages, **kwargs)
+        
         return await prov.chat(messages, **kwargs)
+    
+    async def chat_with_fallback(self, messages: List[Message], **kwargs) -> LLMResponse:
+        """带自动降级的chat方法 - 主力失败自动切换备用"""
+        attempted_providers = []
+        
+        # 首先尝试当前配置的provider
+        current = self._current_provider
+        if current:
+            attempted_providers.append(current)
+            prov = self.get_provider(current)
+            if prov:
+                try:
+                    response = await prov.chat(messages, **kwargs)
+                    if not response.error:
+                        self._record_success(current)
+                        return response
+                    else:
+                        logger.warning(f"{current.value} returned error: {response.error}")
+                        self._record_failure(current)
+                except Exception as e:
+                    logger.error(f"{current.value} exception: {e}")
+                    self._record_failure(current)
+        
+        # 如果失败了，尝试fallback provider
+        if self._fallback_provider and self._fallback_provider not in attempted_providers:
+            attempted_providers.append(self._fallback_provider)
+            prov = self.get_provider(self._fallback_provider)
+            if prov:
+                try:
+                    logger.info(f"Trying fallback provider: {self._fallback_provider.value}")
+                    response = await prov.chat(messages, **kwargs)
+                    if not response.error:
+                        self._record_success(self._fallback_provider)
+                        # 切换到fallback作为新的主provider
+                        self.set_provider(self._fallback_provider)
+                        return response
+                    else:
+                        logger.warning(f"{self._fallback_provider.value} returned error: {response.error}")
+                        self._record_failure(self._fallback_provider)
+                except Exception as e:
+                    logger.error(f"{self._fallback_provider.value} exception: {e}")
+                    self._record_failure(self._fallback_provider)
+        
+        # 最后尝试所有其他可用的provider
+        for provider_type in self._provider_priority:
+            if provider_type in self._providers and provider_type not in attempted_providers:
+                attempted_providers.append(provider_type)
+                prov = self._providers[provider_type]
+                try:
+                    logger.info(f"Trying emergency fallback provider: {provider_type.value}")
+                    response = await prov.chat(messages, **kwargs)
+                    if not response.error:
+                        self._record_success(provider_type)
+                        self.set_provider(provider_type)
+                        return response
+                except Exception as e:
+                    logger.error(f"{provider_type.value} exception: {e}")
+        
+        # 所有provider都失败了
+        logger.error("All LLM providers failed!")
+        return LLMResponse(
+            content="",
+            provider=current or LLMProviderType.CLAUDE,
+            model="",
+            error="All LLM providers failed"
+        )
     
     async def embed(self, texts: List[str], provider: Optional[LLMProviderType] = None, **kwargs) -> List[List[float]]:
         """获取文本嵌入"""

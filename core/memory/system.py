@@ -601,6 +601,149 @@ class MemorySystem:
         except Exception as e:
             logger.error(f"Failed to export memories: {e}")
             return False
+    
+    # ==================== Forgetting & Cleanup Mechanisms ====================
+    
+    def forget_low_value_memories(self, 
+                                   min_success_rate: float = 0.3,
+                                   min_applied: int = 5,
+                                   dry_run: bool = True) -> Dict[str, Any]:
+        """
+        遗忘低价值记忆（遗忘机制）
+        
+        遗忘策略:
+        - 教训: 成功率低于min_success_rate且应用次数>=min_applied的会被遗忘
+        - 向量记忆: 清理过期的记忆条目
+        
+        Args:
+            min_success_rate: 教训最小成功率阈值
+            min_applied: 教训最小应用次数阈值  
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 遗忘统计
+        """
+        results = {
+            "structured_lessons": {},
+            "vector_expired": {},
+            "total_forgotten": 0
+        }
+        
+        # 遗忘低价值教训
+        lesson_result = self.structured.cleanup_low_value_lessons(
+            min_success_rate=min_success_rate,
+            min_applied=min_applied,
+            dry_run=dry_run
+        )
+        results["structured_lessons"] = lesson_result
+        if not dry_run:
+            results["total_forgotten"] += lesson_result.get("deleted", 0)
+        
+        # 清理过期向量记忆
+        vector_result = self.vector.cleanup_expired(dry_run=dry_run)
+        results["vector_expired"] = vector_result
+        if not dry_run:
+            results["total_forgotten"] += vector_result.get("deleted", 0)
+        
+        return results
+    
+    def run_memory_maintenance(self, 
+                              trade_days: int = 90,
+                              vector_age_days: int = 30,
+                              lesson_success_rate: float = 0.3,
+                              lesson_min_applied: int = 5,
+                              strategy_min_trades: int = 10,
+                              strategy_min_perf: float = -0.1,
+                              dry_run: bool = True) -> Dict[str, Any]:
+        """
+        运行完整记忆维护（遗忘机制 + 过期清理）
+        
+        Args:
+            trade_days: 保留最近N天的交易
+            vector_age_days: 清理N天以上的向量记忆
+            lesson_success_rate: 教训最小成功率阈值
+            lesson_min_applied: 教训最小应用次数阈值
+            strategy_min_trades: 策略最小交易次数
+            strategy_min_perf: 策略最小收益率
+            dry_run: 若为True，只统计不删除
+            
+        Returns:
+            Dict: 各维护操作的统计
+        """
+        results = {}
+        
+        # 结构化记忆维护
+        results["structured"] = self.structured.run_memory_maintenance(
+            trade_days=trade_days,
+            lesson_success_rate=lesson_success_rate,
+            lesson_min_applied=lesson_min_applied,
+            strategy_min_trades=strategy_min_trades,
+            strategy_min_perf=strategy_min_perf,
+            dry_run=dry_run
+        )
+        
+        # 向量记忆按年龄清理
+        results["vector_by_age"] = self.vector.cleanup_by_age(
+            max_age_days=vector_age_days,
+            dry_run=dry_run
+        )
+        
+        # 清理明确的过期记忆
+        results["vector_expired"] = self.vector.cleanup_expired(dry_run=dry_run)
+        
+        # 汇总
+        total_deleted = 0
+        for key, val in results.items():
+            if isinstance(val, dict):
+                total_deleted += val.get("deleted", 0)
+        
+        results["summary"] = {
+            "dry_run": dry_run,
+            "total_deleted": total_deleted,
+            "message": f"Would forget {total_deleted} memories" if dry_run else f"Forgotten {total_deleted} memories"
+        }
+        
+        return results
+    
+    def get_memory_health_report(self) -> Dict[str, Any]:
+        """
+        获取记忆健康报告
+        
+        Returns:
+            Dict: 健康状况报告
+        """
+        vector_stats = self.vector.get_memory_stats_with_expiry()
+        structured_stats = self.structured.get_stats()
+        
+        health = {
+            "timestamp": datetime.now().isoformat(),
+            "vector_memory": vector_stats,
+            "structured_memory": structured_stats,
+            "issues": [],
+            "recommendations": []
+        }
+        
+        # 检查问题
+        total_memories = vector_stats.get("total", 0)
+        if total_memories > 10000:
+            health["issues"].append("Vector memory exceeds 10000 entries - consider cleanup")
+            health["recommendations"].append("Run cleanup to remove old memories")
+        
+        if vector_stats.get("expired", 0) > 0:
+            health["recommendations"].append(f"Clean up {vector_stats['expired']} expired memories")
+        
+        if vector_stats.get("expiring_soon", 0) > 100:
+            health["recommendations"].append(f"{vector_stats['expiring_soon']} memories expiring soon")
+        
+        # 总体状态
+        if not health["issues"]:
+            health["status"] = "healthy"
+        elif len(health["issues"]) <= 2:
+            health["status"] = "warning"
+        else:
+            health["status"] = "critical"
+        
+        return health
 
 
 # 全局实例

@@ -4,13 +4,14 @@ Miracle 2.0 - Orchestrator 协调器
 =================================
 LLM驱动的大脑，负责任务分解、结果聚合、自我反思
 
-简化版本 - 保证可用
+增强版本 - 带LLM降级机制
 """
 
 import json
 import logging
 import time
 import uuid
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -35,6 +36,10 @@ DEFAULT_CONFIG = {
     "temperature": 0.7,
     "enable_reflection": True,
     "enable_memory": True,
+    # LLM降级机制配置
+    "llm_failure_threshold": 3,      # 连续失败N次后降级到规则引擎
+    "llm_recovery_interval": 300,    # 每5分钟尝试恢复LLM
+    "rule_engine_fallback": True,    # 启用规则引擎降级
 }
 
 # ==================== 数据模型 ====================
@@ -82,6 +87,11 @@ class OrchestratorState:
     last_decision_time: Optional[str] = None
     consecutive_waits: int = 0
     total_reflections: int = 0
+    # LLM降级机制状态
+    llm_failures: int = 0              # 连续LLM失败次数
+    llm_degraded: bool = False         # 是否已降级到规则引擎
+    last_llm_retry: Optional[float] = None  # 上次LLM重试时间戳
+    total_llm_fallbacks: int = 0       # 总降级次数
 
 # ==================== 系统提示词 ====================
 
@@ -126,6 +136,10 @@ SYSTEM_PROMPT = """你是Miracle交易系统的首席交易员。
 class Orchestrator:
     """
     LLM驱动的大脑协调器
+    
+    增强功能:
+    - LLM降级机制: 连续失败后自动切换到规则引擎
+    - 自动恢复: 定期尝试恢复LLM
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -147,6 +161,42 @@ class Orchestrator:
             logger.warning(f"Orchestrator: LLM init failed, using rule-based fallback: {e}")
             self.llm = None
 
+    def _should_try_llm_recovery(self) -> bool:
+        """检查是否应该尝试恢复LLM"""
+        if self.llm is not None:
+            return False
+        
+        current_time = time.time()
+        recovery_interval = self.config.get("llm_recovery_interval", 300)
+        
+        if self.state.last_llm_retry is None:
+            return True
+        
+        return (current_time - self.state.last_llm_retry) >= recovery_interval
+
+    def _try_llm_recovery(self) -> bool:
+        """尝试恢复LLM"""
+        if not self._should_try_llm_recovery():
+            return False
+        
+        self.state.last_llm_retry = time.time()
+        
+        try:
+            self.llm = get_llm_provider(
+                provider=self.config.get("llm_provider", "claude"),
+                model=self.config.get("model"),
+                temperature=self.config.get("temperature", 0.7)
+            )
+            # 重置失败计数
+            self.state.llm_failures = 0
+            self.state.llm_degraded = False
+            logger.info("Orchestrator: LLM recovered successfully")
+            return True
+        except Exception as e:
+            logger.warning(f"Orchestrator: LLM recovery failed: {e}")
+            self.llm = None
+            return False
+
     async def decide(self, market_data: Dict[str, Any]) -> TradingDecision:
         """
         做交易决策
@@ -163,12 +213,43 @@ class Orchestrator:
                 confidence=0.0
             )
 
+        # 如果已降级到规则引擎，先尝试恢复LLM
+        if self.state.llm_degraded:
+            if self._try_llm_recovery():
+                # LLM恢复成功，使用LLM决策
+                return await self._llm_decide(market_data)
+            elif self.config.get("rule_engine_fallback", True):
+                # 使用规则引擎
+                return self._rule_based_decide(market_data)
+            else:
+                # 不允许降级，等待LLM恢复
+                return TradingDecision(
+                    decision=DecisionType.WAIT,
+                    symbol="",
+                    direction="",
+                    reasoning="LLM不可用，等待恢复",
+                    confidence=0.0
+                )
+
         # 如果有LLM，使用LLM决策
         if self.llm:
             return await self._llm_decide(market_data)
 
-        # 否则使用规则决策
-        return self._rule_based_decide(market_data)
+        # 没有LLM，尝试初始化
+        if self._try_llm_recovery():
+            return await self._llm_decide(market_data)
+        
+        # 规则引擎备用
+        if self.config.get("rule_engine_fallback", True):
+            return self._rule_based_decide(market_data)
+
+        return TradingDecision(
+            decision=DecisionType.WAIT,
+            symbol="",
+            direction="",
+            reasoning="LLM不可用，规则引擎未启用",
+            confidence=0.0
+        )
 
     async def _llm_decide(self, market_data: Dict[str, Any]) -> TradingDecision:
         """使用LLM做决策"""
@@ -184,6 +265,11 @@ class Orchestrator:
             )
 
             if not response.error:
+                # LLM成功，重置失败计数
+                if self.state.llm_failures > 0:
+                    logger.info(f"Orchestrator: LLM recovered after {self.state.llm_failures} failures")
+                self.state.llm_failures = 0
+                
                 content = response.content.strip()
                 # 提取JSON
                 if "```json" in content:
@@ -206,6 +292,18 @@ class Orchestrator:
                 )
         except Exception as e:
             logger.error(f"LLM决策失败: {e}")
+
+        # LLM失败
+        self.state.llm_failures += 1
+        failure_threshold = self.config.get("llm_failure_threshold", 3)
+        
+        if self.state.llm_failures >= failure_threshold and not self.state.llm_degraded:
+            self.state.llm_degraded = True
+            self.state.total_llm_fallbacks += 1
+            logger.warning(
+                f"Orchestrator: Degraded to rule engine after {self.state.llm_failures} "
+                f"consecutive LLM failures (total fallbacks: {self.state.total_llm_fallbacks})"
+            )
 
         return self._rule_based_decide(market_data)
 
@@ -280,6 +378,17 @@ class Orchestrator:
     def get_state(self) -> Dict[str, Any]:
         """获取状态"""
         return self.state.__dict__
+    
+    def get_degradation_status(self) -> Dict[str, Any]:
+        """获取LLM降级机制状态"""
+        return {
+            "llm_available": self.llm is not None,
+            "llm_degraded": self.state.llm_degraded,
+            "llm_failures": self.state.llm_failures,
+            "total_llm_fallbacks": self.state.total_llm_fallbacks,
+            "failure_threshold": self.config.get("llm_failure_threshold", 3),
+            "recovery_interval_seconds": self.config.get("llm_recovery_interval", 300),
+        }
 
     async def run_cycle(self, market_data: Dict[str, Any]) -> TradingDecision:
         """

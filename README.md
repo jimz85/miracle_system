@@ -189,6 +189,56 @@ miracle_system/
 
 ## 关键特性
 
+### Orchestrator LLM降级机制
+
+当LLM连续失败时，系统自动切换到规则引擎：
+
+```python
+# 配置降级参数
+config = {
+    "llm_failure_threshold": 3,      # 连续失败3次后降级
+    "llm_recovery_interval": 300,    # 每5分钟尝试恢复LLM
+    "rule_engine_fallback": True,    # 启用规则引擎
+}
+
+# 检查降级状态
+orchestrator = Orchestrator(config)
+status = orchestrator.get_degradation_status()
+# {
+#     "llm_available": True,
+#     "llm_degraded": False,
+#     "llm_failures": 0,
+#     "total_llm_fallbacks": 0
+# }
+```
+
+### Memory过期清理与遗忘机制
+
+```python
+from core.memory import get_memory_system
+
+memory = get_memory_system()
+
+# 健康报告
+health = memory.get_memory_health_report()
+
+# 遗忘低价值记忆（成功率<30%且应用次数>=5）
+result = memory.forget_low_value_memories(
+    min_success_rate=0.3,
+    min_applied=5,
+    dry_run=False  # 设为False执行遗忘
+)
+
+# 完整维护（清理旧数据）
+result = memory.run_memory_maintenance(
+    trade_days=90,         # 保留90天交易
+    vector_age_days=30,    # 30天以上的向量记忆
+    lesson_success_rate=0.3,
+    lesson_min_applied=5,
+    dry_run=True  # 先预览
+)
+```
+
 ### Autoresearch 循环
 
 ```python
@@ -234,8 +284,10 @@ class AutoresearchLoop:
 
 ### Memory System
 
-- **ChromaDB**: 向量记忆，语义检索历史经验
-- **SQLite**: 结构化记忆，交易记录、因子表现
+- **ChromaDB**: 向量记忆，语义检索历史经验，支持过期时间(TTL)
+- **SQLite**: 结构化记忆，交易记录、因子表现、策略参数
+- **遗忘机制**: 自动清理低价值教训（成功率低+应用次数少）
+- **过期清理**: 自动清理过期数据和旧交易记录
 - **Few-shot**: 示范库，成功/失败模式
 
 ---
