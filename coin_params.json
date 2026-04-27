@@ -1,0 +1,420 @@
+{
+  "_comment": "Miracle System 币种参数配置 v1.0 | 参考Kronos coin_strategy_map.json | 2026-04-27",
+  "_description": "每个币种的最优策略参数配置，来源：历史回测 + Walk-Forward验证",
+  "_sources": {
+    "kronos_coin_strategy_map": "kronos/coin_strategy_map.json",
+    "miracle_backtest": "backtest.py",
+    "adaptive_learner": "adaptive_learner.py"
+  },
+  "coins": [
+    {
+      "symbol": "BTC",
+      "enabled": true,
+      "optimal_strategy": "RSI_MR",
+      "timeframe": "1H",
+      "confidence": 0.85,
+      "signal_params": {
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "ema_fast": 12,
+        "ema_slow": 26,
+        "atr_period": 14,
+        "atr_stop_multiplier": 3.0
+      },
+      "exit": {
+        "rsi_exit": 70,
+        "atr_exit": true,
+        "time_exit_hours": 24
+      },
+      "position": {
+        "base_position_pct": 2.0,
+        "max_position_pct": 10.0,
+        "leverage": 2,
+        "leverage_strong_trend": 3
+      },
+      "performance": {
+        "sharpe": 1.27,
+        "winrate": "69%",
+        "max_drawdown": "10.2%",
+        "trades": 17,
+        "alpha_vs_bh": "-5.2%"
+      },
+      "notes": "BTC标准RSI均值回归策略，跑输B&H但更稳定",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "ETH",
+      "enabled": true,
+      "optimal_strategy": "RSI_MR",
+      "timeframe": "4H",
+      "confidence": 0.75,
+      "signal_params": {
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "adx_min": 20,
+        "adx_strong": 30,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.5,
+        "bollinger_period": 20,
+        "bollinger_std": 2.0
+      },
+      "exit": {
+        "rsi_exit": 68,
+        "atr_exit": true,
+        "time_exit_hours": 36
+      },
+      "position": {
+        "base_position_pct": 2.5,
+        "max_position_pct": 12.0,
+        "leverage": 2,
+        "leverage_strong_trend": 3
+      },
+      "performance": {
+        "sharpe": 1.45,
+        "winrate": "72%",
+        "max_drawdown": "8.5%",
+        "trades": 21,
+        "alpha_vs_bh": "+3.8%"
+      },
+      "notes": "ETH的RSI均值回归表现优于BTC，4H周期更稳定",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "SOL",
+      "enabled": true,
+      "optimal_strategy": "RSI_MR",
+      "timeframe": "1H",
+      "confidence": 0.85,
+      "signal_params": {
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.8
+      },
+      "exit": {
+        "rsi_exit": 70,
+        "atr_exit": true,
+        "time_exit_hours": 24
+      },
+      "position": {
+        "base_position_pct": 2.0,
+        "max_position_pct": 15.0,
+        "leverage": 2,
+        "leverage_strong_trend": 3
+      },
+      "performance": {
+        "sharpe": 1.45,
+        "winrate": "71%",
+        "max_drawdown": "12.0%",
+        "trades": 22,
+        "alpha_vs_bh": "+7.3%"
+      },
+      "notes": "SOL的RSI均值回归稳健，22次交易胜率71%，当前实盘持仓",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "DOGE",
+      "enabled": true,
+      "optimal_strategy": "RSI_MR",
+      "timeframe": "4H",
+      "confidence": 0.9,
+      "signal_params": {
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.5,
+        "vol_ratio_min": 1.5
+      },
+      "exit": {
+        "rsi_exit": 70,
+        "atr_exit": true,
+        "time_exit_hours": 48
+      },
+      "position": {
+        "base_position_pct": 1.5,
+        "max_position_pct": 15.0,
+        "leverage": 2,
+        "leverage_strong_trend": 3
+      },
+      "performance": {
+        "sharpe": 7.94,
+        "winrate": "82.7%",
+        "max_drawdown": "20.3%",
+        "trades": 130,
+        "alpha_vs_bh": "+201%"
+      },
+      "notes": "DOGE最优策略：RSI均值回归，Sharpe 7.94，胜率82.7%，Walk-Forward验证通过",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "BNB",
+      "enabled": true,
+      "optimal_strategy": "RSI_EMAn",
+      "timeframe": "1H",
+      "confidence": 0.8,
+      "signal_params": {
+        "rsi_oversold": 35,
+        "rsi_overbought": 65,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "ema_fast": 12,
+        "ema_slow": 26,
+        "ema_signal": 9,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.5
+      },
+      "exit": {
+        "rsi_exit": 65,
+        "atr_exit": true,
+        "time_exit_hours": 24
+      },
+      "position": {
+        "base_position_pct": 2.0,
+        "max_position_pct": 10.0,
+        "leverage": 2,
+        "leverage_strong_trend": 2
+      },
+      "performance": {
+        "sharpe": 2.28,
+        "winrate": "83%",
+        "max_drawdown": "2.9%",
+        "trades": 6,
+        "alpha_vs_bh": "+3.6%"
+      },
+      "notes": "BNB的RSI+EMA共振胜率83%，最大回撤仅2.9%，低回撤高胜率策略",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "XRP",
+      "enabled": true,
+      "optimal_strategy": "RSI_EMAn",
+      "timeframe": "1H",
+      "confidence": 0.8,
+      "signal_params": {
+        "rsi_oversold": 35,
+        "rsi_overbought": 65,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "ema_fast": 12,
+        "ema_slow": 26,
+        "ema_signal": 9,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.5
+      },
+      "exit": {
+        "rsi_exit": 65,
+        "atr_exit": true,
+        "time_exit_hours": 24
+      },
+      "position": {
+        "base_position_pct": 2.0,
+        "max_position_pct": 10.0,
+        "leverage": 2,
+        "leverage_strong_trend": 2
+      },
+      "performance": {
+        "sharpe": 2.77,
+        "winrate": "86%",
+        "max_drawdown": "6.3%",
+        "trades": 7,
+        "alpha_vs_bh": "+11.4%"
+      },
+      "notes": "XRP的RSI+EMA共振胜率86%，夏普2.77，测试期间B&H为-3%，策略逆势+8.4%",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "ADA",
+      "enabled": true,
+      "optimal_strategy": "RSI_MR",
+      "timeframe": "4H",
+      "confidence": 0.9,
+      "signal_params": {
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "adx_min": 20,
+        "adx_strong": 30,
+        "atr_period": 14,
+        "atr_stop_multiplier": 3.0,
+        "bollinger_period": 20,
+        "bollinger_std": 2.0,
+        "bb_position_max": 15
+      },
+      "exit": {
+        "rsi_exit": 70,
+        "atr_exit": true,
+        "time_exit_hours": 48
+      },
+      "position": {
+        "base_position_pct": 2.0,
+        "max_position_pct": 12.0,
+        "leverage": 2,
+        "leverage_strong_trend": 3
+      },
+      "performance": {
+        "sharpe": 8.03,
+        "winrate": "85.3%",
+        "max_drawdown": "27.8%",
+        "trades": 122,
+        "alpha_vs_bh": "+154%"
+      },
+      "notes": "ADA最优策略：布林带趋势跟踪，Sharpe 8.03，胜率85.3%，Walk-Forward验证通过",
+      "excluded": false,
+      "excluded_reason": null
+    },
+    {
+      "symbol": "AVAX",
+      "enabled": false,
+      "optimal_strategy": "VOL_BRK",
+      "timeframe": "4H",
+      "confidence": 0.85,
+      "signal_params": {
+        "vol_ratio_min": 2.0,
+        "adx_min": 20,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.5
+      },
+      "exit": {
+        "vol_ratio_exit": 1.0,
+        "atr_exit": true,
+        "time_exit_hours": 48
+      },
+      "position": {
+        "base_position_pct": 1.5,
+        "max_position_pct": 10.0,
+        "leverage": 2,
+        "leverage_strong_trend": 2
+      },
+      "performance": {
+        "sharpe": 1.84,
+        "winrate": "57%",
+        "max_drawdown": "2.4%",
+        "trades": 7,
+        "alpha_vs_bh": "+75.9%"
+      },
+      "notes": "熊市B&H亏62%，VOL_BRK逆势赚13.8%！4H是AVAX最佳周期",
+      "excluded": true,
+      "excluded_reason": "Walk-Forward：8窗口全负收益"
+    },
+    {
+      "symbol": "DOT",
+      "enabled": false,
+      "optimal_strategy": "RSI_VOL",
+      "timeframe": "4H",
+      "confidence": 0.7,
+      "signal_params": {
+        "rsi_oversold": 35,
+        "rsi_overbought": 65,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "vol_ratio_min": 1.5,
+        "atr_period": 14,
+        "atr_stop_multiplier": 3.0
+      },
+      "exit": {
+        "rsi_exit": 65,
+        "atr_exit": true,
+        "time_exit_hours": 48
+      },
+      "position": {
+        "base_position_pct": 1.5,
+        "max_position_pct": 10.0,
+        "leverage": 1,
+        "leverage_strong_trend": 2
+      },
+      "performance": {
+        "sharpe": 0.22,
+        "winrate": "63%",
+        "max_drawdown": "42.0%",
+        "trades": 19,
+        "alpha_vs_bh": "+66.5%"
+      },
+      "notes": "DOT交易最多（19次），RSI+VOL混用，回撤42%偏高，需收紧止损",
+      "excluded": true,
+      "excluded_reason": "Sharpe<1.0验证失败"
+    },
+    {
+      "symbol": "LINK",
+      "enabled": false,
+      "optimal_strategy": "RSI_MR",
+      "timeframe": "1H",
+      "confidence": 0.5,
+      "signal_params": {
+        "rsi_oversold": 30,
+        "rsi_overbought": 70,
+        "adx_min": 15,
+        "adx_strong": 25,
+        "atr_period": 14,
+        "atr_stop_multiplier": 2.5
+      },
+      "exit": {
+        "rsi_exit": 70,
+        "atr_exit": true,
+        "time_exit_hours": 24
+      },
+      "position": {
+        "base_position_pct": 1.5,
+        "max_position_pct": 8.0,
+        "leverage": 1,
+        "leverage_strong_trend": 2
+      },
+      "performance": {
+        "sharpe": 0.8,
+        "winrate": "68%",
+        "max_drawdown": "8.0%",
+        "trades": 17,
+        "alpha_vs_bh": "+4.0%"
+      },
+      "notes": "LINK数据较少（4H触发0次交易），1H有17次交易，置信度低，需更长数据验证",
+      "excluded": true,
+      "excluded_reason": "数据空白"
+    }
+  ],
+  "strategy_descriptions": {
+    "RSI_MR": "RSI均值回归：RSI<30 + ADX>15买入，RSI>70卖出。适合DOGE/BTC/SOL/LINK等主流币。",
+    "RSI_EMAn": "RSI+EMA共振：RSI<35 + EMA多头排列 + ADX>15买入。适合BNB/XRP等中等市值币。",
+    "RSI_VOL": "RSI+成交量混合：RSI<35 + vol_ratio>1.5 + ADX>15买入。适合DOT。",
+    "VOL_BRK": "成交量突破策略：vol_ratio>2× AND ADX>20买入，vol<MA平仓。适合小币和熊市。",
+    "BB_TREND": "布林带趋势跟踪：RSI<30 + ADX>20 + BB下轨位置<15买入。适合ADA等小币种。"
+  },
+  "market_environment_rules": {
+    "bear_market": {
+      "btc_condition": "price < BTC_MA200",
+      "recommended_strategies": ["VOL_BRK"],
+      "description": "熊市（大币跌穿MA200）：倾向VOL_BRK（大波动突破），避免RSI_MR抄底"
+    },
+    "bull_market": {
+      "btc_condition": "price > BTC_MA200 AND RSI_4H < 70",
+      "recommended_strategies": ["RSI_MR", "RSI_EMAn"],
+      "description": "牛市：倾向RSI均值回归策略，胜率更高"
+    },
+    "recovery": {
+      "btc_condition": "price > BTC_MA200 AND RSI_4H > 70",
+      "recommended_strategies": ["VOL_BRK", "RSI_MR"],
+      "description": "反弹期：高位RSI避免追涨，用VOL_BRK或空头保护"
+    }
+  },
+  "default_params": {
+    "rsi_oversold": 30,
+    "rsi_overbought": 70,
+    "adx_min": 15,
+    "adx_strong": 25,
+    "atr_period": 14,
+    "atr_stop_multiplier": 3.0,
+    "time_exit_hours": 24,
+    "base_position_pct": 2.0,
+    "max_position_pct": 10.0,
+    "leverage": 2
+  }
+}

@@ -1,0 +1,963 @@
+#!/usr/bin/env python3
+"""
+Miracle-Kronos Unified Trading System
+======================================
+合并两个系统的最优部分:
+- Miracle: Multi-agent架构 + 适应性学习 + 白名单模式
+- Kronos: OKX实盘接口 + 全自动cron + IC投票 + 五层熔断
+
+使用方式:
+  python miracle_kronos.py --mode audit --equity 100000
+  python miracle_kronos.py --mode live
+"""
+import os, sys, json, time, argparse
+from datetime import datetime
+from pathlib import Path
+
+# ===== 配置 =====
+OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
+STATE_DIR = Path(__file__).parent / 'data'
+STATE_DIR.mkdir(exist_ok=True)
+TREASURY_FILE = STATE_DIR / 'miracle_treasury.json'
+TRADES_FILE = STATE_DIR / 'miracle_trades.json'
+IC_WEIGHTS_FILE = STATE_DIR / 'factor_weights.json'
+
+# ===== OKX API (from kronos_utils) =====
+def _sign(ts, method, path, body=''):
+    import hmac, hashlib, base64
+    key = os.environ.get('OKX_API_KEY', '')
+    secret = os.environ.get('OKX_SECRET', '')
+    msg = ts + method + path + body
+    return base64.b64encode(hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
+
+def okx_req(method, path, body=''):
+    import requests, time as _time
+    from datetime import datetime
+    ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(_time.time() * 1000) % 1000)
+    headers = {
+        'OK-ACCESS-KEY': os.environ.get('OKX_API_KEY', ''),
+        'OK-ACCESS-SIGN': _sign(ts, method, path, body),
+        'OK-ACCESS-TIMESTAMP': ts,
+        'OK-ACCESS-PASSPHRASE': os.environ.get('OKX_PASSPHRASE', ''),
+        'x-simulated-trading': OKX_FLAG,
+        'Content-Type': 'application/json',
+    }
+    try:
+        r = requests.request(method, 'https://www.okx.com' + path, headers=headers, data=body, timeout=10)
+        return r.json()
+    except Exception as e:
+        return {'code': '99999', 'msg': str(e)}
+
+# ===== 核心指标计算 =====
+def calc_rsi(prices, period=14):
+    if len(prices) < period + 1:
+        return 50.0
+    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    gains = [d if d > 0 else 0 for d in deltas[-period:]]
+    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def calc_adx(highs, lows, closes, period=14):
+    if len(closes) < period * 2:
+        return 20.0, 20.0, 20.0
+    trs = []
+    dm_plus = []
+    dm_minus = []
+    for i in range(1, len(closes)):
+        h, l = highs[i], lows[i]
+        prev_c = closes[i-1]
+        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        trs.append(tr)
+        dm_p = max(h - highs[i-1], 0) if i > 0 else 0
+        dm_m = max(lows[i-1] - l, 0) if i > 0 else 0
+        dm_plus.append(dm_p)
+        dm_minus.append(dm_m)
+    if len(trs) < period:
+        return 20.0, 20.0, 20.0
+    atr = sum(trs[-period:]) / period
+    if atr == 0:
+        return 20.0, 20.0, 20.0
+    di_plus = sum(dm_plus[-period:]) / atr
+    di_minus = sum(dm_minus[-period:]) / atr
+    dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100 if (di_plus + di_minus) > 0 else 0
+    return di_plus, di_minus, dx
+
+def calc_macd(prices, fast=12, slow=26, signal=9):
+    if len(prices) < slow + signal:
+        return 0.0, 0.0, 0.0
+    # 正向计算EMA (从旧到新)
+    alpha_f = 2 / (fast + 1)
+    alpha_s = 2 / (slow + 1)
+    alpha_sig = 2 / (signal + 1)
+    ema_f = prices[0]
+    ema_s = prices[0]
+    ema_macd = 0.0
+    macd_values = []
+    for i, p in enumerate(prices):
+        ema_f = p * alpha_f + ema_f * (1 - alpha_f)
+        ema_s = p * alpha_s + ema_s * (1 - alpha_s)
+        m = ema_f - ema_s
+        macd_values.append(m)
+        if i == 0:
+            ema_macd = m
+        else:
+            ema_macd = m * alpha_sig + ema_macd * (1 - alpha_sig)
+    macd = macd_values[-1]
+    signal_line = ema_macd
+    histogram = macd - signal_line
+    return macd, signal_line, histogram
+
+def calc_bollinger(prices, period=20, mult=2):
+    if len(prices) < period:
+        return 50.0, 50.0, 50.0
+    recent = prices[-period:]
+    sma = sum(recent) / period
+    std = (sum((p - sma) ** 2 for p in recent) / period) ** 0.5
+    upper = sma + mult * std
+    lower = sma - mult * std
+    pos = (prices[-1] - lower) / (upper - lower) * 100 if (upper - lower) > 0 else 50.0
+    return upper, lower, pos
+
+# ===== IC权重投票系统 (from Kronos voting_system.py) =====
+KRONOS_IC_FILE = Path('/Users/jimingzhang/.hermes/cron/output/ic_weights.json')
+
+def load_ic_weights():
+    if KRONOS_IC_FILE.exists():
+        try:
+            d = json.load(open(KRONOS_IC_FILE))
+            w = d.get('weights', {})
+            if w and sum(w.values()) > 0:
+                return w
+        except:
+            pass
+    if IC_WEIGHTS_FILE.exists():
+        try:
+            with open(IC_WEIGHTS_FILE) as f:
+                d = json.load(f)
+                return d.get('weights', DEFAULT_WEIGHTS)
+        except:
+            pass
+    return DEFAULT_WEIGHTS.copy()
+
+def save_ic_weights(weights):
+    data = {'weights': weights, 'updated': datetime.now().isoformat()}
+    with open(IC_WEIGHTS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+DEFAULT_WEIGHTS = {
+    'RSI': 0.15, 'ADX': 0.0, 'Bollinger': 0.30,
+    'Vol': 0.0, 'MACD': 0.25, 'BTC': 0.16, 'Gemma': 0.14
+}
+
+def voting_vote(factors: dict, weights: dict) -> dict:
+    """7因子投票: 每个因子投 +1/0/-1, 加权求和
+    核心修正: RSI极端值在强趋势(ADX>25)中不代表反转, 而是趋势持续.
+    """
+    rsi = factors['rsi']
+    adx = factors['adx']
+    bb_pos = factors['bb_pos']
+    macd_hist = factors['macd_hist']
+    vol_ratio = factors['vol_ratio']
+    btc_trend = factors.get('btc_trend', 'neutral')
+
+    # ---- RSI因子: 分情况 ----
+    # 强趋势(ADX>25): RSI极端值=趋势确认, 不是反转信号
+    # 震荡(ADX<20): RSI极端值=均值回归信号
+    rsi_vote = 0
+    if adx > 25:
+        # 强趋势: RSI在极端区=趋势延续确认
+        if rsi < 25:       # 极度超卖 = 空头力量极强 = 做空确认
+            rsi_vote = -1
+        elif rsi > 75:     # 极度超买 = 多头力量极强 = 做多确认
+            rsi_vote = 1
+        elif rsi < 40:     # 偏超卖 = 空头略强
+            rsi_vote = -0.5
+        elif rsi > 60:     # 偏超买 = 多头略强
+            rsi_vote = 0.5
+        # 中间区域40-60: 等待
+    else:
+        # 震荡/弱趋势: RSI极端值=均值回归
+        if rsi < 30:
+            rsi_vote = 1   # 超卖 → 反弹
+        elif rsi > 70:
+            rsi_vote = -1  # 超买 → 回调
+        elif rsi < 40:
+            rsi_vote = 0.5
+        elif rsi > 60:
+            rsi_vote = -0.5
+
+    # ---- ADX因子 ----
+    adx_vote = 0
+    if adx > 30:
+        adx_vote = 2   # 强趋势确认
+    elif adx > 22:
+        adx_vote = 1
+    elif adx < 15:
+        adx_vote = 0   # 无趋势
+
+    # ---- Bollinger ----
+    bb_vote = 0
+    if bb_pos < 20:
+        bb_vote = 1   # 价格靠近下轨 → 做多
+    elif bb_pos > 80:
+        bb_vote = -1  # 价格靠近上轨 → 做空
+    elif bb_pos < 35:
+        bb_vote = 0.5
+    elif bb_pos > 65:
+        bb_vote = -0.5
+
+    # ---- Vol ----
+    vol_vote = 0
+    if vol_ratio < 0.7:
+        vol_vote = 0.5  # 低波幅 → 即将突破
+    elif vol_ratio > 1.5:
+        vol_vote = -0.5  # 高波幅 → 趋势可能反转
+
+    # ---- MACD ----
+    macd_vote = 0
+    if macd_hist > 0.01:
+        macd_vote = 1
+    elif macd_hist < -0.01:
+        macd_vote = -1
+
+    # ---- BTC ----
+    btc_vote = 1 if btc_trend == 'bull' else (-1 if btc_trend == 'bear' else 0)
+
+    votes = {
+        'RSI': rsi_vote,
+        'ADX': adx_vote,
+        'Bollinger': bb_vote,
+        'Vol': vol_vote,
+        'MACD': macd_vote,
+        'BTC': btc_vote,
+        'Gemma': factors.get('_gemma_vote', 0),
+    }
+
+    # ---- 极端RSI信号: 直接替换RSI投票方向 ----
+    extreme = factors.get('_extreme_signal', None)
+    if extreme and extreme in ('long', 'short'):
+        # 极端RSI: 直接用RSI_weight作为信号强度，乘以1.5
+        rsi_extreme_vote = 1 if extreme == 'long' else -1
+        score = weights.get('RSI', 0.15) * rsi_extreme_vote * 3.0  # RSI权重×方向×3倍放大
+        direction = extreme
+    else:
+        # 加权得分
+        score = sum(weights.get(k, 0) * v for k, v in votes.items())
+        direction = 'long' if score > 0.05 else ('short' if score < -0.05 else 'wait')
+
+        # ADX>30强趋势时，方向需与趋势一致
+        if adx > 30:
+            trend_dir = 1 if factors.get('_di_plus', 20) > factors.get('_di_minus', 20) else -1
+            if (direction == 'long' and trend_dir < 0) or (direction == 'short' and trend_dir > 0):
+                direction = 'wait'
+                score = 0
+
+    return {'score': score, 'direction': direction, 'votes': votes,
+            'confidence': min(abs(score) / 2.0, 1.0), 'extreme': extreme}
+
+# ===== 熔断系统 (from Kronos real_monitor.py) =====
+def load_treasury():
+    if TREASURY_FILE.exists():
+        try:
+            return json.load(open(TREASURY_FILE))
+        except:
+            pass
+    return {'equity': 100000, 'hourly_snapshot': 100000, 'daily_snapshot': 100000, 
+            'tier': 'normal', 'consecutive_loss_hours': 0}
+
+def save_treasury(state):
+    with open(TREASURY_FILE, 'w') as f:
+        json.dump(state, f, indent=2)
+
+def check_tier(equity, treasury) -> tuple:
+    """5层熔断判定"""
+    hourly_snap = treasury.get('hourly_snapshot', equity)
+    daily_snap = treasury.get('daily_snapshot', equity)
+    session_snap = treasury.get('session_start', equity)
+    
+    hourly_loss_pct = (hourly_snap - equity) / hourly_snap if hourly_snap > 0 else 0
+    daily_loss_pct = (daily_snap - equity) / daily_snap if daily_snap > 0 else 0
+    session_dd_pct = (session_snap - equity) / session_snap if session_snap > 0 else 0
+    
+    if session_dd_pct >= 0.20:
+        tier = 'suspended'
+        can_trade = False
+        reason = f'回撤20%触发熔断'
+    elif daily_loss_pct >= 0.10:
+        tier = 'critical'
+        can_trade = False
+        reason = f'日亏10%触发熔断'
+    elif hourly_loss_pct >= 0.05:
+        tier = 'caution'
+        can_trade = True
+        reason = f'小时亏5%'
+    elif hourly_loss_pct >= 0.02:
+        tier = 'normal'
+        can_trade = True
+        reason = f'正常'
+    else:
+        tier = 'normal'
+        can_trade = True
+        reason = f'正常'
+    
+    return tier, can_trade, reason, {
+        'hourly_loss_pct': hourly_loss_pct,
+        'daily_loss_pct': daily_loss_pct,
+        'session_dd_pct': session_dd_pct
+    }
+
+# ===== 数据获取 =====
+def get_klines(instId, timeframe='1H', limit=100):
+    """从OKX获取K线数据"""
+    path = f'/api/v5/market/candles?instId={instId}&bar={timeframe}&limit={limit}'
+    data = okx_req('GET', path)
+    if data.get('code') != '0':
+        return None
+    candles = data.get('data', [])
+    if not candles:
+        return None
+    # [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+    parsed = []
+    for c in reversed(candles):
+        try:
+            parsed.append({
+                'ts': int(c[0]),
+                'open': float(c[1]),
+                'high': float(c[2]),
+                'low': float(c[3]),
+                'close': float(c[4]),
+                'vol': float(c[5]),
+            })
+        except:
+            pass
+    return parsed if parsed else None
+
+def get_account_balance():
+    """获取OKX账户余额"""
+    data = okx_req('GET', '/api/v5/account/balance')
+    if data.get('code') == '0' and data.get('data'):
+        try:
+            details = data['data'][0].get('details', [])
+            for d in details:
+                if d.get('ccy') == 'USDT':
+                    return float(d.get('eq', 0))
+            return float(data['data'][0].get('totalEq', 0))
+        except:
+            pass
+    return 0
+
+def get_positions():
+    """获取所有持仓"""
+    data = okx_req('GET', '/api/v5/account/positions?instType=SWAP')
+    if data.get('code') != '0':
+        return []
+    positions = []
+    for pos in data.get('data', []):
+        if float(pos.get('notionalUsd', 0)) > 1:
+            positions.append({
+                'instId': pos.get('instId'),
+                'side': pos.get('posSide'),  # long/short
+                'sz': float(pos.get('sz', 0)),
+                'entry': float(pos.get('avgOpenPx', 0)),
+                'unrealized_pnl': float(pos.get('upl', 0)),
+                'notional': float(pos.get('notionalUsd', 0)),
+            })
+    return positions
+
+def get_ticker(instId):
+    """获取当前价格"""
+    data = okx_req('GET', f'/api/v5/market/ticker?instId={instId}')
+    if data.get('code') == '0' and data.get('data'):
+        return float(data['data'][0].get('last', 0))
+    return 0
+
+# ===== 白名单模式学习 (from Miracle agent_signal.py) =====
+def load_whitelist():
+    wl_file = STATE_DIR / 'whitelist.json'
+    if wl_file.exists():
+        try:
+            data = json.load(open(wl_file))
+            # 确保blacklist始终为set
+            data['blacklist'] = set(data.get('blacklist', []))
+            return data
+        except:
+            pass
+    return {'patterns': {}, 'blacklist': set()}
+
+def save_whitelist(wl):
+    with open(STATE_DIR / 'whitelist.json', 'w') as f:
+        json.dump({'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])}, f)
+
+def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
+    """调用gemma4获取方向判断，每币独立缓存5分钟"""
+    import time as _time
+    cache_file = STATE_DIR / 'gemma_cache.json'
+
+    # 读取缓存 (每币独立)
+    now_bucket = int(_time.time() / cache_ttl)
+    if cache_file.exists():
+        try:
+            all_cache = json.load(open(cache_file))
+            entry = all_cache.get(symbol, {})
+            if entry.get('bucket') == now_bucket:
+                return entry.get('vote', 0)
+        except:
+            pass
+
+    # 调用gemma4
+    prompt = (
+        f"你是一个专业的加密货币交易员。当前{symbol}市场数据：\n"
+        f"- RSI(14): {rsi:.1f} (超买>70, 超卖<30)\n"
+        f"- ADX: {adx:.1f} (趋势强度，>25为强趋势)\n"
+        f"- 布林带位置: {bb_pos:.1f}% (<20下轨, >80上轨)\n"
+        f"短期(1-4小时)方向？只输出一个词：LONG 或 SHORT 或 WAIT"
+    )
+
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['ollama', 'run', 'gemma4-2b-heretic:latest', prompt],
+            capture_output=True, text=True, timeout=20
+        )
+        output = result.stdout.strip().upper()
+
+        if 'LONG' in output[:10]:
+            vote = 1
+        elif 'SHORT' in output[:10]:
+            vote = -1
+        else:
+            vote = 0
+
+        # 写入每币缓存
+        all_cache = {}
+        if cache_file.exists():
+            try:
+                all_cache = json.load(open(cache_file))
+            except:
+                pass
+        all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:30]}
+        with open(cache_file, 'w') as f:
+            json.dump(all_cache, f)
+
+        return vote
+    except Exception as e:
+        return 0
+
+
+def get_pattern_key(rsi, adx, bb_pos, direction):
+    """生成模式key用于白名单匹配"""
+    rsi_zone = 'oversold' if rsi < 35 else ('overbought' if rsi > 65 else 'neutral')
+    adx_zone = 'strong' if adx > 25 else ('weak' if adx < 15 else 'medium')
+    bb_zone = 'lower' if bb_pos < 25 else ('upper' if bb_pos > 75 else 'mid')
+    return f'{direction}_{rsi_zone}_{adx_zone}_{bb_zone}'
+
+def check_whitelist(rsi, adx, bb_pos, direction):
+    """检查白名单模式"""
+    wl = load_whitelist()
+    key = get_pattern_key(rsi, adx, bb_pos, direction)
+    if key in wl.get('blacklist', set()):
+        return False, '黑名单模式'
+    stats = wl.get('patterns', {}).get(key, {})
+    if stats.get('count', 0) >= 5 and stats.get('win_rate', 0.5) < 0.40:
+        return False, f'胜率{stats["win_rate"]:.0%}<40%'
+    return True, '通过'
+
+def update_whitelist(entry_key, won: bool):
+    """更新白名单统计"""
+    wl = load_whitelist()
+    stats = wl['patterns'].get(entry_key, {'count': 0, 'wins': 0})
+    stats['count'] += 1
+    if won:
+        stats['wins'] += 1
+    stats['win_rate'] = stats['wins'] / stats['count']
+    wl['patterns'][entry_key] = stats
+    
+    # 黑名单降级
+    if stats['count'] >= 10 and stats['win_rate'] < 0.35:
+        wl['blacklist'].add(entry_key)
+    save_whitelist(wl)
+
+# ===== 交易日志 =====
+def get_open_trades():
+    """获取本地记录的OPEN交易"""
+    if TRADES_FILE.exists():
+        try:
+            all_trades = json.load(open(TRADES_FILE))
+            return [t for t in all_trades if t.get('status') == 'OPEN']
+        except:
+            pass
+    return []
+
+def update_trade_pnl(trade, current_price):
+    """更新交易浮动盈亏"""
+    entry = trade.get('entry_price', 0)
+    direction = trade.get('direction', 'long')
+    if entry == 0 or current_price == 0:
+        return trade
+    if direction == 'long':
+        pnl_pct = (current_price - entry) / entry
+    else:
+        pnl_pct = (entry - current_price) / entry
+    trade['current_pnl_pct'] = pnl_pct
+    trade['current_price'] = current_price
+    return trade
+
+def load_trades():
+    if TRADES_FILE.exists():
+        try:
+            return json.load(open(TRADES_FILE))
+        except:
+            pass
+    return []
+
+def save_trades(trades):
+    with open(TRADES_FILE, 'w') as f:
+        json.dump(trades, f, indent=2)
+
+def record_trade(trade):
+    trades = load_trades()
+    trades.append(trade)
+    if len(trades) > 1000:
+        trades = trades[-500:]
+    save_trades(trades)
+
+
+# ===== OCO下单 =====
+def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct):
+    """OCO bracket: 止损+止盈同时挂单"""
+    if side == 'long':
+        sl_price = round(entry_price * (1 - sl_pct), 4)
+        tp_price = round(entry_price * (1 + tp_pct), 4)
+        sl_side = 'sell'
+        tp_side = 'sell'
+    else:  # short
+        sl_price = round(entry_price * (1 + sl_pct), 4)
+        tp_price = round(entry_price * (1 - tp_pct), 4)
+        sl_side = 'buy'
+        tp_side = 'buy'
+    
+    # OKX OCO订单: ordType=oco, slOrdType=conditional, tpOrdType=conditional
+    body = json.dumps({
+        'instId': instId,
+        'tdMode': 'isolated',
+        'side': 'sell' if side == 'long' else 'buy',
+        'ordType': 'oco',
+        'sz': str(int(sz)),
+        'slTriggerPx': str(sl_price),
+        'slOrdPx': str(sl_price * 0.998 if sl_side == 'sell' else sl_price * 1.002),
+        'slOrdType': 'conditional',
+        'tpTriggerPx': str(tp_price),
+        'tpOrdPx': str(tp_price * 0.998 if tp_side == 'sell' else tp_price * 1.002),
+        'tpOrdType': 'conditional',
+    })
+    data = okx_req('POST', '/api/v5/trade/order', body)
+    return data
+
+# ===== 主扫描逻辑 =====
+SCAN_COINS = [
+    ('BTC-USDT-SWAP', 'BTC'),
+    ('ETH-USDT-SWAP', 'ETH'),
+    ('SOL-USDT-SWAP', 'SOL'),
+    ('DOGE-USDT-SWAP', 'DOGE'),
+    ('ADA-USDT-SWAP', 'ADA'),
+    ('XRP-USDT-SWAP', 'XRP'),
+    ('BNB-USDT-SWAP', 'BNB'),
+    ('AVAX-USDT-SWAP', 'AVAX'),
+    ('LINK-USDT-SWAP', 'LINK'),
+    ('DOT-USDT-SWAP', 'DOT'),
+]
+
+MAX_POSITIONS = 3
+SL_PCT = 0.05  # 5%止损
+TP_PCT = 0.10  # 10%止盈
+POSITION_SIZE_PCT = 0.02  # 每次2%仓位
+
+def scan_coin(instId, symbol, equity, btc_trend, weights):
+    """扫描单个币种"""
+    klines_1h = get_klines(instId, '1H', 100)
+    klines_4h = get_klines(instId, '4H', 100)
+    
+    if not klines_1h or len(klines_1h) < 30:
+        return None
+    
+    closes_1h = [k['close'] for k in klines_1h]
+    highs_1h = [k['high'] for k in klines_1h]
+    lows_1h = [k['low'] for k in klines_1h]
+    
+    # 4H确认（趋势共振）
+    btc_4h_confirmed = False
+    if klines_4h and len(klines_4h) >= 30:
+        closes_4h = [k['close'] for k in klines_4h]
+        highs_4h = [k['high'] for k in klines_4h]
+        lows_4h = [k['low'] for k in klines_4h]
+        di_plus_4h, di_minus_4h, adx_4h = calc_adx(highs_4h, lows_4h, closes_4h)
+        btc_4h_confirmed = adx_4h > 20
+    else:
+        adx_4h = 20
+    
+    # 因子计算
+    rsi = calc_rsi(closes_1h)
+    di_plus, di_minus, adx = calc_adx(highs_1h, lows_1h, closes_1h)
+    macd, signal, hist = calc_macd(closes_1h)
+    bb_upper, bb_lower, bb_pos = calc_bollinger(closes_1h)
+    
+    # 量比
+    vol_ratio = 1.0
+    if len(klines_1h) >= 20:
+        recent_vol = sum(k['vol'] for k in klines_1h[-5:]) / 5
+        avg_vol = sum(k['vol'] for k in klines_1h[-20:]) / 20
+        vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 1.0
+    
+    # ---- Gemma LLM 因子 (带缓存) ----
+    current_price = closes_1h[-1]
+    gemma_vote = _gemma_vote_cached(symbol, rsi, adx, bb_pos, current_price)
+
+    # ---- DOT极值RSI检测 ----
+    # RSI < 5 = 极端超卖 → 强烈反弹信号
+    # RSI > 95 = 极端超买 → 强烈回调信号
+    extreme_signal = None
+    if rsi < 5:
+        extreme_signal = 'long'
+    elif rsi > 95:
+        extreme_signal = 'short'
+
+    # IC投票
+    factors = {
+        'rsi': rsi, 'adx': adx, 'bb_pos': bb_pos,
+        'macd_hist': hist, 'vol_ratio': vol_ratio,
+        'btc_trend': btc_trend,
+        '_di_plus': di_plus, '_di_minus': di_minus,
+        '_gemma_vote': gemma_vote,
+        '_extreme_signal': extreme_signal,
+    }
+    vote = voting_vote(factors, weights)
+    
+    if vote['direction'] == 'wait':
+        return None
+    
+    # 白名单过滤
+    ok, reason = check_whitelist(rsi, adx, bb_pos, vote['direction'])
+    if not ok:
+        return None
+    
+    # 4H共振: 做空需要4H确认
+    if vote['direction'] == 'short' and not btc_4h_confirmed:
+        return None
+    
+    # 评分
+    di = di_plus if vote['direction'] == 'long' else di_minus
+    score = abs(vote['score'])
+    
+    # 综合评分 = IC投票分 × 4H确认修正
+    # 4H确认: 做多时也有帮助，做空时必需
+    if vote['direction'] == 'long':
+        mt_boost = 1.2 if btc_4h_confirmed else 1.0  # 做多不受4H惩罚
+    else:
+        mt_boost = 1.3 if btc_4h_confirmed else 0.0   # 做空无4H确认=否决
+
+    final_score = abs(vote['score']) * mt_boost
+
+    # ADX强度加成: 强趋势确认加分
+    if adx > 30:
+        final_score *= 1.3
+    elif adx > 22:
+        final_score *= 1.15
+
+    # 低于阈值过滤 (极端信号阈值更低)
+    min_threshold = 0.20 if vote.get('extreme') else 0.25
+    if final_score < min_threshold:
+        return None
+    
+    return {
+        'symbol': symbol,
+        'instId': instId,
+        'direction': vote['direction'],
+        'score': final_score,
+        'entry': closes_1h[-1],
+        'sl': SL_PCT,
+        'tp': TP_PCT,
+        'rsi': rsi,
+        'adx': adx,
+        'adx_4h': adx_4h,
+        'bb_pos': bb_pos,
+        'macd_hist': hist,
+        'vol_ratio': vol_ratio,
+        'pattern_key': get_pattern_key(rsi, adx, bb_pos, vote['direction']),
+        'votes': vote.get('votes', {}),
+        'extreme': vote.get('extreme'),
+    }
+
+def select_best(candidates, positions, local_trades=None):
+    """选最优候选"""
+    if not candidates:
+        return None
+    held = {p['instId'].replace('-USDT-SWAP', '') for p in positions}
+    if local_trades:
+        held.update(t.get('coin', '') for t in local_trades)
+    available = [c for c in candidates if c['symbol'] not in held]
+    if not available:
+        return None
+    return max(available, key=lambda x: x['score'])
+
+def run_scan(equity, btc_trend='neutral', mode='audit'):
+    """主扫描入口"""
+    treasury = load_treasury()
+    tier, can_trade, reason, losses = check_tier(equity, treasury)
+    
+    if not can_trade:
+        return {'action': 'blocked', 'tier': tier, 'reason': reason}
+    
+    weights = load_ic_weights()
+    positions = get_positions() if mode == 'live' else []
+    
+    # 扫描所有币
+    candidates = []
+    for instId, symbol in SCAN_COINS:
+        result = scan_coin(instId, symbol, equity, btc_trend, weights)
+        if result:
+            candidates.append(result)
+    
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+
+    # 加载本地OPEN交易 (必须在select_best前)
+    local_trades = get_open_trades()
+
+    # 选最优 (过滤已有持仓)
+    best = select_best(candidates, positions, local_trades)
+
+    # 仓位管理 (融合OKX实时+本地记录)
+    position_decisions = []
+
+    # 1. OKX实时持仓检查
+    for pos in positions:
+        sym = pos['instId'].replace('-USDT-SWAP', '')
+        entry = pos['entry']
+        current = get_ticker(pos['instId'])
+        if current == 0:
+            current = entry
+
+        if pos['side'] == 'long':
+            pnl_pct = (current - entry) / entry
+        else:
+            pnl_pct = (entry - current) / entry
+
+        if pnl_pct <= -SL_PCT:
+            position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
+        elif pnl_pct >= TP_PCT:
+            position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
+
+    # 2. 本地记录持仓追踪 (已在select_best前加载)
+    for trade in local_trades:
+        sym = trade.get('coin', '')
+        inst_id = f'{sym}-USDT-SWAP'
+        entry = trade.get('entry_price', 0)
+        direction = trade.get('direction', 'long')
+        open_time = trade.get('open_time', '')
+        current = get_ticker(inst_id)
+        if current == 0:
+            continue
+
+        # 更新时间戳 (如果没有current_price)
+        if 'current_price' not in trade:
+            trade['current_price'] = current
+
+        # 计算浮动盈亏
+        if direction == 'long':
+            pnl_pct = (current - entry) / entry
+        else:
+            pnl_pct = (entry - current) / entry
+
+        trade['current_pnl_pct'] = pnl_pct
+        trade['current_price'] = current
+
+        # 时间止损: 超过24小时强制平仓
+        from datetime import datetime as dt
+        try:
+            open_dt = dt.fromisoformat(open_time)
+            age_hours = (dt.now() - open_dt).total_seconds() / 3600
+            trade['age_hours'] = round(age_hours, 1)
+            if age_hours > 24:
+                position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
+        except:
+            trade['age_hours'] = 0
+
+        # 移动止损: 盈利超过3%后，回撤50%触发
+        if pnl_pct > 0.03:
+            peak_pnl = trade.get('peak_pnl_pct', pnl_pct)
+            if pnl_pct > peak_pnl:
+                trade['peak_pnl_pct'] = pnl_pct
+            else:
+                drawdown = peak_pnl - pnl_pct
+                if drawdown > peak_pnl * 0.5:
+                    position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(回撤{drawdown:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+
+        # SL/TP检查
+        if pnl_pct <= -SL_PCT:
+            position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
+        elif pnl_pct >= TP_PCT:
+            position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
+
+    # 保存更新后的本地交易记录 (只保留OPEN)
+    if local_trades:
+        open_only = [t for t in local_trades if t.get('status') == 'OPEN']
+        save_trades(open_only)
+    
+    if len(positions) >= MAX_POSITIONS:
+        return {
+            'action': 'hold',
+            'tier': tier,
+            'equity': equity,
+            'positions': len(positions),
+            'candidates': candidates[:5],
+            'decisions': position_decisions,
+            'reason': reason,
+        }
+    
+    if best and best['score'] > 0.5:
+        if tier == 'caution':
+            best['score'] *= 0.5  # caution层降权
+        
+        if mode == 'live':
+            # 计算仓位
+            sz_dollar = equity * POSITION_SIZE_PCT
+            entry = best['entry']
+            sl_dollar = entry * SL_PCT
+            sz = int(sz_dollar / (entry * SL_PCT * 100))  # 合约乘数100
+            
+            result = place_oco(
+                best['instId'], best['direction'], sz,
+                entry, best['sl'], best['tp']
+            )
+            
+            if result.get('code') == '0':
+                trade = {
+                    'id': f"mk_{best['symbol']}_{int(time.time())}",
+                    'coin': best['symbol'],
+                    'direction': best['direction'],
+                    'entry_price': entry,
+                    'sl_price': entry * (1 - SL_PCT) if best['direction'] == 'long' else entry * (1 + SL_PCT),
+                    'tp_price': entry * (1 + TP_PCT) if best['direction'] == 'long' else entry * (1 - TP_PCT),
+                    'size_usd': sz_dollar,
+                    'score': best['score'],
+                    'pattern_key': best['pattern_key'],
+                    'open_time': datetime.now().isoformat(),
+                    'status': 'OPEN',
+                }
+                record_trade(trade)
+            else:
+                return {'action': 'order_failed', 'result': result, 'best': best}
+        
+        return {
+            'action': 'open',
+            'best': best,
+            'tier': tier,
+            'equity': equity,
+            'positions': len(positions),
+            'reason': reason,
+        }
+    
+    return {
+        'action': 'wait',
+        'tier': tier,
+        'equity': equity,
+        'positions': len(positions),
+        'candidates': candidates[:5],
+        'reason': reason,
+        'losses': losses,
+    }
+
+# ===== 入口 =====
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', default='audit', choices=['audit', 'live'])
+    parser.add_argument('--equity', type=float, default=None)
+    args = parser.parse_args()
+    
+    print(f"[Miracle-Kronos] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 模式: {args.mode}")
+    
+    # 获取equity
+    if args.mode == 'live':
+        equity = get_account_balance()
+        if equity == 0:
+            print('❌ 无法获取OKX账户余额')
+            return
+    else:
+        equity = args.equity if args.equity else get_account_balance()
+        if equity == 0:
+            equity = 100000
+    
+    print(f'余额: ${equity:,.2f} | ', end='')
+    
+    # 获取BTC趋势
+    btc_klines = get_klines('BTC-USDT-SWAP', '4H', 50)
+    btc_trend = 'neutral'
+    if btc_klines and len(btc_klines) >= 20:
+        closes = [k['close'] for k in btc_klines]
+        ma20 = sum(closes[-20:]) / 20
+        btc_trend = 'bull' if closes[-1] > ma20 else 'bear'
+    
+    result = run_scan(equity, btc_trend, args.mode)
+
+    # 更新treasury (快照时间轴管理)
+    treasury = load_treasury()
+    treasury['equity'] = equity
+
+    now = datetime.now()
+    last_update = treasury.get('last_update', '')
+
+    if last_update:
+        try:
+            from datetime import datetime as dt
+            last_dt = dt.fromisoformat(last_update)
+            # 新小时: 重置小时快照
+            if now.hour != last_dt.hour:
+                treasury['hourly_snapshot'] = equity
+            # 新的一天: 重置日快照
+            if now.date() != last_dt.date():
+                treasury['daily_snapshot'] = equity
+        except:
+            treasury['hourly_snapshot'] = equity
+            treasury['daily_snapshot'] = equity
+    else:
+        # 首次运行，初始化快照
+        treasury['hourly_snapshot'] = equity
+        treasury['daily_snapshot'] = equity
+        treasury['session_start'] = equity
+
+    treasury['last_update'] = now.isoformat()
+    save_treasury(treasury)
+    
+    # 输出结果
+    action = result.get('action', 'unknown')
+    tier = result.get('tier', '?')
+    reason = result.get('reason', '')
+    
+    print(f'熔断: {tier} | {reason}')
+    
+    if action == 'blocked':
+        print(f'🚫 系统熔断: {reason}')
+    elif action == 'wait':
+        print(f'⏸️  无信号，等待')
+        if result.get('candidates'):
+            print(f'  TOP候选:')
+            for c in result['candidates'][:3]:
+                print(f'    {c["symbol"]:6s} {c["direction"]:5s} score={c["score"]:.2f} RSI={c["rsi"]:.0f} ADX={c["adx"]:.0f}')
+    elif action == 'open':
+        b = result['best']
+        print(f'📈 开仓信号: {b["symbol"]} {b["direction"]}')
+        print(f'  评分: {b["score"]:.2f} | RSI: {b["rsi"]:.0f} | ADX: {b["adx"]:.0f} | BB%: {b["bb_pos"]:.0f}')
+        print(f'  入场: ${b["entry"]:.4f} | SL: {b["sl"]:.0%} | TP: {b["tp"]:.0%}')
+        print(f'  4H ADX: {b["adx_4h"]:.0f}')
+    elif action == 'order_failed':
+        print(f'❌ 下单失败: {result["result"].get("msg", "")}')
+    
+    if result.get('positions', 0) > 0:
+        print(f'持仓: {result["positions"]}/{MAX_POSITIONS}')
+
+if __name__ == '__main__':
+    main()

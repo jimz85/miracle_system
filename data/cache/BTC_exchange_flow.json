@@ -1,0 +1,12 @@
+{
+  "data": {
+    "flow": 5764341.41,
+    "inflow": 5764341.41,
+    "outflow": 0,
+    "unit": "USD",
+    "timestamp": "2026-04-21T10:39:23Z",
+    "_source": "okx_kline_proxy"
+  },
+  "timestamp": 1776767963.331512,
+  "source": "cache"
+}
