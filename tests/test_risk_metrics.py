@@ -158,7 +158,7 @@ class TestWalkForwardValidator:
             for i in range(50)
         ]
 
-        def strategy_func(train_data):
+        def strategy_func(train_data, test_data):
             signals = [d["signal"] for d in train_data]
             returns = [d["return"] for d in train_data]
             ic, _ = calc_information_coefficient(signals, returns)

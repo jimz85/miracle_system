@@ -18,6 +18,10 @@ Features:
 """
 
 from typing import Dict, List, Any, Optional, Tuple
+from pathlib import Path
+import logging
+
+logger = logging.getLogger("miracle.adaptive_learner")
 
 # 从子模块导入所有公开API，保持向后兼容
 from learner import (

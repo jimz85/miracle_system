@@ -239,13 +239,16 @@ class OKXAdapter(ExchangeAdapter):
         
         if data and data.get("data"):
             t = data["data"][0]
+            last = float(t.get("last", 0))
+            open_24h = float(t.get("open24h", 0))
+            change_24h = last - open_24h  # 24小时价格变化(绝对值)
             return Ticker(
                 symbol=symbol,
-                last_price=float(t.get("last", 0)),
+                last_price=last,
                 high_24h=float(t.get("high24h", 0)),
                 low_24h=float(t.get("low24h", 0)),
                 volume_24h=float(t.get("vol24h", 0)),
-                change_24h=float(t.get("sodUtc0", 0)) * 100,  # 可能是百分比
+                change_24h=change_24h,
                 timestamp=int(t.get("ts", 0))
             )
         return None
