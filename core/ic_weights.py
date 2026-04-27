@@ -1,539 +1,471 @@
 #!/usr/bin/env python3
 """
-Miracle IC动态因子权重系统 v1.0
-=================================
+IC-based Factor Weight System (P1.4)
+====================================
 
-核心设计（参考Kronos voting_system.py IC权重实现）:
-  - 使用Spearman秩相关系数计算IC，对异常值更鲁棒
-  - 滚动IC追踪：每月更新一次因子权重
-  - 权重更新公式: W_new = 0.7*W_old + 0.3*IC_last_month（指数衰减加权）
-  - IC为负的因子权重置0，不参与投票
-  - 单因子最大权重30%
+基于Memory Log决策-结果反馈闭环的IC权重动态调整
 
-与Kronos的差异:
-  - Miracle使用更细粒度的子因子（RSI_Signal, RSI_Regime, ADX_Trend, etc.）
-  - 额外支持News/Onchain/Wallet等非技术因子
-  - 支持与Kronos IC权重共享（通过symlink或配置）
+功能:
+    - calculate_ic() - 计算信息系数 (预测方向 vs 实际方向)
+    - update_weights() - 基于IC更新因子权重 (指数平滑)
+    - decay_factor=0.7 exponential smoothing
+    - min_samples=10 最小样本保护
+    - 输出因子权重: rsi, macd, adx, bollinger, momentum
 
-使用方式:
-  tracker = MiracleICTracker()
-  weights = tracker.get_all_weights()
-  ic = tracker.get_ic('RSI')  # 获取某因子当前IC值
-  tracker.record_ic('RSI', 0.08)  # 记录新IC
-  tracker.compute_weights()  # 重新计算权重
+权重更新公式:
+    new_weight = decay_factor * old_weight + (1 - decay_factor) * ic_value
+
+Usage:
+    from core.ic_weights import ICWeightManager
+
+    manager = ICWeightManager()
+    weights = manager.get_weights()  # 获取当前权重
+    manager.update_weights()         # 从Memory Log更新IC并刷新权重
 """
 
 import os
+import sys
 import json
-import copy
-import numpy as np
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+import logging
+from typing import Dict, Optional
+from dataclasses import dataclass, field
+from threading import Lock
 
-# ========== 常量定义 ==========
+# 确保项目根目录在path中 (用于直接运行此脚本时)
+# Python会自动将脚本所在目录加入sys.path[0],这会遮挡真正的memory/目录
+# 因此需要将sys.path[0]替换为项目根目录
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if sys.path[0] != _project_root:
+    # 移除脚本目录,替换为项目根目录
+    sys.path[0] = _project_root
 
-# 缓存文件路径
-CACHE_FILE = os.path.expanduser('~/.hermes/miracle_ic_weights.json')
+# Import memory.fusion_memory directly to avoid namespace package issues
+import memory.fusion_memory as _fusion_memory
+get_all_entries = _fusion_memory.get_all_entries
+get_ic_feedback = _fusion_memory.get_ic_feedback
 
-# 滚动窗口（天）
-WINDOW_DAYS = 90
+logger = logging.getLogger(__name__)
 
-# 权重衰减参数
-DECAY_ALPHA = 0.7  # 旧权重系数
-NEW_WEIGHT_ALPHA = 0.3  # 新IC系数
+# ==================== 常量 ====================
 
-# 单因子权重上限
-MAX_WEIGHT_BTC = 0.15  # BTC因子最大权重（其IC是beta相关性，非方向预测）
-MAX_WEIGHT_OTHER = 0.25  # 其他因子最大权重
-MAX_WEIGHT_NEWS = 0.20  # 新闻因子最大权重（情绪驱动）
+CACHE_FILE = os.path.expanduser('~/.miracle_memory/ic_factor_weights.json')
+DECAY_FACTOR = 0.7
+MIN_SAMPLES = 10
+FACTORS = ['rsi', 'macd', 'adx', 'bollinger', 'momentum']
 
-# 因子基准IC（无历史数据时使用）
-BASE_ICS = {
-    'RSI': 0.08,
-    'ADX': 0.05,
-    'MACD': 0.05,
-    'Bollinger': 0.06,
-    'Vol': 0.07,
-    'BTC': 0.04,
-    'Momentum': 0.06,
-    'Trend': 0.05,
-    'News': 0.03,
-    'Onchain': 0.02,
-    'Wallet': 0.02,
+# 默认权重 (因子IC未知时使用)
+DEFAULT_WEIGHTS = {
+    'rsi': 0.20,
+    'macd': 0.20,
+    'adx': 0.20,
+    'bollinger': 0.20,
+    'momentum': 0.20,
 }
 
 
-# ========== IC追踪器 ==========
+# ==================== 数据结构 ====================
 
-class MiracleICTracker:
+@dataclass
+class FactorStats:
+    """因子统计"""
+    correct: int = 0
+    total: int = 0
+    ic_value: float = 0.0
+
+    @property
+    def accuracy(self) -> float:
+        return self.correct / self.total if self.total > 0 else 0.0
+
+
+@dataclass
+class ICWeights:
+    """IC权重状态"""
+    weights: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
+    ic_values: Dict[str, float] = field(default_factory=lambda: {f: 0.0 for f in FACTORS})
+    sample_counts: Dict[str, int] = field(default_factory=lambda: {f: 0 for f in FACTORS})
+    last_updated: Optional[str] = None
+
+
+# ==================== IC权重管理器 ====================
+
+class ICWeightManager:
     """
-    Miracle IC动态权重追踪器
-    
-    与Kronos ICTracker的对应关系:
-    - Kronos因子: RSI, ADX, Bollinger, Vol, MACD, BTC, Gemma
-    - Miracle因子: RSI, ADX, MACD, Bollinger, Vol, BTC, Momentum, Trend, News, Onchain, Wallet
-    
-    主要差异:
-    - Miracle有更细粒度的子因子分解
-    - 支持非技术因子（News, Onchain, Wallet）
-    - 可选：与Kronos IC系统共享数据
+    基于Memory Log的IC动态权重管理器
+
+    工作流程:
+    1. 从Memory Log获取历史决策 (有outcome的)
+    2. 对每个因子,计算预测方向与实际结果的一致性
+    3. 用IC值通过指数平滑更新权重
+    4. 输出权重用于FusionDecision
     """
 
-    # 类变量：跨实例共享
-    _ic_history: Dict[str, List[Dict]] = {}
-    _weights: Dict[str, float] = {}
-    _last_update: Optional[str] = None
-    _initialized: bool = False
+    _instance: Optional['ICWeightManager'] = None
+    _lock = Lock()
 
-    def __init__(self, sync_with_kronos: bool = True):
-        """
-        初始化IC追踪器
-        
-        Args:
-            sync_with_kronos: 是否与Kronos IC系统同步（共享IC历史）
-        """
-        self.sync_with_kronos = sync_with_kronos
-        self._load_cache()
-        
-    def _load_cache(self):
-        """从磁盘加载IC历史和权重"""
-        if os.path.exists(CACHE_FILE):
-            try:
-                with open(CACHE_FILE) as f:
-                    data = json.load(f)
-                MiracleICTracker._ic_history = data.get('ic_history', {})
-                MiracleICTracker._weights = data.get('weights', {})
-                MiracleICTracker._last_update = data.get('last_update')
-                MiracleICTracker._initialized = True
-            except Exception as e:
-                print(f"[ICTracker] 加载缓存失败: {e}")
-        
-        # 如果启用了Kronos同步，从Kronos加载IC历史
-        if self.sync_with_kronos and not MiracleICTracker._ic_history:
-            self._sync_from_kronos()
+    def __init__(self):
+        self._state = ICWeights()
+        self._load()
 
-    def _sync_from_kronos(self):
-        """从Kronos IC系统同步数据"""
-        kronos_cache = os.path.expanduser('~/.hermes/kronos_ic_weights.json')
-        if not os.path.exists(kronos_cache):
+    @classmethod
+    def get_instance(cls) -> 'ICWeightManager':
+        """单例获取"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    def _load(self) -> None:
+        """从磁盘加载"""
+        if not os.path.exists(CACHE_FILE):
             return
-            
         try:
-            with open(kronos_cache) as f:
-                kronos_data = json.load(f)
-            
-            # 映射Kronos因子名到Miracle因子名
-            name_map = {
-                'RSI': 'RSI',
-                'ADX': 'ADX', 
-                'Bollinger': 'Bollinger',
-                'Vol': 'Vol',
-                'MACD': 'MACD',
-                'BTC': 'BTC',
-                'Gemma': 'News',  # Gemma -> News（情绪分析）
-            }
-            
-            kronos_history = kronos_data.get('ic_history', {})
-            for kronos_name, history in kronos_history.items():
-                miracle_name = name_map.get(kronos_name, kronos_name)
-                if miracle_name not in MiracleICTracker._ic_history:
-                    MiracleICTracker._ic_history[miracle_name] = history
-                else:
-                    # 合并历史（保留两者的并集）
-                    existing_months = {h['month'] for h in MiracleICTracker._ic_history[miracle_name]}
-                    for h in history:
-                        if h['month'] not in existing_months:
-                            MiracleICTracker._ic_history[miracle_name].append(h)
-            
-            # 同步权重（如果有）
-            kronos_weights = kronos_data.get('weights', {})
-            if kronos_weights and not MiracleICTracker._weights:
-                for kronos_name, weight in kronos_weights.items():
-                    miracle_name = name_map.get(kronos_name, kronos_name)
-                    MiracleICTracker._weights[miracle_name] = weight
-                    
-            print(f"[ICTracker] 从Kronos同步IC数据完成")
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            self._state.weights = data.get('weights', dict(DEFAULT_WEIGHTS))
+            self._state.ic_values = data.get('ic_values', {f: 0.0 for f in FACTORS})
+            self._state.sample_counts = data.get('sample_counts', {f: 0 for f in FACTORS})
+            self._state.last_updated = data.get('last_updated')
+            logger.info(f"[IC] 加载权重: {self._state.weights}")
         except Exception as e:
-            print(f"[ICTracker] Kronos同步失败: {e}")
+            logger.warning(f"[IC] 加载失败: {e}")
 
-    def _save_cache(self):
+    def _save(self) -> None:
         """持久化到磁盘"""
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-        data = {
-            'ic_history': MiracleICTracker._ic_history,
-            'weights': MiracleICTracker._weights,
-            'last_update': MiracleICTracker._last_update,
-        }
-        with open(CACHE_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+        try:
+            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'weights': self._state.weights,
+                    'ic_values': self._state.ic_values,
+                    'sample_counts': self._state.sample_counts,
+                    'last_updated': self._state.last_updated,
+                }, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"[IC] 保存失败: {e}")
 
-    @staticmethod
-    def spearman_ic(signal_values: np.ndarray, future_returns: np.ndarray) -> float:
+    def calculate_ic(self, factor_name: str, entries: list = None) -> float:
         """
-        计算Spearman秩相关系数（IC值）
-        
+        计算因子IC (信息系数)
+
+        IC = 预测方向与实际结果的一致率
+
+        预测方向判断:
+        - rsi < 30 → 预测LONG (+1), rsi > 70 → 预测SHORT (-1)
+        - macd > 0 → 预测LONG (+1), macd < 0 → 预测SHORT (-1)
+        - adx > 25 → 趋势确认, 高ADX强化信号
+        - bollinger 价格触及下轨→LONG, 上轨→SHORT
+        - momentum 正→LONG, 负→SHORT
+
         Args:
-            signal_values: 因子信号值序列（如RSI）
-            future_returns: 未来收益率序列
-            
-        Returns:
-            IC值: -1到1之间的相关系数
-        """
-        if len(signal_values) < 30 or len(future_returns) < 30:
-            return 0.0
-        if len(signal_values) != len(future_returns):
-            min_len = min(len(signal_values), len(future_returns))
-            signal_values = signal_values[-min_len:]
-            future_returns = future_returns[-min_len:]
+            factor_name: 因子名称 (rsi/macd/adx/bollinger/momentum)
+            entries: 可选,指定决策条目列表,默认从Memory Log获取
 
-        # 去除NaN和Inf
-        mask = ~(np.isnan(signal_values) | np.isnan(future_returns) | 
-                  np.isinf(signal_values) | np.isinf(future_returns))
-        sv = signal_values[mask]
-        fr = future_returns[mask]
-        if len(sv) < 30:
+        Returns:
+            float: IC值 0-1, 样本不足时返回0.0
+        """
+        if entries is None:
+            entries = get_all_entries(limit=1000)
+
+        # 过滤有outcome的决策
+        valid_entries = [e for e in entries if e.get('outcome') in ('WIN', 'LOSS')]
+        if len(valid_entries) < MIN_SAMPLES:
+            logger.debug(f"[IC] {factor_name} 样本不足: {len(valid_entries)} < {MIN_SAMPLES}")
             return 0.0
 
-        # Spearman: 用rank替代原始值
-        def rank(x):
-            order = np.argsort(np.argsort(x))
-            return order / (len(x) - 1) * 2 - 1  # 归一化到[-1, 1]
+        correct = 0
+        total = 0
 
-        rank_sig = rank(sv)
-        rank_ret = rank(fr)
-        corr = np.corrcoef(rank_sig, rank_ret)[0, 1]
-        return float(corr) if not np.isnan(corr) else 0.0
-
-    def record_ic(self, factor_name: str, ic_value: float):
-        """
-        记录某个因子本月的IC
-        每月调用一次即可
-        
-        Args:
-            factor_name: 因子名称
-            ic_value: IC值
-        """
-        month_key = datetime.now().strftime('%Y-%m')
-
-        if factor_name not in MiracleICTracker._ic_history:
-            MiracleICTracker._ic_history[factor_name] = []
-
-        # 更新或追加本月IC
-        existing = [i for i in MiracleICTracker._ic_history[factor_name] if i['month'] == month_key]
-        if existing:
-            existing[0]['ic'] = ic_value
-        else:
-            MiracleICTracker._ic_history[factor_name].append({'month': month_key, 'ic': ic_value})
-
-        # 只保留最近WINDOW_DAYS天的历史
-        cutoff = (datetime.now() - timedelta(days=WINDOW_DAYS)).strftime('%Y-%m')
-        MiracleICTracker._ic_history[factor_name] = [
-            i for i in MiracleICTracker._ic_history[factor_name] if i['month'] >= cutoff
-        ]
-
-    def compute_weights(self) -> Dict[str, float]:
-        """
-        根据IC历史计算动态权重
-        
-        算法（与Kronos一致）:
-        1. 对每个因子，计算指数衰减加权平均IC
-        2. 新权重 = 0.7*旧权重 + 0.3*最新IC
-        3. IC为负的因子权重置0
-        4. 归一化使权重和=1
-        5. 应用权重上限
-        
-        Returns:
-            Dict[str, float]: 因子权重字典
-        """
-        weights = {}
-        old_weights = dict(MiracleICTracker._weights)
-
-        # 第一步：计算每个因子的指数衰减加权IC
-        for factor, history in MiracleICTracker._ic_history.items():
-            if not history:
-                weights[factor] = 0.0
+        for entry in valid_entries:
+            factors = entry.get('factors', {})
+            factor_val = factors.get(factor_name)
+            if factor_val is None:
                 continue
 
-            # 取最近几个月的IC，用指数衰减计算加权平均
-            recent_ics = [h['ic'] for h in history[-6:]]  # 最多6个月
-            old_weight = old_weights.get(factor, 0.1)
-            latest_ic = recent_ics[-1]
+            verdict = entry.get('verdict', '')
+            outcome = entry.get('outcome', '')
 
-            # 指数衰减加权平均（更重视近期）
-            decay_weights = [DECAY_ALPHA ** i for i in range(len(recent_ics))]
-            decay_weights = [w / sum(decay_weights) for w in decay_weights]
-            weighted_ic = sum(ic * w for ic, w in zip(recent_ics, decay_weights))
+            # Skip HOLD/WAIT verdicts
+            if verdict in ('HOLD', 'WAIT', ''):
+                continue
 
-            # 新权重 = 0.7*旧权重 + 0.3*最新IC（平滑）
-            new_ic_weight = DECAY_ALPHA * old_weight + NEW_WEIGHT_ALPHA * max(0, latest_ic)
-            weights[factor] = new_ic_weight
+            predicted = self._predict_direction(factor_name, factor_val)
+            if predicted == 0:
+                continue
 
-        # 第二步：IC为负的因子权重置0
-        for factor, history in MiracleICTracker._ic_history.items():
-            if history and history[-1]['ic'] < 0:
-                weights[factor] = 0.0
+            actual_correct = self._check_outcome(predicted, verdict, outcome)
+            if actual_correct is not None:
+                total += 1
+                if actual_correct:
+                    correct += 1
 
-        # 第三步：归一化
-        positive_weights = {k: v for k, v in weights.items() if v > 0}
-        total = sum(positive_weights.values())
-        if total > 0:
-            for k in weights:
-                weights[k] /= total
+        ic = correct / total if total >= MIN_SAMPLES else 0.0
+        logger.debug(f"[IC] {factor_name}: IC={ic:.3f} (n={total})")
+        return ic
 
-        # 第四步：应用权重上限
-        weights = self._apply_weight_caps(weights, old_weights)
-
-        MiracleICTracker._weights = weights
-        MiracleICTracker._last_update = datetime.now().strftime('%Y-%m-%d %H:%M')
-        self._save_cache()
-        return weights
-
-    def _apply_weight_caps(self, weights: Dict[str, float], 
-                          old_weights: Dict[str, float]) -> Dict[str, float]:
+    def _predict_direction(self, factor_name: str, factor_val) -> int:
         """
-        应用权重上限，防止单一因子主导
-        
-        Args:
-            weights: 当前计算的权重
-            old_weights: 上一次的有效权重（用于计算释放量）
-            
+        根据因子值预测方向
+
         Returns:
-            应用上限后的权重
+            1 = LONG, -1 = SHORT, 0 = NEUTRAL
         """
-        # 确定每个因子的上限
-        def get_cap(factor: str) -> float:
-            if factor == 'BTC':
-                return MAX_WEIGHT_BTC
-            elif factor in ('News', 'Sentiment'):
-                return MAX_WEIGHT_NEWS
+        try:
+            val = float(factor_val)
+        except (TypeError, ValueError):
+            # 非数值型因子 (如 "bullish", "bearish")
+            val_str = str(factor_val).lower()
+            if 'bull' in val_str or 'long' in val_str:
+                return 1
+            elif 'bear' in val_str or 'short' in val_str:
+                return -1
+            return 0
+
+        if factor_name == 'rsi':
+            if val < 30:
+                return 1   # 超卖 → LONG
+            elif val > 70:
+                return -1  # 超买 → SHORT
+            return 0
+
+        elif factor_name == 'macd':
+            if val > 0:
+                return 1
+            elif val < 0:
+                return -1
+            return 0
+
+        elif factor_name == 'adx':
+            # ADX > 25 表示趋势确认, 但不指明方向
+            # 结合其他因子判断, 这里返回0表示中立
+            if val > 25:
+                return 1   # 有趋势,正向处理
+            return 0
+
+        elif factor_name == 'bollinger':
+            # val是价格在布林带的位置 (0-1)
+            if val < 0.2:
+                return 1   # 触及下轨 → LONG
+            elif val > 0.8:
+                return -1  # 触及上轨 → SHORT
+            return 0
+
+        elif factor_name == 'momentum':
+            if val > 0:
+                return 1
+            elif val < 0:
+                return -1
+            return 0
+
+        return 0
+
+    def _check_outcome(self, predicted: int, verdict: str, outcome: str) -> Optional[bool]:
+        """
+        检查预测是否正确
+
+        Args:
+            predicted: 1=LONG, -1=SHORT
+            verdict: 决策裁决 BUY/SELL/HOLD
+            outcome: WIN/LOSS
+
+        Returns:
+            True=正确, False=错误, None=无法判断
+        """
+        # 预测方向
+        if predicted == 1:
+            predicted_is_long = True
+        else:
+            predicted_is_long = False
+
+        # 决策方向
+        if verdict == 'BUY':
+            decision_is_long = True
+        elif verdict == 'SELL':
+            decision_is_long = False
+        else:
+            return None
+
+        # 预测与决策一致
+        if predicted_is_long != decision_is_long:
+            return None  # 预测方向与决策不符,跳过
+
+        # 结果是否盈利
+        if outcome == 'WIN':
+            result_is_profit = True
+        elif outcome == 'LOSS':
+            result_is_profit = False
+        else:
+            return None
+
+        # 正确预测 = 预测LONG+WIN 或 预测SHORT+LOSS
+        return predicted_is_long == result_is_profit
+
+    def update_weights(self) -> Dict[str, float]:
+        """
+        基于IC更新因子权重 (指数平滑)
+
+        公式: new_weight = decay_factor * old_weight + (1 - decay_factor) * ic_value
+
+        逻辑:
+        1. 计算各因子IC
+        2. 用指数平滑更新权重
+        3. IC为负的因子权重置0
+        4. 归一化使总和=1
+        5. 最小样本保护: 样本不足时保持默认权重
+
+        Returns:
+            Dict[str, float]: 更新后的权重
+        """
+        from datetime import datetime
+
+        old_weights = dict(self._state.weights)
+        new_weights = {}
+        new_ic_values = {}
+        new_sample_counts = {}
+
+        total_samples = 0
+
+        for factor in FACTORS:
+            ic = self.calculate_ic(factor)
+            sample_count = self._count_samples(factor)
+
+            new_ic_values[factor] = ic
+            new_sample_counts[factor] = sample_count
+            total_samples += sample_count
+
+            # 指数平滑更新权重
+            old_weight = old_weights.get(factor, 1.0 / len(FACTORS))
+
+            if sample_count >= MIN_SAMPLES and ic > 0:
+                # IC为正,正常更新
+                new_weight = DECAY_FACTOR * old_weight + (1 - DECAY_FACTOR) * ic
+            elif sample_count >= MIN_SAMPLES and ic <= 0:
+                # IC为负或零,权重置低
+                new_weight = DECAY_FACTOR * old_weight
             else:
-                return MAX_WEIGHT_OTHER
+                # 样本不足,保持旧权重
+                new_weight = old_weight
 
-        # 记录每个因子cap前的值
-        pre_cap = dict(weights)
+            new_weights[factor] = new_weight
 
-        # 应用所有cap
-        for k in weights:
-            cap = get_cap(k)
-            weights[k] = min(weights[k], cap)
+        # 归一化
+        total = sum(new_weights.values())
+        if total > 0:
+            new_weights = {k: v / total for k, v in new_weights.items()}
 
-        # 计算释放量
-        excess = sum(pre_cap[k] - weights[k] for k in weights)
+        # 更新状态
+        self._state.weights = new_weights
+        self._state.ic_values = new_ic_values
+        self._state.sample_counts = new_sample_counts
+        self._state.last_updated = datetime.now().isoformat()
 
-        # 找出可以吸收释放量的因子：cap前值 < cap值（说明它没被cap）
-        absorbable = {k: get_cap(k) - pre_cap[k]
-                      for k in weights if pre_cap[k] < get_cap(k)}
-        absorbable_total = sum(absorbable.values())
+        self._save()
 
-        # 按可吸收量比例分配释放量
-        if absorbable_total > 0 and excess > 0:
-            for k in absorbable:
-                cap = get_cap(k)
-                boost = excess * (absorbable[k] / absorbable_total)
-                weights[k] = min(weights[k] + boost, cap)
+        logger.info(f"[IC] 权重更新: {new_weights}")
+        logger.info(f"[IC] IC值: {new_ic_values}")
+        logger.info(f"[IC] 样本数: {new_sample_counts}")
 
-        return weights
+        return new_weights
 
-    def get_weight(self, factor_name: str) -> float:
-        """获取某因子的当前权重"""
-        return MiracleICTracker._weights.get(factor_name, 0.0)
+    def _count_samples(self, factor_name: str) -> int:
+        """统计某因子的有效样本数"""
+        entries = get_all_entries(limit=1000)
+        valid_entries = [e for e in entries if e.get('outcome') in ('WIN', 'LOSS')]
+        count = 0
+        for entry in valid_entries:
+            if entry.get('factors', {}).get(factor_name) is not None:
+                verdict = entry.get('verdict', '')
+                if verdict not in ('HOLD', 'WAIT', ''):
+                    count += 1
+        return count
 
-    def get_ic(self, factor_name: str) -> float:
-        """获取某因子的当前IC值"""
-        history = MiracleICTracker._ic_history.get(factor_name, [])
-        if history:
-            return history[-1]['ic']
-        return BASE_ICS.get(factor_name, 0.0)
+    def get_weights(self) -> Dict[str, float]:
+        """获取当前因子权重"""
+        return dict(self._state.weights)
 
-    def get_all_weights(self) -> Dict[str, float]:
-        """获取所有因子的当前权重"""
-        return dict(MiracleICTracker._weights)
+    def get_ic_values(self) -> Dict[str, float]:
+        """获取当前IC值"""
+        return dict(self._state.ic_values)
 
-    def get_all_ics(self) -> Dict[str, float]:
-        """获取所有因子的当前IC值"""
-        result = {}
-        for factor, history in MiracleICTracker._ic_history.items():
-            if history:
-                result[factor] = history[-1]['ic']
-            else:
-                result[factor] = BASE_ICS.get(factor, 0.0)
-        return result
+    def get_sample_counts(self) -> Dict[str, int]:
+        """获取各因子样本计数"""
+        return dict(self._state.sample_counts)
 
-    def get_ic_history(self, factor_name: str) -> List[Dict]:
-        """获取某因子的IC历史"""
-        return list(MiracleICTracker._ic_history.get(factor_name, []))
+    def get_info(self) -> Dict:
+        """获取完整IC信息"""
+        return {
+            'weights': self.get_weights(),
+            'ic_values': self.get_ic_values(),
+            'sample_counts': self.get_sample_counts(),
+            'last_updated': self._state.last_updated,
+            'decay_factor': DECAY_FACTOR,
+            'min_samples': MIN_SAMPLES,
+        }
 
-
-# ========== 因子IC计算工具 ==========
-
-def compute_factor_ic_for_miracle(
-    closes: List[float],
-    highs: List[float] = None,
-    lows: List[float] = None,
-    volumes: List[float] = None
-) -> Dict[str, float]:
-    """
-    为Miracle计算所有因子的IC值
-    
-    Args:
-        closes: 价格列表
-        highs: 最高价列表
-        lows: 最低价列表
-        volumes: 成交量列表
-        
-    Returns:
-        Dict[str, float]: 因子IC字典
-    """
-    results = {}
-    closes = np.array(closes)
-    n = len(closes)
-    
-    if n < 30:
-        return {k: 0.0 for k in BASE_ICS.keys()}
-    
-    # 计算未来收益率
-    future_returns = np.diff(closes)  # n-1 个收益
-    n = len(future_returns)  # = len(closes) - 1
-    
-    def safe_spearman(signal: np.ndarray) -> float:
-        """安全的Spearman IC计算"""
-        s = signal[-n:] if len(signal) > n else signal
-        mask = ~(np.isnan(s) | np.isnan(future_returns) | np.isinf(s) | np.isinf(future_returns))
-        if mask.sum() < 30:
-            return 0.0
-        s, t = s[mask], future_returns[mask]
-        corr = np.corrcoef(np.argsort(np.argsort(s)), np.argsort(np.argsort(t)))[0, 1]
-        return float(corr) if not np.isnan(corr) else 0.0
-
-    # RSI IC
-    rsi_vals = _calc_rsi_series(closes)
-    results['RSI'] = safe_spearman(rsi_vals)
-
-    # ADX IC
-    if highs is not None and lows is not None:
-        adx_vals = _calc_adx_series(np.array(highs), np.array(lows), closes)
-        results['ADX'] = safe_spearman(adx_vals)
-    else:
-        results['ADX'] = 0.0
-
-    # MACD IC
-    macd_hist = _calc_macd_series(closes)
-    results['MACD'] = safe_spearman(macd_hist)
-
-    # Bollinger IC（价格与布林带位置）
-    bb_lower, bb_mid, bb_upper = _calc_bb_series(closes)
-    bb_pos = (closes[-n:] - bb_lower[-n:]) / (bb_upper[-n:] - bb_lower[-n:] + 1e-10)
-    results['Bollinger'] = safe_spearman(bb_pos)
-
-    # Vol IC（成交量比率）
-    if volumes is not None:
-        volumes = np.array(volumes)
-        vol_ma = np.convolve(volumes, np.ones(20)/20, mode='same')
-        vol_ratio = volumes / (vol_ma + 1e-10)
-        results['Vol'] = safe_spearman(vol_ratio[-n:])
-    else:
-        results['Vol'] = 0.0
-
-    # Momentum IC
-    momentum = np.diff(closes, prepend=closes[0])
-    results['Momentum'] = safe_spearman(momentum)
-
-    # Trend IC（用简单移动平均斜率）
-    if n >= 20:
-        ma = np.convolve(closes, np.ones(20)/20, mode='same')
-        trend = np.diff(ma, prepend=ma[0])
-        results['Trend'] = safe_spearman(trend)
-    else:
-        results['Trend'] = 0.0
-
-    # News/Onchain/Wallet 默认IC（需要外部数据）
-    results['News'] = BASE_ICS.get('News', 0.03)
-    results['Onchain'] = BASE_ICS.get('Onchain', 0.02)
-    results['Wallet'] = BASE_ICS.get('Wallet', 0.02)
-    
-    # BTC IC（如果有）
-    results['BTC'] = BASE_ICS.get('BTC', 0.04)
-
-    return results
+    def reset_to_default(self) -> Dict[str, float]:
+        """重置为默认权重"""
+        self._state.weights = dict(DEFAULT_WEIGHTS)
+        self._state.ic_values = {f: 0.0 for f in FACTORS}
+        self._state.sample_counts = {f: 0 for f in FACTORS}
+        self._state.last_updated = None
+        self._save()
+        logger.info("[IC] 权重已重置为默认")
+        return dict(DEFAULT_WEIGHTS)
 
 
-# ========== 辅助函数 ==========
+# ==================== 便捷函数 ====================
 
-def _calc_rsi_series(prices: np.ndarray, period: int = 14) -> np.ndarray:
-    """计算RSI序列"""
-    deltas = np.diff(prices, prepend=prices[0])
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-    avg_gains = np.convolve(gains, np.ones(period)/period, mode='same')
-    avg_losses = np.convolve(losses, np.ones(period)/period, mode='same')
-    rs = avg_gains / (avg_losses + 1e-10)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+_manager: Optional[ICWeightManager] = None
 
 
-def _calc_adx_series(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
-    """计算ADX序列（简化版）"""
-    tr = np.maximum(high - low, np.maximum(
-        np.abs(high - np.roll(close, 1)),
-        np.abs(low - np.roll(close, 1))
-    ))
-    plus_dm = np.maximum(high - np.roll(high, 1), 0)
-    minus_dm = np.maximum(np.roll(low, 1) - low, 0)
-    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0)
-    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0)
-
-    atr = np.convolve(tr, np.ones(period)/period, mode='same')
-    plus_di = 100 * np.convolve(plus_dm, np.ones(period)/period, mode='same') / (atr + 1e-10)
-    minus_di = 100 * np.convolve(minus_dm, np.ones(period)/period, mode='same') / (atr + 1e-10)
-
-    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
-    adx = np.convolve(dx, np.ones(period)/period, mode='same')
-    return adx
+def get_ic_manager() -> ICWeightManager:
+    """获取IC权重管理器单例"""
+    global _manager
+    if _manager is None:
+        _manager = ICWeightManager.get_instance()
+    return _manager
 
 
-def _calc_macd_series(prices: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9) -> np.ndarray:
-    """计算MACD直方图序列"""
-    import pandas as pd
-    s = pd.Series(prices)
-    ema12 = s.ewm(span=fast).mean().values
-    ema26 = s.ewm(span=slow).mean().values
-    macd = ema12 - ema26
-    signal_line = pd.Series(macd).ewm(span=signal).mean().values
-    hist = macd - signal_line
-    return hist
+def get_weights() -> Dict[str, float]:
+    """获取当前IC权重"""
+    return get_ic_manager().get_weights()
 
 
-def _calc_bb_series(prices: np.ndarray, period: int = 20) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """计算布林带序列"""
-    import pandas as pd
-    s = pd.Series(prices)
-    mid = s.rolling(period).mean().values
-    std = s.rolling(period).std().values
-    upper = mid + 2 * std
-    lower = mid - 2 * std
-    return lower, mid, upper
+def update_weights() -> Dict[str, float]:
+    """从Memory Log更新IC并刷新权重"""
+    return get_ic_manager().update_weights()
 
 
-# ========== 自检 ==========
+def get_ic_values() -> Dict[str, float]:
+    """获取当前IC值"""
+    return get_ic_manager().get_ic_values()
+
+
+def calculate_ic(factor_name: str) -> float:
+    """计算指定因子的IC"""
+    return get_ic_manager().calculate_ic(factor_name)
+
+
+def reset_weights() -> Dict[str, float]:
+    """重置为默认权重"""
+    return get_ic_manager().reset_to_default()
+
+
+# ==================== 自检 ====================
 
 if __name__ == '__main__':
-    print("=== Miracle IC动态因子权重系统自检 ===")
-    print(f"缓存文件: {CACHE_FILE}")
-    
-    # 测试权重加载
-    tracker = MiracleICTracker()
-    weights = tracker.get_all_weights()
-    ics = tracker.get_all_ics()
-    
-    print(f"\n当前因子权重:")
-    for factor, w in sorted(weights.items(), key=lambda x: -x[1]):
-        ic = ics.get(factor, 0)
-        print(f"  {factor:12s} 权重={w:.2%}  IC={ic:+.4f}")
-    
-    if not weights:
-        print("\n无历史权重，使用基准权重:")
-        for factor, ic in BASE_ICS.items():
-            print(f"  {factor:12s}  IC={ic:.4f}")
-    
+    import pprint
+
+    print("=== IC动态因子权重系统 (P1.4) ===")
+
+    manager = ICWeightManager.get_instance()
+    print("\n当前状态:")
+    pprint.pprint(manager.get_info())
+
+    print("\n从Memory Log更新权重...")
+    weights = manager.update_weights()
+
+    print("\n更新后权重:")
+    pprint.pprint(weights)
+
     print("\n=== 自检完成 ===")
