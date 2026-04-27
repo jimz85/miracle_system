@@ -738,19 +738,19 @@ class StateReconciler:
     def fix_oco_orders(self) -> Dict[str, Any]:
         """
         修复OCO订单问题
-        
+
         Returns:
             修复结果统计
         """
         result = self.reconcile(auto_fix=False)
-        
+
         stats = {
             'total_issues': len(result.oco_issues),
             'fixed': 0,
             'failed': 0,
             'details': []
         }
-        
+
         for issue in result.oco_issues:
             try:
                 if issue.issue_type == 'missing_algo':
@@ -761,12 +761,12 @@ class StateReconciler:
                         'action': 'needs_manual_repair',
                         'note': '需要获取入场信息后重新下单'
                     })
-                    
+
                 elif issue.issue_type == 'orphaned_algo':
                     # 取消孤立的条件单
                     if issue.algo_id:
                         success = self.client.cancel_algo_order(
-                            issue.inst_id, 
+                            issue.inst_id,
                             issue.algo_id
                         )
                         if success:
@@ -774,7 +774,7 @@ class StateReconciler:
                             logger.info(f"已取消孤立条件单: {issue.algo_id}")
                         else:
                             stats['failed'] += 1
-                            
+
             except Exception as e:
                 logger.error(f"修复OCO问题失败: {e}")
                 stats['failed'] += 1
@@ -783,7 +783,168 @@ class StateReconciler:
                     'action': 'failed',
                     'error': str(e)
                 })
-        
+
+        return stats
+
+    # ─────────────────────────────────────────────────────────────
+    # 幽灵仓位检测与清理 (P0.2)
+    # ─────────────────────────────────────────────────────────────
+
+    def get_real_positions(self) -> Dict[str, PositionInfo]:
+        """
+        获取交易所实际持仓
+
+        Returns:
+            Dict[str, PositionInfo]: 交易所实际持仓字典
+        """
+        return self.fetch_exchange_positions()
+
+    def reconcile_positions(self, threshold_pct: float = 0.02) -> "ReconcileResult":
+        """
+        检测幽灵仓位
+
+        Args:
+            threshold_pct: 差异阈值 (默认2%)
+
+        Returns:
+            ReconcileResult: 包含幽灵仓位检测结果
+        """
+        return self.reconcile(auto_fix=False)
+
+    def can_open_position(self, symbol: str) -> Tuple[bool, str]:
+        """
+        检查是否可以开仓 (防止幽灵仓位导致重复开仓)
+
+        Args:
+            symbol: 交易标的
+
+        Returns:
+            (can_open, reason)
+        """
+        # 获取实际持仓
+        real_positions = self.get_real_positions()
+
+        # 加载本地记录
+        local_positions = self.load_local_positions()
+
+        # 转换symbol格式
+        inst_id = symbol
+        if '-SWAP' not in inst_id and '-USDT' in inst_id:
+            inst_id = symbol.replace('-USDT', '-USDT-SWAP')
+        elif '-USDT' not in symbol:
+            inst_id = f"{symbol}-USDT-SWAP"
+
+        # 检查幽灵仓位
+        if inst_id in local_positions and inst_id not in real_positions:
+            local_pos = local_positions[inst_id]
+            return False, (
+                f"幽灵仓位检测: {symbol} 本地记录有持仓但交易所实际为0. "
+                f"entry={local_pos.entry_price}, contracts={local_pos.contracts}. "
+                f"请先运行 reconcile(auto_fix=True) 清理."
+            )
+
+        # 检查持仓差异
+        if inst_id in local_positions and inst_id in real_positions:
+            local_pos = local_positions[inst_id]
+            real_pos = real_positions[inst_id]
+
+            local_size = local_pos.contracts
+            real_size = abs(real_pos.pos)
+
+            if local_size > 0 and real_size == 0:
+                return False, f"幽灵仓位检测: {symbol} 本地有持仓但交易所实际为0"
+
+            # 检查差异是否超过阈值
+            if local_size > 0:
+                diff_pct = abs(local_size - real_size) / local_size
+                if diff_pct > 0.02:  # 2%阈值
+                    return False, (
+                        f"持仓差异过大: {symbol} 本地={local_size}, "
+                        f"交易所={real_size}, 差异={diff_pct:.1%}"
+                    )
+
+        return True, "OK"
+
+    def cleanup_phantom_orders(self, phantom: PhantomPosition) -> bool:
+        """
+        清理幽灵仓位
+
+        Args:
+            phantom: 幽灵仓位信息
+
+        Returns:
+            是否清理成功
+        """
+        try:
+            logger.warning(f"清理幽灵仓位: {phantom.inst_id}")
+
+            # 1. 如果有本地algo订单，取消它
+            if phantom.local_record and phantom.local_record.algo_id:
+                try:
+                    self.client.cancel_algo_order(
+                        phantom.inst_id,
+                        phantom.local_record.algo_id
+                    )
+                    logger.info(f"已取消幽灵仓位的条件单: {phantom.local_record.algo_id}")
+                except Exception as e:
+                    logger.error(f"取消条件单失败: {e}")
+
+            # 2. 更新交易日志，标记为phantom_closed
+            self.update_trade_status(
+                phantom.inst_id,
+                'phantom_closed',
+                'state_reconciler_auto_cleanup'
+            )
+
+            # 3. 更新本地状态
+            local_positions = self.load_local_positions()
+            if phantom.inst_id in local_positions:
+                local_positions[phantom.inst_id].status = 'phantom_closed'
+                self.save_local_state(local_positions)
+
+            logger.info(f"幽灵仓位已清理: {phantom.inst_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"清理幽灵仓位失败: {phantom.inst_id}: {e}")
+            return False
+
+    def auto_cleanup_phantoms(self) -> Dict[str, Any]:
+        """
+        自动清理所有幽灵仓位
+
+        Returns:
+            清理结果统计
+        """
+        result = self.reconcile(auto_fix=False)
+
+        stats = {
+            'total_phantoms': len(result.phantom_positions),
+            'cleaned': 0,
+            'failed': 0,
+            'details': []
+        }
+
+        for phantom in result.phantom_positions:
+            try:
+                if self.cleanup_phantom_orders(phantom):
+                    stats['cleaned'] += 1
+                    stats['details'].append({
+                        'inst_id': phantom.inst_id,
+                        'action': 'cleaned',
+                        'entry': phantom.entry_price,
+                        'contracts': phantom.contracts
+                    })
+                else:
+                    stats['failed'] += 1
+                    stats['details'].append({
+                        'inst_id': phantom.inst_id,
+                        'action': 'failed'
+                    })
+            except Exception as e:
+                logger.error(f"清理幽灵仓位异常 {phantom.inst_id}: {e}")
+                stats['failed'] += 1
+
         return stats
     
     # ─────────────────────────────────────────────────────────────

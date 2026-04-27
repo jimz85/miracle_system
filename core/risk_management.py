@@ -94,53 +94,67 @@ class DynamicPositionSizer:
         low: float,
         close: float,
         entry_price: float,
-        direction: str = "long"  # "long" or "short"
+        direction: str = "long",  # "long" or "short"
+        risk_reward_ratio: float = 2.0  # 风险回报比，默认2.0
     ) -> Dict[str, Any]:
         """
         计算仓位大小
-        
+
         Returns:
-            dict with position_size, stop_loss, risk_amount, atr等
+            dict with position_size, stop_loss, take_profit, risk_amount, atr等
         """
         atr = self.atr_calculator.update(high, low, close)
-        
+
         # 风险金额
         risk_amount = self.account_balance * self.risk_percent
-        
+
         # 理论仓位
         if atr > 0:
             raw_position = risk_amount / (atr * self.stop_multiplier)
         else:
             raw_position = risk_amount / (entry_price * 0.02)  # 默认2%止损
-        
+
         # 转换为实际金额
         raw_position_value = raw_position * entry_price
-        
+
         # 限制仓位比例
         max_position = self.account_balance * self.max_position_percent
         min_position = self.account_balance * self.min_position_percent
-        
+
         position_value = max(min_position, min(max_position, raw_position_value))
         position_size = position_value / entry_price if entry_price > 0 else 0
-        
+
         # 计算止损
+        # LONG: SL < entry (价格下跌触发止损)
+        # SHORT: SL > entry (价格上涨触发止损)
         if direction == "long":
             stop_loss = entry_price - (atr * self.stop_multiplier)
         else:
             stop_loss = entry_price + (atr * self.stop_multiplier)
-        
+
+        # 计算止盈
+        # LONG: TP > entry (价格上涨触发止盈)
+        # SHORT: TP < entry (价格下跌触发止盈)
+        stop_distance = atr * self.stop_multiplier
+        if direction == "long":
+            take_profit = entry_price + (stop_distance * risk_reward_ratio)
+        else:
+            take_profit = entry_price - (stop_distance * risk_reward_ratio)
+
         # 实际风险
         actual_risk = abs(entry_price - stop_loss) * position_size
-        
+
         return {
             "position_size": position_size,
             "position_value": position_value,
             "entry_price": entry_price,
             "stop_loss": stop_loss,
+            "take_profit": take_profit,
             "atr": atr,
             "atr_percent": (atr / entry_price * 100) if entry_price > 0 else 0,
             "risk_amount": actual_risk,
             "risk_percent": (actual_risk / self.account_balance * 100),
+            "risk_reward_ratio": risk_reward_ratio,
             "volatility_adjustment": "high" if atr > 0.03 else "normal"
         }
     
