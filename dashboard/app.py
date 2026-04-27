@@ -422,7 +422,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/api/stats")
 async def get_stats():
-    """获取交易统计"""
+    """
+    获取交易统计
+    
+    Returns:
+        Stats: 包含总交易数、胜率、夏普比率等
+    """
     stats = simulator.get_stats()
     return {
         "total_trades": stats.total_trades,
@@ -436,7 +441,12 @@ async def get_stats():
 
 @app.get("/api/quotes")
 async def get_quotes():
-    """获取行情"""
+    """
+    获取实时行情
+    
+    Returns:
+        Quotes: 所有交易对的实时价格数据
+    """
     quotes = simulator.get_quotes()
     return {
         "quotes": [
@@ -459,14 +469,24 @@ async def get_quotes():
 
 @app.get("/api/signals")
 async def get_signals():
-    """获取信号"""
+    """
+    获取交易信号
+    
+    Returns:
+        Signals: 当前生成的交易信号列表
+    """
     signals = simulator.get_signals()
     return {"signals": signals}
 
 
 @app.get("/api/positions")
 async def get_positions():
-    """获取持仓"""
+    """
+    获取当前持仓
+    
+    Returns:
+        Positions: 当前开仓的持仓列表
+    """
     positions = simulator.get_positions()
     return {"positions": positions}
 

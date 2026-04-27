@@ -1,12 +1,66 @@
 # Miracle 2.0 — 自主学习量化交易系统
 
-**版本**: 2.0  
-**定位**: 大语言模型 + 多Agent协同的自主学习交易系统  
+**版本**: 2.0
+**定位**: 大语言模型 + 多Agent协同的自主学习交易系统
 **核心理念**: 赔率优先 + LLM驱动的自适应学习 + Autoresearch持续进化
 
 ---
 
-## 系统架构
+## 系统架构图
+
+```mermaid
+graph TB
+    subgraph Orchestrator["🤖 Orchestrator (LLM大脑)"]
+        O[任务分解<br/>结果聚合<br/>自我反思]
+    end
+
+    subgraph Agents["👥 Multi-Agent"]
+        M[Agent-M<br/>市场情报]
+        S[Agent-S<br/>信号生成]
+        R[Agent-R<br/>风险管理]
+        L[Agent-L<br/>学习迭代]
+        E[Agent-E<br/>执行引擎]
+    end
+
+    subgraph Memory["🧠 Memory System"]
+        VM[(向量记忆<br/>ChromaDB)]
+        SM[(结构化经验<br/>SQLite)]
+        DB[(示范库<br/>Few-shot)]
+        RB[(规则库<br/>Policy)]
+    end
+
+    subgraph Autoresearch["🔄 Autoresearch Loop"]
+        A1[数据收集]
+        A2[假设生成]
+        A3[回测验证]
+        A4[反思改进]
+        A5[策略演化]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A1
+    end
+
+    subgraph External["🌐 外部服务"]
+        OKX[OKX交易所]
+        FEISHU[飞书通知]
+        LLM[LLM Providers<br/>Claude/GPT/Gemini]
+    end
+
+    O --> M
+    O --> S
+    O --> R
+    O --> L
+    O --> E
+    M --> VM
+    M --> SM
+    S --> DB
+    L --> RB
+    E --> OKX
+    O --> LLM
+    L --> VM
+```
+
+---
+
+## ASCII架构图 (纯文本版)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
