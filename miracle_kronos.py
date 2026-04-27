@@ -533,29 +533,29 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct):
     if side == 'long':
         sl_price = round(entry_price * (1 - sl_pct), 4)
         tp_price = round(entry_price * (1 + tp_pct), 4)
-        sl_side = 'sell'
-        tp_side = 'sell'
+        close_side = 'sell'
+        pos_side = 'long'
     else:  # short
         sl_price = round(entry_price * (1 + sl_pct), 4)
         tp_price = round(entry_price * (1 - tp_pct), 4)
-        sl_side = 'buy'
-        tp_side = 'buy'
+        close_side = 'buy'
+        pos_side = 'short'
     
-    # OKX OCO订单: ordType=oco, slOrdType=conditional, tpOrdType=conditional
     body = json.dumps({
         'instId': instId,
         'tdMode': 'isolated',
-        'side': 'sell' if side == 'long' else 'buy',
+        'side': close_side,
         'ordType': 'oco',
         'sz': str(int(sz)),
+        'posSide': pos_side,          # ← 关键：添加 posSide
         'slTriggerPx': str(sl_price),
-        'slOrdPx': str(sl_price * 0.998 if sl_side == 'sell' else sl_price * 1.002),
-        'slOrdType': 'conditional',
+        'slOrdPx': '-1',             # ← 市价触发
         'tpTriggerPx': str(tp_price),
-        'tpOrdPx': str(tp_price * 0.998 if tp_side == 'sell' else tp_price * 1.002),
-        'tpOrdType': 'conditional',
+        'tpOrdPx': '-1',            # ← 市价触发
+        # 移除 slOrdType / tpOrdType 字段
     })
-    data = okx_req('POST', '/api/v5/trade/order', body)
+    # ← 关键修复：使用正确的 /order-algo 端点
+    data = okx_req('POST', '/api/v5/trade/order-algo', body)
     return data
 
 # ===== 主扫描逻辑 =====

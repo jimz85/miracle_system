@@ -1645,6 +1645,7 @@ class Executor:
                 )
         except Exception as e:
             logging.warning(f"真实下单异常: {e}，切换到模拟模式")
+            order_result = None
 
         # 如果真实下单失败，使用模拟订单
         if not order_result:

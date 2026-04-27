@@ -43,10 +43,11 @@ class PriceFactors:
 
         # Wilder平滑 — 使用递归形式，避免pandas依赖
         # 正确Wilder：smooth[i] = smooth[i-1] + alpha*(value[i] - smooth[i-1])，alpha=1/period
+        # 初始化：第一period用SMA（Wilder原始方法）
         alpha = 1.0 / period
-        avg_gain = gains[0]
-        avg_loss = losses[0]
-        for i in range(1, len(gains)):
+        avg_gain = float(np.mean(gains[:period]))
+        avg_loss = float(np.mean(losses[:period]))
+        for i in range(period, len(gains)):
             avg_gain = avg_gain + alpha * (gains[i] - avg_gain)
             avg_loss = avg_loss + alpha * (losses[i] - avg_loss)
 

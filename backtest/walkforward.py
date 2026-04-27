@@ -24,6 +24,7 @@ Usage:
 import os
 import json
 import logging
+import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass, field, asdict
@@ -235,11 +236,11 @@ class WalkForwardValidator:
                 except:
                     return 0
             
-            # 使用更灵活的过滤方式
+            # 修复: 直接使用时间戳比较，避免//3600000小时桶化导致边界错误
             train_klines = [k for k in klines 
-                          if ts_to_ms(k.get("timestamp", k.get("ts", 0))) // 3600000 <= train_end_ts // 3600000]
+                          if ts_to_ms(k.get("timestamp", k.get("ts", 0))) <= train_end_ts]
             test_klines = [k for k in klines 
-                         if train_end_ts // 3600000 < ts_to_ms(k.get("timestamp", k.get("ts", 0))) // 3600000 < test_end_ts // 3600000]
+                         if train_end_ts < ts_to_ms(k.get("timestamp", k.get("ts", 0))) < test_end_ts]
             
             # 过滤预热期
             if len(train_klines) >= self.warmup_bars + 50 and len(test_klines) >= 50:
@@ -555,7 +556,108 @@ class WalkForwardValidator:
             }
         
         return None
-    
+
+    def _calc_adx(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float],
+        period: int
+    ) -> float:
+        """
+        计算 ADX (Average Directional Index) - 使用完整的 Wilder 平滑算法。
+
+        ADX 计算流程:
+        1. TR (True Range) = max(H-L, H-PC, L-PC)
+        2. +DM (Positive Directional Movement)
+        3. -DM (Negative Directional Movement)
+        4. Wilder 平滑得到 ATR, +DI, -DI
+        5. DX = |+DI - (-DI)| / (+DI + (-DI)) * 100
+        6. ADX = Wilder EMA of DX
+        """
+        if len(closes) < period + 1:
+            return 50.0
+
+        highs_arr = np.array(highs)
+        lows_arr = np.array(lows)
+        closes_arr = np.array(closes)
+
+        # 计算 True Range
+        prev_closes = np.roll(closes_arr, 1)
+        prev_closes[0] = closes_arr[0]
+
+        tr1 = highs_arr - lows_arr
+        tr2 = np.abs(highs_arr - prev_closes)
+        tr3 = np.abs(lows_arr - prev_closes)
+        tr = np.maximum(np.maximum(tr1, tr2), tr3)
+
+        # 计算 Directional Movement
+        up_move = highs_arr - np.roll(highs_arr, 1)
+        up_move[0] = 0
+        down_move = np.roll(lows_arr, 1) - lows_arr
+        down_move[0] = 0
+
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+        # Wilder 平滑 (使用 EMA，alpha = 1/period)
+        alpha = 1.0 / period
+
+        # 初始平滑值 (简单移动平均)
+        atr_smooth = np.mean(tr[1:period+1])
+        plus_dm_smooth = np.mean(plus_dm[1:period+1])
+        minus_dm_smooth = np.mean(minus_dm[1:period+1])
+
+        # 递归 Wilder 平滑
+        for i in range(period + 1, len(tr)):
+            atr_smooth = (atr_smooth * (period - 1) + tr[i]) / period
+            plus_dm_smooth = (plus_dm_smooth * (period - 1) + plus_dm[i]) / period
+            minus_dm_smooth = (minus_dm_smooth * (period - 1) + minus_dm[i]) / period
+
+        # 计算 +DI 和 -DI
+        plus_di = 100 * plus_dm_smooth / (atr_smooth + 1e-10)
+        minus_di = 100 * minus_dm_smooth / (atr_smooth + 1e-10)
+
+        # 计算 DX
+        di_sum = plus_di + minus_di
+        if di_sum < 1e-10:
+            dx = 0
+        else:
+            dx = 100 * abs(plus_di - minus_di) / di_sum
+
+        # Wilder 平滑 DX 得到 ADX
+        # 使用 DX 的 EMA 作为 ADX
+        adx_value = dx  # 简化：直接使用 DX 作为 ADX（因为数据长度不足时）
+
+        # 如果有足够数据，计算完整的 ADX
+        if len(tr) > period * 2:
+            dx_series = np.zeros(len(tr))
+            for i in range(period, len(tr)):
+                # 重新计算 DX
+                atr_s = np.mean(tr[i-period+1:i+1])
+                pdm_s = np.mean(plus_dm[i-period+1:i+1])
+                mdm_s = np.mean(minus_dm[i-period+1:i+1])
+
+                # Wilder 平滑
+                for j in range(i-period+1, i):
+                    atr_s = (atr_s * (period - 1) + tr[j+1]) / period
+                    pdm_s = (pdm_s * (period - 1) + plus_dm[j+1]) / period
+                    mdm_s = (mdm_s * (period - 1) + minus_dm[j+1]) / period
+
+                pdi = 100 * pdm_s / (atr_s + 1e-10)
+                mdi = 100 * mdm_s / (atr_s + 1e-10)
+                di_sum_s = pdi + mdi
+                dx_series[i] = 100 * abs(pdi - mdi) / di_sum_s if di_sum_s > 1e-10 else 0
+
+            # Wilder EMA of DX
+            adx_smooth = np.nanmean(dx_series[period:period+period])
+            for i in range(period + period, len(dx_series)):
+                if not np.isnan(dx_series[i]):
+                    adx_smooth = (adx_smooth * (period - 1) + dx_series[i]) / period
+            adx_value = adx_smooth
+
+        return min(100, max(0, adx_value))
+
     def _trend_following_signal(
         self, 
         opens: List[float], 
@@ -585,12 +687,8 @@ class WalkForwardValidator:
         ema_fast_val = calc_ema(closes[-ema_fast*2:], ema_fast)
         ema_slow_val = calc_ema(closes[-ema_slow*2:], ema_slow)
         
-        # ADX近似计算
-        if len(highs) > adx_period and len(lows) > adx_period:
-            high_range = max(highs[-adx_period:]) - min(lows[-adx_period:])
-            adx_approx = min(100, high_range / (closes[-1] + 1e-10) * 100)
-        else:
-            adx_approx = 50
+        # ADX计算 (使用完整的 Wilder 平滑算法)
+        adx_value = self._calc_adx(highs, lows, closes, adx_period)
         
         # 信号判断
         entry_price = closes[-1]
@@ -598,25 +696,25 @@ class WalkForwardValidator:
         tp_pct = params.get("tp_pct", 0.08)
         
         # 金叉 -> 做多
-        if ema_fast_val > ema_slow_val and adx_approx > adx_threshold:
+        if ema_fast_val > ema_slow_val and adx_value > adx_threshold:
             return {
                 "direction": "long",
                 "entry_price": entry_price,
                 "stop_loss": entry_price * (1 - sl_pct),
                 "take_profit": entry_price * (1 + tp_pct),
                 "leverage": params.get("leverage", 2),
-                "factors": {"adx": adx_approx, "ema_cross": 1},
+                "factors": {"adx": adx_value, "ema_cross": 1},
             }
         
         # 死叉 -> 做空
-        if ema_fast_val < ema_slow_val and adx_approx > adx_threshold:
+        if ema_fast_val < ema_slow_val and adx_value > adx_threshold:
             return {
                 "direction": "short",
                 "entry_price": entry_price,
                 "stop_loss": entry_price * (1 + sl_pct),
                 "take_profit": entry_price * (1 - tp_pct),
                 "leverage": params.get("leverage", 2),
-                "factors": {"adx": adx_approx, "ema_cross": -1},
+                "factors": {"adx": adx_value, "ema_cross": -1},
             }
         
         return None

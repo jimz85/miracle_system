@@ -505,8 +505,14 @@ def calc_atr(highs: List[float], lows: List[float], closes: List[float], period:
     return atr
 
 def calc_onchain_metrics() -> Dict[str, float]:
-    """计算链上因子（模拟，需对接真实API）"""
-    # TODO: 对接链上数据API（OKX/Binance）
+    """
+    计算链上因子（STUB - 需对接真实API）
+    
+    WARNING: 此函数为STUB实现，返回全零值。
+    当前权重贡献已被静默设为0，避免污染综合得分。
+    TODO: 对接链上数据API（OKX/Binance）
+    """
+    logger.warning("calc_onchain_metrics() called - STUB implementation returning zeros. Weight contribution disabled.")
     return {
         "exchange_flow": 0.0,   # 交易所净流量
         "large_transfer": 0.0   # 大额转账标记
@@ -583,16 +589,28 @@ def calc_combined_score(price_score: float, news_score: float,
     return max(-1.0, min(1.0, combined))
 
 def calc_wallet_metrics() -> Dict[str, float]:
-    """计算钱包分布因子（模拟，需对接真实API）"""
-    # TODO: 对接区块链浏览器API
+    """
+    计算钱包分布因子（STUB - 需对接真实API）
+    
+    WARNING: 此函数为STUB实现，返回全零值。
+    当前权重贡献已被静默设为0，避免污染综合得分。
+    TODO: 对接区块链浏览器API
+    """
+    logger.warning("calc_wallet_metrics() called - STUB implementation returning zeros. Weight contribution disabled.")
     return {
         "holder_concentration": 0.0  # 持币地址集中度
     }
 
 def calc_news_sentiment() -> float:
-    """计算新闻情绪（模拟，需对接新闻API）"""
-    # TODO: 对接新闻情绪分析API
-    # 返回: 1.0=强烈利好, 0.0=中性, -1.0=强烈利空
+    """
+    计算新闻情绪（STUB - 需对接新闻API）
+    
+    WARNING: 此函数为STUB实现，返回零（中性）。
+    当前权重贡献已被静默设为0，避免污染综合得分。
+    TODO: 对接新闻情绪分析API
+    返回: 1.0=强烈利好, 0.0=中性, -1.0=强烈利空
+    """
+    logger.warning("calc_news_sentiment() called - STUB implementation returning 0.0 (neutral). Weight contribution disabled.")
     return 0.0
 
 def calc_factors(price_data: Dict, onchain_data: Optional[Dict] = None, 

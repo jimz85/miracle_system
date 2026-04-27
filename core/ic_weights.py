@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 CACHE_FILE = os.path.expanduser('~/.miracle_memory/ic_factor_weights.json')
 DECAY_FACTOR = 0.7
 MIN_SAMPLES = 10
+MIN_WEIGHT = 0.05  # 最小权重阈值，IC≤0时权重不低于此值
 FACTORS = ['rsi', 'macd', 'adx', 'bollinger', 'momentum']
 
 # 默认权重 (因子IC未知时使用)
@@ -325,6 +326,10 @@ class ICWeightManager:
 
         total_samples = 0
 
+        # 第一步：计算所有因子的IC和权重
+        raw_weights = {}
+        negative_ic_factors = []  # 记录IC≤0的因子
+
         for factor in FACTORS:
             ic = self.calculate_ic(factor)
             sample_count = self._count_samples(factor)
@@ -333,25 +338,54 @@ class ICWeightManager:
             new_sample_counts[factor] = sample_count
             total_samples += sample_count
 
-            # 指数平滑更新权重
             old_weight = old_weights.get(factor, 1.0 / len(FACTORS))
 
             if sample_count >= MIN_SAMPLES and ic > 0:
                 # IC为正,正常更新
                 new_weight = DECAY_FACTOR * old_weight + (1 - DECAY_FACTOR) * ic
+                raw_weights[factor] = new_weight
             elif sample_count >= MIN_SAMPLES and ic <= 0:
-                # IC为负或零,权重置低
-                new_weight = DECAY_FACTOR * old_weight
+                # IC为负或零,权重设为最低阈值，确保差因子被淘汰
+                raw_weights[factor] = MIN_WEIGHT
+                negative_ic_factors.append(factor)
             else:
                 # 样本不足,保持旧权重
-                new_weight = old_weight
+                raw_weights[factor] = old_weight
 
-            new_weights[factor] = new_weight
+        # 第二步：归一化
+        # IC≤0的因子保持MIN_WEIGHT，IC>0的因子分配剩余权重
+        num_negative = len(negative_ic_factors)
+        num_positive = len(FACTORS) - num_negative
 
-        # 归一化
-        total = sum(new_weights.values())
-        if total > 0:
-            new_weights = {k: v / total for k, v in new_weights.items()}
+        if num_negative == len(FACTORS):
+            # 所有因子IC都≤0，全部设为均等权重
+            new_weights = {f: 1.0 / len(FACTORS) for f in FACTORS}
+        elif num_negative > 0:
+            # 部分因子IC≤0，这些保持MIN_WEIGHT，其余分配剩余
+            reserved_weight = num_negative * MIN_WEIGHT
+            remaining_weight = 1.0 - reserved_weight
+
+            if num_positive > 0 and remaining_weight > 0:
+                # 计算IC>0因子的原始权重总和
+                positive_sum = sum(raw_weights[f] for f in FACTORS if f not in negative_ic_factors)
+                if positive_sum > 0:
+                    for f in FACTORS:
+                        if f in negative_ic_factors:
+                            new_weights[f] = MIN_WEIGHT
+                        else:
+                            # 按比例分配剩余权重
+                            new_weights[f] = (raw_weights[f] / positive_sum) * remaining_weight
+                else:
+                    new_weights = {f: 1.0 / len(FACTORS) for f in FACTORS}
+            else:
+                new_weights = {f: 1.0 / len(FACTORS) for f in FACTORS}
+        else:
+            # 没有IC≤0的因子，正常归一化
+            total = sum(raw_weights.values())
+            if total > 0:
+                new_weights = {k: v / total for k, v in raw_weights.items()}
+            else:
+                new_weights = dict(DEFAULT_WEIGHTS)
 
         # 更新状态
         self._state.weights = new_weights
