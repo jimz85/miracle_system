@@ -1,0 +1,74 @@
+# Miracle 2.0 - Docker Compose
+# =============================
+version: '3.8'
+
+services:
+  miracle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: miracle
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # LLM Providers
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-5-sonnet-20241022}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      # LLM Config
+      - LLM_PRIMARY_PROVIDER=${LLM_PRIMARY_PROVIDER:-claude}
+      - LLM_FALLBACK_PROVIDER=${LLM_FALLBACK_PROVIDER:-deepseek}
+      - LLM_AUTO_FALLBACK=${LLM_AUTO_FALLBACK:-true}
+      # Exchange
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET}
+      - OKX_API_KEY=${OKX_API_KEY}
+      - OKX_API_SECRET=${OKX_API_SECRET}
+      # Feishu
+      - FEISHU_APP_ID=${FEISHU_APP_ID}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
+      # Trading
+      - TRADING_MODE=${TRADING_MODE:-SIMULATION}
+      - EMERGENCY_STOP_ENABLED=${EMERGENCY_STOP_ENABLED:-true}
+      - EMERGENCY_STOP_TOKEN=${EMERGENCY_STOP_TOKEN}
+      # Server
+      - API_PORT=${API_PORT:-8080}
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - DEBUG=${DEBUG:-false}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - miracle_logs:/app/logs
+      - miracle_data:/app/data
+      - miracle_memory:/app/core/memory
+    ports:
+      - "${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+  # Optional: ChromaDB for vector memory (if not using external)
+  # chromadb:
+  #   image: chromadb/chroma:latest
+  #   container_name: miracle_chromadb
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - chroma_data:/chroma/chroma
+  #   environment:
+  #     - IS_PERSISTENT=TRUE
+
+volumes:
+  miracle_logs:
+  miracle_data:
+  miracle_memory:
