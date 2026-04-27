@@ -38,6 +38,11 @@ DELIVERY_MODE = os.getenv('FEISHU_DELIVERY', 'local')  # 'local' | 'feishu'
 OUTPUT_DIR = os.path.expanduser('~/.miracle_memory/feishu_alerts/')
 
 
+def is_feishu_configured() -> bool:
+    """检查飞书是否已配置"""
+    return bool(FEISHU_WEBHOOK_URL)
+
+
 class AlertLevel(Enum):
     """告警级别"""
     CRITICAL = 'P0'  # 资金安全/系统崩溃
@@ -238,6 +243,58 @@ def notify_warning(title: str, message: str, data: Dict = None):
 def notify_info(title: str, message: str, data: Dict = None):
     """发送P2告警 (静默)"""
     get_notifier().info(title, message, data)
+
+
+# ==================== 向后兼容函数 ====================
+
+def push_feishu(message: str, level: str = 'INFO') -> bool:
+    """
+    推送飞书消息 (向后兼容)
+    
+    Args:
+        message: 消息内容
+        level: 级别 INFO/WARNING/CRITICAL
+    """
+    level_map = {
+        'INFO': AlertLevel.INFO,
+        'WARNING': AlertLevel.WARNING,
+        'CRITICAL': AlertLevel.CRITICAL,
+    }
+    alert_level = level_map.get(level.upper(), AlertLevel.INFO)
+    get_notifier().notify(alert_level, '通知', message)
+    return True
+
+
+def push_feishu_alert(title: str, message: str, alert_type: str = 'warning') -> bool:
+    """
+    推送飞书告警 (向后兼容)
+    
+    Args:
+        title: 告警标题
+        message: 告警消息
+        alert_type: 告警类型 info/warning/error/critical
+    """
+    type_map = {
+        'info': AlertLevel.INFO,
+        'warning': AlertLevel.WARNING,
+        'error': AlertLevel.WARNING,
+        'critical': AlertLevel.CRITICAL,
+    }
+    alert_level = type_map.get(alert_type.lower(), AlertLevel.WARNING)
+    get_notifier().notify(alert_level, title, message)
+    return True
+
+
+def push_feishu_report(title: str, report: str) -> bool:
+    """
+    推送飞书报告 (向后兼容)
+    
+    Args:
+        title: 报告标题
+        report: 报告内容
+    """
+    get_notifier().info(title, report)
+    return True
 
 
 # ==================== 自检 ====================
