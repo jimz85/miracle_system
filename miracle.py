@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 主程序
 ==================================================
@@ -43,29 +45,36 @@ def _load_last_equity() -> float:
 
 def _save_last_equity(equity: float):
     """保存当前余额到缓存"""
-    import json
     EQUITY_CACHE_FILE.parent.mkdir(exist_ok=True)
     with open(EQUITY_CACHE_FILE, 'w') as f:
         json.dump({"equity": equity, "updated": datetime.now().isoformat()}, f)
 
 # 核心模块
-from core.data_fetcher import DataFetcher, get_ticker, get_klines
-from miracle_core import (
-    calc_factors, calc_trend_strength, calc_leverage,
-    calc_position_size, check_stops, format_trade_signal, log_trade,
-    can_trade, check_risk_limits, update_factor_weights, load_config,
-    get_account_state
-)
+# 自适应学习
+from adaptive_learner import AdaptiveLearner
 
-# Agent模块
-from agents.agent_market_intel import MarketIntelAgent
-from agents.agent_signal import AgentSignal
-from agents.agent_risk import AgentRisk, AccountState, Signal
 from agents.agent_executor import Executor, ExecutorConfig
 from agents.agent_learner import AgentLearner
 
-# 自适应学习
-from adaptive_learner import AdaptiveLearner
+# Agent模块
+from agents.agent_market_intel import MarketIntelAgent
+from agents.agent_risk import AccountState, AgentRisk, Signal
+from agents.agent_signal import AgentSignal
+from core.data_fetcher import DataFetcher, get_klines, get_ticker
+from miracle_core import (
+    calc_factors,
+    calc_leverage,
+    calc_position_size,
+    calc_trend_strength,
+    can_trade,
+    check_risk_limits,
+    check_stops,
+    format_trade_signal,
+    get_account_state,
+    load_config,
+    log_trade,
+    update_factor_weights,
+)
 
 # ==================== 日志配置 ====================
 
@@ -96,7 +105,7 @@ class PositionManager:
         self.positions: Dict[str, Dict] = {}  # symbol -> position_info
         self.pending_queue: List[Dict] = []  # 等待入场的信号
         self.total_trades_today: int = 0
-        self.last_exit_time: Optional[datetime] = None
+        self.last_exit_time: datetime | None = None
 
     def has_position(self, symbol: str) -> bool:
         """检查是否有该币种持仓"""
@@ -133,7 +142,7 @@ class PositionManager:
     def close_position(self, symbol: str, reason: str = "manual"):
         """平仓"""
         if symbol in self.positions:
-            pos = self.positions.pop(symbol)
+            self.positions.pop(symbol)
             self.last_exit_time = datetime.now()
             logger.info(f"[{symbol}] 平仓完成 ({reason})，持仓: {len(self.positions)}/{self.max_positions}")
 
@@ -456,7 +465,7 @@ class MiracleScanner:
                             print(f"   4H因子: RSI={f4h.get('rsi')}, ADX={f4h.get('adx')}, "
                                   f"MACD={f4h.get('macd_direction')}, Vol={f4h.get('volume_ratio')}x")
                     else:
-                        print(f"   多周期: ⏭️ 未应用(无4H数据)")
+                        print("   多周期: ⏭️ 未应用(无4H数据)")
 
                 if "factors" in sig:
                     fac = sig["factors"]
@@ -465,15 +474,15 @@ class MiracleScanner:
                           f"combined={fac.get('combined', 0):.2f}")
 
             elif action == "wait":
-                print(f"   无信号")
+                print("   无信号")
             elif action == "rejected":
-                print(f"   被风控拒绝")
+                print("   被风控拒绝")
             elif action == "already_held":
-                print(f"   已有持仓")
+                print("   已有持仓")
             elif action == "queued":
-                print(f"   仓位满，等待队列")
+                print("   仓位满，等待队列")
             elif action == "error":
-                print(f"   错误")
+                print("   错误")
 
         print("\n" + "="*60)
 

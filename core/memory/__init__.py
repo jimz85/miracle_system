@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Memory System Module
 ====================
@@ -28,29 +30,23 @@ lessons = memory.get_lessons(category="entry")
 ```
 """
 
-from .vector_memory import (
-    VectorMemory,
-    get_vector_memory,
-    MemoryEntry
-)
-
 from .structured_memory import (
-    StructuredMemory,
-    get_structured_memory,
-    TradeRecord,
     FactorPerformance,
-    StrategyParams,
     Lesson,
-    MemoryType
+    MemoryType,
+    StrategyParams,
+    StructuredMemory,
+    TradeRecord,
+    get_structured_memory,
 )
-
 from .system import (
-    MemorySystem,
-    MemorySystemInterface,
     MemoryQuery,
     MemoryResult,
-    get_memory_system
+    MemorySystem,
+    MemorySystemInterface,
+    get_memory_system,
 )
+from .vector_memory import MemoryEntry, VectorMemory, get_vector_memory
 
 __all__ = [
     # Vector Memory

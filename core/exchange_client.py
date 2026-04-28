@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Exchange Client - 统一交易所接口
 =================================
@@ -13,9 +15,9 @@ Exchange Client - 统一交易所接口
 """
 
 import base64
-import os
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -184,7 +186,7 @@ class ExchangeClient:
             logging.warning(f"获取余额失败: {e}，使用模拟余额")
             return {"total": 100000.0, "available": 100000.0, "currency": "USDT", "simulated": True}
 
-    def get_ticker(self, symbol: str) -> Optional[float]:
+    def get_ticker(self, symbol: str) -> float | None:
         """获取当前价格（API失败时尝试从其他渠道获取）"""
         try:
             if self.exchange == "okx":
@@ -214,8 +216,8 @@ class ExchangeClient:
             return None
 
     def place_order(self, symbol: str, side: str, order_type: str,
-                    price: Optional[float] = None, size: float = 0,
-                    leverage: int = 1) -> Optional[Dict]:
+                    price: float | None = None, size: float = 0,
+                    leverage: int = 1) -> Dict | None:
         """
         下单
         order_type: "market" / "limit"
@@ -242,7 +244,7 @@ class ExchangeClient:
         return None
 
     def _place_order_okx(self, symbol: str, side: str, order_type: str,
-                         price: Optional[float], size: float, leverage: int) -> Dict:
+                         price: float | None, size: float, leverage: int) -> Dict:
         """OKX下单"""
         inst_id = symbol.replace("-USDT", "-USDT-SWAP") if "-SWAP" not in symbol else symbol
 
@@ -288,7 +290,7 @@ class ExchangeClient:
 
     def place_oco_order(self, symbol: str, side: str, size: float,
                         entry_price: float, sl_price: float, tp_price: float,
-                        leverage: int = 1) -> Optional[Dict]:
+                        leverage: int = 1) -> Dict | None:
         """
         下一个OCO bracket订单（止损+止盈合并单）
 
@@ -442,7 +444,7 @@ class ExchangeClient:
             return False
 
     def _place_order_binance(self, symbol: str, side: str, order_type: str,
-                              price: Optional[float], size: float, leverage: int) -> Dict:
+                              price: float | None, size: float, leverage: int) -> Dict:
         """Binance下单"""
         binance_symbol = symbol.replace("-", "").replace("SWAP", "")
 
@@ -483,7 +485,7 @@ class ExchangeClient:
             "exchange": "binance"
         }
 
-    def close_position(self, symbol: str) -> Optional[Dict]:
+    def close_position(self, symbol: str) -> Dict | None:
         """平仓"""
         retry_count = 0
         last_error = None

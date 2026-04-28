@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 ExecutorConfig - 执行器配置
 ===========================
@@ -55,7 +57,7 @@ class ExecutorConfig:
     trade_log_file: str = "trades.json"
     slippage_log_file: str = "slippage.json"
 
-    def get_okx_keys(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def get_okx_keys(self) -> Tuple[str | None, str | None, str | None]:
         """获取OKX API密钥（从安全密钥管理器）"""
         km = get_key_manager()
         return (
@@ -64,7 +66,7 @@ class ExecutorConfig:
             km.get_key("okx", "passphrase")
         )
 
-    def get_binance_keys(self) -> Tuple[Optional[str], Optional[str]]:
+    def get_binance_keys(self) -> Tuple[str | None, str | None]:
         """获取Binance API密钥（从安全密钥管理器）"""
         km = get_key_manager()
         return (

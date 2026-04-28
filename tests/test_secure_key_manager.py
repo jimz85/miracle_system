@@ -1,13 +1,14 @@
 """
 SecureKeyManager 安全密钥管理器测试
 """
-import os, tempfile
+import os
+import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from core.secure_key_manager import SecureKeyManager, get_key_manager
-
 
 # ══════════════════════════════════════════════════════════════
 # Fixture

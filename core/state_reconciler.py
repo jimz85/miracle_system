@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle State Reconciler - 状态一致性模块
 ==========================================
@@ -23,10 +25,10 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 # OKX API 封装
 from core.exchange_client import ExchangeClient
@@ -46,13 +48,13 @@ class OrderInfo:
     inst_id: str
     side: str
     sz: float
-    price: Optional[float] = None
-    algo_id: Optional[str] = None
-    sl_trigger: Optional[float] = None
-    tp_trigger: Optional[float] = None
+    price: float | None = None
+    algo_id: str | None = None
+    sl_trigger: float | None = None
+    tp_trigger: float | None = None
     ord_type: str = "market"
     state: str = "live"
-    created_at: Optional[str] = None
+    created_at: str | None = None
 
 
 @dataclass
@@ -79,7 +81,7 @@ class LocalOrderRecord:
     sz: float
     created_at: str
     status: str = "submitted"
-    algo_id: Optional[str] = None
+    algo_id: str | None = None
     algo_type: str = "oco"  # oco, conditional, stop
 
 
@@ -90,10 +92,10 @@ class LocalPositionRecord:
     direction: str
     entry_price: float
     contracts: float
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    algo_id: Optional[str] = None  # OCO订单ID
-    opened_at: Optional[str] = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    algo_id: str | None = None  # OCO订单ID
+    opened_at: str | None = None
     status: str = "open"  # open, closed, phantom, zombie
 
 
@@ -104,7 +106,7 @@ class PhantomPosition:
     direction: str
     entry_price: float
     contracts: float
-    local_record: Optional[LocalPositionRecord] = None
+    local_record: LocalPositionRecord | None = None
     note: str = ""
 
 
@@ -128,7 +130,7 @@ class OrphanOrder:
     inst_id: str
     side: str
     sz: float
-    algo_id: Optional[str] = None
+    algo_id: str | None = None
     order_type: str = "unknown"
     note: str = ""
 
@@ -140,11 +142,11 @@ class OCOIssue:
     issue_type: str  # missing_algo, stale_algo, price_mismatch, orphaned_algo
     position_exists: bool
     algo_exists: bool
-    expected_sl: Optional[float] = None
-    expected_tp: Optional[float] = None
-    actual_sl: Optional[float] = None
-    actual_tp: Optional[float] = None
-    algo_id: Optional[str] = None
+    expected_sl: float | None = None
+    expected_tp: float | None = None
+    actual_sl: float | None = None
+    actual_tp: float | None = None
+    algo_id: str | None = None
     note: str = ""
 
 
@@ -185,8 +187,8 @@ class StateReconciler:
     状态协调器 - 检测并修复幽灵仓位、孤立订单等问题
     """
     
-    def __init__(self, state_file: Optional[Path] = None, 
-                 trade_log_file: Optional[Path] = None,
+    def __init__(self, state_file: Path | None = None, 
+                 trade_log_file: Path | None = None,
                  exchange: str = "okx"):
         """
         初始化状态协调器
@@ -210,8 +212,8 @@ class StateReconciler:
         self.client = ExchangeClient(exchange=exchange, config=ExecutorConfig())
         
         # 缓存
-        self._exchange_state: Optional[Dict] = None
-        self._local_state: Optional[Dict] = None
+        self._exchange_state: Dict | None = None
+        self._local_state: Dict | None = None
         
     # ─────────────────────────────────────────────────────────────
     # 交易所状态获取
@@ -497,7 +499,7 @@ class StateReconciler:
             logger.error(f"保存本地状态失败: {e}")
     
     def update_trade_status(self, trade_id: str, status: str, 
-                           exit_reason: Optional[str] = None):
+                           exit_reason: str | None = None):
         """更新交易状态"""
         if not self.trade_log_file.exists():
             return
@@ -559,7 +561,7 @@ class StateReconciler:
             for inst_id, lpos in local_positions.items():
                 if inst_id not in exchange_positions:
                     # 检查是否真的不存在，还是持仓为0
-                    pos_val = exchange_positions.get(inst_id)
+                    exchange_positions.get(inst_id)
                     contracts = lpos.contracts or (getattr(lpos, 'pos', 0) if hasattr(lpos, 'pos') else 0)
                     
                     phantom = PhantomPosition(
@@ -825,7 +827,7 @@ class StateReconciler:
         """
         return self.fetch_exchange_positions()
 
-    def reconcile_positions(self, threshold_pct: float = 0.02) -> "ReconcileResult":
+    def reconcile_positions(self, threshold_pct: float = 0.02) -> ReconcileResult:
         """
         检测幽灵仓位
 
@@ -1050,7 +1052,7 @@ class StateReconciler:
         health_msg = "✅ STATE IS HEALTHY - Ready to operate" if result.is_healthy else "❌ STATE HAS ISSUES - Review above"
         print(f"  {health_msg}")
         if result.needs_sync:
-            print(f"  ⚠️  Needs sync - Run with auto_fix=True to synchronize")
+            print("  ⚠️  Needs sync - Run with auto_fix=True to synchronize")
         print("═" * 70)
         print()
 

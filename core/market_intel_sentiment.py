@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel Sentiment - 情绪数据分析模块
 ==========================================
@@ -14,6 +16,7 @@ Market Intel Sentiment - 情绪数据分析模块
     from core.market_intel_sentiment import NewsSentimentAnalyzer, KeywordSentimentAnalyzer
 """
 
+import json
 import logging
 import re
 import time
@@ -21,11 +24,11 @@ from typing import Any, Dict, List, Optional
 
 from core.market_intel_base import (
     API_CONFIG,
+    LLMSentimentResult,
+    SentimentLabel,
     get_timestamp,
     load_cache,
     save_cache,
-    SentimentLabel,
-    LLMSentimentResult,
 )
 
 logger = logging.getLogger("MarketIntelSentiment")
@@ -33,8 +36,8 @@ logger = logging.getLogger("MarketIntelSentiment")
 # 尝试导入LLM Provider
 try:
     from core.llm_provider import (
-        get_llm_manager,
         LLMProviderType,
+        get_llm_manager,
     )
     HAS_LLM = True
 except ImportError:
@@ -199,7 +202,7 @@ class NewsSentimentAnalyzer:
                 logger.warning(f"LLM Manager初始化失败: {e}")
                 self.llm_manager = None
 
-    async def analyze_single_news(self, news_item: Dict) -> Optional[LLMSentimentResult]:
+    async def analyze_single_news(self, news_item: Dict) -> LLMSentimentResult | None:
         """使用LLM分析单条新闻"""
         if not self.llm_manager:
             return None
@@ -344,7 +347,7 @@ class NewsSentimentAnalyzer:
 
         return self._default_result()
 
-    def _parse_llm_response(self, content: str) -> Optional[LLMSentimentResult]:
+    def _parse_llm_response(self, content: str) -> LLMSentimentResult | None:
         """解析LLM的JSON响应"""
         try:
             json_match = re.search(r'\{[^{}]*"score"[^{}]*\}', content, re.DOTALL)

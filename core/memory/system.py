@@ -1,21 +1,28 @@
+from __future__ import annotations
+
 """
 Memory System - Unified Interface
 ================================
 统一记忆系统接口 - 结合ChromaDB向量记忆和SQLite结构化记忆
 """
 
-import os
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
-from .vector_memory import VectorMemory, get_vector_memory, MemoryEntry
 from .structured_memory import (
-    StructuredMemory, get_structured_memory,
-    TradeRecord, FactorPerformance, StrategyParams, Lesson, MemoryType
+    FactorPerformance,
+    Lesson,
+    MemoryType,
+    StrategyParams,
+    StructuredMemory,
+    TradeRecord,
+    get_structured_memory,
 )
+from .vector_memory import MemoryEntry, VectorMemory, get_vector_memory
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +39,13 @@ class MemoryQuery:
     """记忆查询请求"""
     query: str
     k: int = 5
-    memory_types: Optional[List[str]] = None  # vector memory types
+    memory_types: List[str] | None = None  # vector memory types
     interface: MemorySystemInterface = MemorySystemInterface.BOTH
     
     # Structured memory filters
-    table_name: Optional[str] = None  # trade/factor/strategy/lesson
-    symbol: Optional[str] = None
-    category: Optional[str] = None
+    table_name: str | None = None  # trade/factor/strategy/lesson
+    symbol: str | None = None
+    category: str | None = None
     limit: int = 10
 
 
@@ -51,7 +58,7 @@ class MemoryResult:
     memory_type: str = "general"
     metadata: Dict[str, Any] = field(default_factory=dict)
     similarity: float = 1.0  # 向量相似度，仅VECTOR有
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
 
 class MemorySystem:
@@ -80,8 +87,8 @@ class MemorySystem:
     """
     
     def __init__(self, 
-                 vector_memory: Optional[VectorMemory] = None,
-                 structured_memory: Optional[StructuredMemory] = None):
+                 vector_memory: VectorMemory | None = None,
+                 structured_memory: StructuredMemory | None = None):
         """
         初始化记忆系统
         
@@ -96,9 +103,9 @@ class MemorySystem:
     
     def add_experience(self, content: str, 
                       memory_type: str = "general",
-                      metadata: Optional[Dict[str, Any]] = None,
-                      structured_data: Optional[Dict[str, Any]] = None,
-                      embeddings: Optional[List[float]] = None) -> str:
+                      metadata: Dict[str, Any] | None = None,
+                      structured_data: Dict[str, Any] | None = None,
+                      embeddings: List[float] | None = None) -> str:
         """
         添加经验到记忆系统（同时写入向量和结构化存储）
         
@@ -252,7 +259,7 @@ class MemorySystem:
                   trigger_symbol: str = "",
                   trigger_direction: str = "",
                   outcome: str = "",
-                  tags: Optional[List[str]] = None) -> int:
+                  tags: List[str] | None = None) -> int:
         """添加教训"""
         lesson = Lesson(
             category=category,
@@ -283,8 +290,8 @@ class MemorySystem:
     # ==================== Search/Retrieve Operations ====================
     
     def search(self, query: str, k: int = 5,
-               memory_types: Optional[List[str]] = None,
-               symbol: Optional[str] = None) -> List[MemoryResult]:
+               memory_types: List[str] | None = None,
+               symbol: str | None = None) -> List[MemoryResult]:
         """
         检索记忆（同时搜索向量和结构化存储）
         
@@ -385,7 +392,7 @@ class MemorySystem:
             context_parts.append(f"\n【{mem_type.upper()}】")
             for mem in memories[:3]:  # 每类型最多3条
                 meta = mem.metadata
-                created = meta.get("created_at", "")[:10] if meta.get("created_at") else ""
+                meta.get("created_at", "")[:10] if meta.get("created_at") else ""
                 context_parts.append(
                     f"• {mem.content[:200]}"
                     f"{' [OK]' if meta.get('outcome') == 'WIN' else ''}"
@@ -393,7 +400,7 @@ class MemorySystem:
         
         return "\n".join(context_parts)
     
-    def get_trade_history(self, symbol: Optional[str] = None,
+    def get_trade_history(self, symbol: str | None = None,
                          limit: int = 50) -> List[TradeRecord]:
         """获取交易历史"""
         return self.structured.get_trades(symbol=symbol, status="closed", limit=limit)
@@ -402,11 +409,11 @@ class MemorySystem:
         """获取未平仓交易"""
         return self.structured.get_open_positions()
     
-    def get_lessons(self, category: Optional[str] = None) -> List[Lesson]:
+    def get_lessons(self, category: str | None = None) -> List[Lesson]:
         """获取教训列表"""
         return self.structured.get_lessons(category=category)
     
-    def get_active_strategies(self, symbol: Optional[str] = None) -> List[StrategyParams]:
+    def get_active_strategies(self, symbol: str | None = None) -> List[StrategyParams]:
         """获取活跃策略"""
         return self.structured.get_active_strategies(symbol=symbol)
     
@@ -433,7 +440,6 @@ class MemorySystem:
         # 获取交易信息用于更新教训
         trade = self.structured.get_trade(trade_id)
         if trade and trade.pnl_pct != 0:
-            outcome = "WIN" if trade.pnl_pct > 0 else "LOSS"
             
             # 更新教训应用结果
             # 注意：这里简化处理，实际可能需要更复杂的匹配逻辑
@@ -747,7 +753,7 @@ class MemorySystem:
 
 
 # 全局实例
-_memory_system: Optional[MemorySystem] = None
+_memory_system: MemorySystem | None = None
 
 def get_memory_system() -> MemorySystem:
     """获取记忆系统全局实例"""

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Order Manager - 订单管理器
 ===========================
@@ -12,12 +14,11 @@ Order Manager - 订单管理器
     from agents.agent_executor import OrderManager  # 向后兼容
 """
 
-from typing import Dict, Optional
+# 向前引用 ExchangeClient（运行时才检查）
+from typing import TYPE_CHECKING, Dict, Optional
 
 from core.executor_config import ExecutorConfig
 
-# 向前引用 ExchangeClient（运行时才检查）
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from core.exchange_client import ExchangeClient
 
@@ -28,13 +29,13 @@ class OrderManager:
     负责订单生命周期管理
     """
 
-    def __init__(self, exchange_client: 'ExchangeClient', config: ExecutorConfig):
+    def __init__(self, exchange_client: ExchangeClient, config: ExecutorConfig):
         self.client = exchange_client
         self.config = config
         self.pending_orders: Dict[str, Dict] = {}
 
     def create_market_order(self, symbol: str, side: str, size: float,
-                           leverage: int = 1) -> Optional[Dict]:
+                           leverage: int = 1) -> Dict | None:
         """创建市价单"""
         return self.client.place_order(
             symbol=symbol,
@@ -46,7 +47,7 @@ class OrderManager:
         )
 
     def create_limit_order(self, symbol: str, side: str, price: float,
-                          size: float, leverage: int = 1) -> Optional[Dict]:
+                          size: float, leverage: int = 1) -> Dict | None:
         """创建限价单"""
         return self.client.place_order(
             symbol=symbol,
@@ -59,7 +60,7 @@ class OrderManager:
 
     def create_oco_order(self, symbol: str, side: str, size: float,
                         entry_price: float, sl_price: float, tp_price: float,
-                        leverage: int = 1) -> Optional[Dict]:
+                        leverage: int = 1) -> Dict | None:
         """创建OCO订单（止损+止盈）"""
         return self.client.place_oco_order(
             symbol=symbol,
@@ -77,7 +78,7 @@ class OrderManager:
             return self.client.cancel_algo_order(inst_id, order_id)
         return False
 
-    def get_order_status(self, order_id: str) -> Optional[Dict]:
+    def get_order_status(self, order_id: str) -> Dict | None:
         """获取订单状态"""
         for order in self.pending_orders.values():
             if order.get("order_id") == order_id:

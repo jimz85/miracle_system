@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 协调器Agent (Agent-Coordinator)
 ================================================
@@ -18,14 +20,14 @@ Miracle 1.0.1 - 协调器Agent (Agent-Coordinator)
 """
 
 import json
-import time
 import logging
+import os
+import sys
+import time
+from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any
-from abc import ABC, abstractmethod
-import sys
-import os
+from typing import Any, Dict, Optional
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -86,11 +88,12 @@ class LearnerAgent(ABC):
 
 # ==================== Agent导入 ====================
 try:
-    from agents.agent_market_intel import NewsIntel, OnChainIntel, WalletIntel
-    from agents.agent_signal import SignalGenerator, PriceFactors
-    from agents.agent_risk import AgentRisk as RiskManager, CircuitBreaker
     from agents.agent_executor import Executor, TradeLogger
-    from agents.agent_learner import AgentLearner, TradeRecorder, FactorAnalyzer
+    from agents.agent_learner import AgentLearner, FactorAnalyzer, TradeRecorder
+    from agents.agent_market_intel import NewsIntel, OnChainIntel, WalletIntel
+    from agents.agent_risk import AgentRisk as RiskManager
+    from agents.agent_risk import CircuitBreaker
+    from agents.agent_signal import PriceFactors, SignalGenerator
     AGENTS_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Agent导入失败: {e}，协调器将仅做演示")
@@ -106,7 +109,7 @@ class CoordinatorState:
         
     def _load_state(self):
         if self.state_path.exists():
-            with open(self.state_path, 'r') as f:
+            with open(self.state_path) as f:
                 return json.load(f)
         return {
             "last_scan_time": None,
@@ -178,16 +181,16 @@ class MiracleCoordinator:
     """
 
     def __init__(self, symbols=None,
-                 market_intel: Optional[MarketIntelAgent] = None,
-                 signal_gen: Optional[SignalGeneratorAgent] = None,
-                 risk_mgr: Optional[RiskManagerAgent] = None,
-                 executor: Optional[ExecutorAgent] = None,
-                 learner: Optional[LearnerAgent] = None):
+                 market_intel: MarketIntelAgent | None = None,
+                 signal_gen: SignalGeneratorAgent | None = None,
+                 risk_mgr: RiskManagerAgent | None = None,
+                 executor: ExecutorAgent | None = None,
+                 learner: LearnerAgent | None = None):
         """初始化协调器"""
         self.symbols = symbols or ["BTC", "ETH", "SOL", "AVAX", "DOGE", "DOT"]
 
         # 加载配置
-        with open(CONFIG_PATH, 'r') as f:
+        with open(CONFIG_PATH) as f:
             self.config = json.load(f)
 
         # 初始化状态
@@ -330,7 +333,7 @@ class MiracleCoordinator:
             else:
                 logger.info(f"  信号被风控拒绝: {approved_signal.get('rejection_reason', '未知原因') if approved_signal else '无信号'}")
         else:
-            logger.info(f"  无交易信号，继续观望")
+            logger.info("  无交易信号，继续观望")
             
         logger.info(f"=== {symbol} 扫描完成 ===")
         return result
@@ -527,7 +530,7 @@ if __name__ == "__main__":
     if args.status:
         state_path = STATE_PATH
         if state_path.exists():
-            with open(state_path, 'r') as f:
+            with open(state_path) as f:
                 print(json.dumps(json.load(f), indent=2))
         else:
             print("无状态记录")

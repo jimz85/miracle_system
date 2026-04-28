@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel LLM Agent - 市场情报Agent主类
 ==========================================
@@ -19,22 +21,22 @@ import re
 import time
 from typing import Any, Dict, List, Tuple
 
-from core.market_intel_context import ContextBuilder
-from core.market_intel_llm import LLMSentimentAnalyzer
-from core.market_intel_onchain import EnhancedOnChainAnalyzer
 from core.market_intel_base import (
     get_timestamp,
     load_cache,
     save_cache,
 )
+from core.market_intel_context import ContextBuilder
+from core.market_intel_llm import LLMSentimentAnalyzer
+from core.market_intel_onchain import EnhancedOnChainAnalyzer
 
 logger = logging.getLogger("MarketIntelLLMAgent")
 
 # LLM Provider imports
 try:
     from core.llm_provider import (
-        get_llm_manager,
         LLMProviderType,
+        get_llm_manager,
     )
     HAS_LLM = True
 except ImportError:
@@ -416,21 +418,21 @@ class MarketIntelAgentLLM:
             f"📰 新闻情感: {report['news_sentiment']['label']} ({report['news_sentiment']['score']:+.2f})",
             f"   {report['news_sentiment'].get('reasoning', '')[:80]}..." if report['news_sentiment'].get('reasoning') else "",
             "",
-            f"🔗 链上分析:",
+            "🔗 链上分析:",
             f"   流量信号: {report['onchain']['exchange_flow_signal']:+.2f}",
             f"   模式: {report['onchain']['flow_pattern']}",
             "",
-            f"🐋 鲸鱼活动:",
+            "🐋 鲸鱼活动:",
             f"   信号: {report['whale']['signal']:+.2f}",
             f"   模式: {report['whale']['pattern']}",
             f"   转账数: {report['whale']['count']}",
             "",
-            f"📈 市场上下文:",
+            "📈 市场上下文:",
             f"   阶段: {report['context']['market_phase']}",
             f"   鲸鱼活动: {report['context']['whale_activity_level']}",
             f"   信号一致性: {report['context']['correlation_data']['signal_alignment']['type']}",
             "",
-            f"━━━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━━━",
             f"📈 综合评分: {report['combined_score']:+.2f}",
             f"🎯 推荐: {report['recommendation']}",
             f"🔒 置信度: {report['confidence']:.0%}",

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 regime_classifier.py - 市场状态分类器
 =====================================
@@ -21,11 +23,12 @@ Author: Miracle System
 Version: 1.0.0
 """
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Optional, Tuple
-from dataclasses import dataclass
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 
 class MarketRegime(Enum):
@@ -76,7 +79,7 @@ class RegimeClassifier:
     DEFAULT_ADX_PERIOD = 14
     DEFAULT_DMI_PERIOD = 14
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Dict | None = None):
         """
         初始化分类器。
 
@@ -107,9 +110,9 @@ class RegimeClassifier:
         self.dmi_period = self.config.get('dmi_period', self.DEFAULT_DMI_PERIOD)
 
         # 状态跟踪：用于防抖动
-        self._last_trend: Optional[MarketRegime] = None
+        self._last_trend: MarketRegime | None = None
         self._trend_counter: int = 0
-        self._confirmed_trend: Optional[MarketRegime] = None
+        self._confirmed_trend: MarketRegime | None = None
 
     def calculate_atr(self, df: pd.DataFrame, period: int = None) -> pd.Series:
         """
@@ -423,7 +426,7 @@ class RegimeClassifier:
 """
 
 
-def detect_regime(df: pd.DataFrame, config: Optional[Dict] = None) -> Tuple[MarketRegime, float, RegimeMetrics]:
+def detect_regime(df: pd.DataFrame, config: Dict | None = None) -> Tuple[MarketRegime, float, RegimeMetrics]:
     """
     便捷函数：快速检测市场状态。
 
@@ -440,8 +443,8 @@ def detect_regime(df: pd.DataFrame, config: Optional[Dict] = None) -> Tuple[Mark
 
 # ========== 测试代码 ==========
 if __name__ == "__main__":
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
     print("Testing RegimeClassifier for Miracle System...")
     print("=" * 60)

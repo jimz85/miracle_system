@@ -1,18 +1,20 @@
+from __future__ import annotations
+
 """
 Structured Memory using SQLite
 ===============================
 结构化记忆模块 - 基于SQLite存储交易记录、因子表现、策略参数等
 """
 
-import os
-import sqlite3
 import json
 import logging
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass, field
-from datetime import datetime, date
+import os
+import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +68,13 @@ class MemoryType(Enum):
 @dataclass
 class TradeRecord:
     """交易记录"""
-    id: Optional[int] = None
+    id: int | None = None
     symbol: str = ""
     direction: str = ""  # LONG/SHORT
     entry_price: float = 0.0
     exit_price: float = 0.0
     entry_time: datetime = field(default_factory=datetime.now)
-    exit_time: Optional[datetime] = None
+    exit_time: datetime | None = None
     position_size: float = 0.0
     pnl: float = 0.0
     pnl_pct: float = 0.0
@@ -88,13 +90,13 @@ class TradeRecord:
 @dataclass  
 class FactorPerformance:
     """因子表现记录"""
-    id: Optional[int] = None
+    id: int | None = None
     factor_name: str = ""
     symbol: str = ""
     timeframe: str = ""
     value: float = 0.0
     signal_direction: str = ""  # LONG/SHORT/NEUTRAL
-    actual_outcome: Optional[str] = None  # WIN/LOSS
+    actual_outcome: str | None = None  # WIN/LOSS
     pnl_contribution: float = 0.0
     market_regime: str = ""
     notes: str = ""
@@ -104,7 +106,7 @@ class FactorPerformance:
 @dataclass
 class StrategyParams:
     """策略参数"""
-    id: Optional[int] = None
+    id: int | None = None
     strategy_name: str = ""
     symbol: str = ""
     params: Dict[str, Any] = field(default_factory=dict)
@@ -122,10 +124,10 @@ class StrategyParams:
 @dataclass
 class Lesson:
     """学到的教训"""
-    id: Optional[int] = None
+    id: int | None = None
     category: str = ""  # entry/exit/risk/management
     content: str = ""
-    trigger_trade_id: Optional[int] = None
+    trigger_trade_id: int | None = None
     trigger_symbol: str = ""
     trigger_direction: str = ""
     outcome: str = ""  # WIN/LOSS
@@ -142,7 +144,7 @@ class StructuredMemory:
     存储交易记录、因子表现、策略参数等结构化数据
     """
     
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """
         初始化结构化记忆
         
@@ -326,7 +328,7 @@ class StructuredMemory:
             conn.commit()
             return True
     
-    def get_trade(self, trade_id: int) -> Optional[TradeRecord]:
+    def get_trade(self, trade_id: int) -> TradeRecord | None:
         """获取交易记录"""
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -334,7 +336,7 @@ class StructuredMemory:
             row = cursor.fetchone()
             return self._row_to_trade(row) if row else None
     
-    def get_trades(self, symbol: Optional[str] = None, status: Optional[str] = None,
+    def get_trades(self, symbol: str | None = None, status: str | None = None,
                    limit: int = 100, offset: int = 0) -> List[TradeRecord]:
         """获取交易列表"""
         query = "SELECT * FROM trades WHERE 1=1"
@@ -359,7 +361,7 @@ class StructuredMemory:
         """获取未平仓交易"""
         return self.get_trades(status="open")
     
-    def get_trade_stats(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+    def get_trade_stats(self, symbol: str | None = None) -> Dict[str, Any]:
         """获取交易统计"""
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -527,7 +529,7 @@ class StructuredMemory:
             return cursor.lastrowid
     
     def get_strategy_params(self, strategy_name: str, symbol: str,
-                           market_regime: str = "default") -> Optional[StrategyParams]:
+                           market_regime: str = "default") -> StrategyParams | None:
         """获取策略参数"""
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -539,7 +541,7 @@ class StructuredMemory:
             row = cursor.fetchone()
             return self._row_to_strategy(row) if row else None
     
-    def get_active_strategies(self, symbol: Optional[str] = None) -> List[StrategyParams]:
+    def get_active_strategies(self, symbol: str | None = None) -> List[StrategyParams]:
         """获取活跃策略"""
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -595,7 +597,7 @@ class StructuredMemory:
             conn.commit()
             return cursor.lastrowid
     
-    def get_lessons(self, category: Optional[str] = None,
+    def get_lessons(self, category: str | None = None,
                     actionable_only: bool = True,
                     limit: int = 50) -> List[Lesson]:
         """获取教训列表"""
@@ -890,7 +892,7 @@ class StructuredMemory:
 
 
 # 全局实例
-_structured_memory: Optional[StructuredMemory] = None
+_structured_memory: StructuredMemory | None = None
 
 def get_structured_memory() -> StructuredMemory:
     """获取结构化记忆全局实例"""

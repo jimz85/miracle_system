@@ -3,9 +3,10 @@ Miracle 1.0.1 - Pytest Configuration
 =====================================
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent

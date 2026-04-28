@@ -1,16 +1,19 @@
+from __future__ import annotations
+
 """
 Multi-Strategy Portfolio Manager - 多策略组合管理器
 支持多个策略组合、动态权重调整、蒙特卡洛压力测试
 """
-import os
 import json
+import logging
+import os
 import random
-import numpy as np
-from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +456,7 @@ class MonteCarloStressTest:
                 portfolio_paths += strategy_value[:, :num_steps]
         
         # 计算每日收益率 (修正形状)
-        portfolio_returns = np.diff(portfolio_paths, axis=1) / np.maximum(portfolio_paths[:, :-1], 1e-10)
+        np.diff(portfolio_paths, axis=1) / np.maximum(portfolio_paths[:, :-1], 1e-10)
         
         # 最终收益率
         final_returns = (portfolio_paths[:, -1] - self.initial_capital) / self.initial_capital

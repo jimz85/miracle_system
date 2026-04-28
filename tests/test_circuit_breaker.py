@@ -8,9 +8,10 @@ Covers:
 - Exception handling: invalid inputs, extreme values
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -18,14 +19,13 @@ sys.path.insert(0, str(project_root))
 
 from core.circuit_breaker import (
     CircuitBreaker,
-    MiracleCircuitBreaker,
-    SurvivalTier,
-    Position,
     CircuitBreakerResult,
     EquitySnapshot,
+    MiracleCircuitBreaker,
+    Position,
+    SurvivalTier,
     create_circuit_breaker,
 )
-
 
 # ============================================================================
 # EquitySnapshot Tests
@@ -195,7 +195,7 @@ class TestCircuitBreakerEdgeCases:
         cb.record_trade_outcome(-100)
         cb.record_trade_outcome(-100)
         # Equity recovers but consecutive_losses blocks full recovery
-        result = cb.check_treasury_limits(10000.0, [])
+        cb.check_treasury_limits(10000.0, [])
         # Should remain in CAUTION (one tier below NORMAL) since consecutive_losses > 0
         assert cb.consecutive_losses == 2
 

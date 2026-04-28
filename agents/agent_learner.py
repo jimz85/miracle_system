@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Agent-L: 学习迭代Agent for Miracle 1.0.1
 高频趋势跟踪+事件驱动混合系统
@@ -11,13 +13,17 @@ Agent-L: 学习迭代Agent for Miracle 1.0.1
 6. 每月调整策略参数
 """
 
-import sqlite3
 import json
+import logging
 import os
-import numpy as np
-from datetime import datetime, timedelta
+import sqlite3
 from collections import defaultdict
-from typing import Optional, Dict, List, Any, Tuple
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -80,8 +86,8 @@ def orthogonalize_factors(factors_dict: Dict[str, Any]) -> Dict[str, Any]:
         添加了正交化因子（*_orthogonalized）的字典
     """
     try:
-        from sklearn.preprocessing import StandardScaler
         from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
     except ImportError:
         # sklearn not available, return original dict
         return factors_dict
@@ -166,7 +172,7 @@ class WalkForwardValidator:
         """
         n = len(data)
         window_size = n // n_windows
-        step = self.window_step or (window_size // 10)
+        self.window_step or (window_size // 10)
 
         if window_size < 10:
             return []  # 数据太少
@@ -388,9 +394,9 @@ class TradeRecorder:
 
     def get_trades(
         self,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
         days: int = 30,
-        direction: Optional[str] = None
+        direction: str | None = None
     ) -> List[Dict[str, Any]]:
         """查询交易记录"""
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
@@ -519,7 +525,7 @@ class FactorAnalyzer:
     def _load_weights(self):
         """加载因子权重"""
         if os.path.exists(self.weights_path):
-            with open(self.weights_path, 'r') as f:
+            with open(self.weights_path) as f:
                 data = json.load(f)
                 self.weights = data.get('weights', self._default_weights())
                 self.ic_history = data.get('ic_history', {})
@@ -696,7 +702,7 @@ class PatternLearner:
     def _load(self):
         """加载模式库"""
         if os.path.exists(self.pattern_db_path):
-            with open(self.pattern_db_path, 'r') as f:
+            with open(self.pattern_db_path) as f:
                 self.pattern_db = json.load(f)
         else:
             self.pattern_db = {}
@@ -810,7 +816,7 @@ class PatternLearner:
         blacklist_path = self.pattern_db_path.replace('pattern_db.json', 'pattern_blacklist.json')
         blacklist = set()
         if os.path.exists(blacklist_path):
-            with open(blacklist_path, 'r') as f:
+            with open(blacklist_path) as f:
                 blacklist = set(json.load(f))
         blacklist.update(pattern_keys)
         with open(blacklist_path, 'w') as f:
@@ -835,7 +841,7 @@ class WhitelistManager:
     def _load(self):
         """加载白名单"""
         if os.path.exists(self.whitelist_path):
-            with open(self.whitelist_path, 'r') as f:
+            with open(self.whitelist_path) as f:
                 data = json.load(f)
                 self.whitelist = data.get('patterns', [])
                 self.last_update = data.get('last_update', '')
@@ -864,7 +870,7 @@ class WhitelistManager:
         # 从pattern_db读取统计
         pattern_db = {}
         if os.path.exists(self.pattern_db_path):
-            with open(self.pattern_db_path, 'r') as f:
+            with open(self.pattern_db_path) as f:
                 pattern_db = json.load(f)
 
         p = pattern_db.get(pattern_key, {})
@@ -892,7 +898,7 @@ class WhitelistManager:
         """检查模式是否在白名单"""
         return pattern_key in self.whitelist
 
-    def auto_update_whitelist(self, pattern_learner: 'PatternLearner') -> Dict[str, Any]:
+    def auto_update_whitelist(self, pattern_learner: PatternLearner) -> Dict[str, Any]:
         """
         每月自动更新白名单
         淘汰：胜率<40% 或 平均RR<1.5
@@ -919,7 +925,6 @@ class WhitelistManager:
 
         # 扫描所有模式找新增候选
         all_patterns = pattern_learner.get_all_patterns()
-        consecutive_wins = {}  # 追踪连续盈利
 
         for pattern_key, stats in all_patterns.items():
             if pattern_key in new_whitelist:
@@ -1091,7 +1096,7 @@ class StrategyOptimizer:
     def _load_config(self) -> Dict[str, Any]:
         """加载策略配置"""
         if os.path.exists(self.config_path):
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path) as f:
                 return json.load(f)
         return self._default_config()
 
@@ -1212,7 +1217,6 @@ class StrategyOptimizer:
                    for t in trades if t.get('stop_loss')]
 
         # Max drawdown
-        cumulative = []
         running = 0
         peak = 0
         max_dd = 0

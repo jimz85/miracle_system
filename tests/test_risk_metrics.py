@@ -5,16 +5,20 @@ Miracle 1.0.1 - Risk Metrics and Adaptive Learning Tests
 Run with: pytest tests/test_risk_metrics.py -v
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from miracle_core import RiskMetrics
-from scripts.adaptive_learner import AdaptiveLearner, WalkForwardValidator, calc_information_coefficient
-
+from scripts.adaptive_learner import (
+    AdaptiveLearner,
+    WalkForwardValidator,
+    calc_information_coefficient,
+)
 
 # =============================================================================
 # RiskMetrics Tests
@@ -259,7 +263,7 @@ class TestAdaptiveLearner:
         learner = AdaptiveLearner(config)
 
         result = learner.detect_overfitting()
-        assert result["is_overfitting"] == False
+        assert not result["is_overfitting"]
 
     def test_get_pattern_stats(self):
         """Should get pattern statistics"""
@@ -303,7 +307,7 @@ class TestAdaptiveLearner:
 
         # Pattern should be blocked (5 losses = 0% win rate < 40% threshold)
         is_allowed = learner.pattern_evaluator.is_allowed("low_win_pattern")
-        assert is_allowed == False
+        assert not is_allowed
 
 
 # =============================================================================

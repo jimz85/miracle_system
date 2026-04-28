@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Factor Calculations: 价格技术因子统一计算模块
 从 miracle_core.py 提取并整合

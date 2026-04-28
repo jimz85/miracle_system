@@ -1,17 +1,20 @@
+from __future__ import annotations
+
 """
 Exchange Adapter - 交易所适配层
 统一OKX/Binance双交易所接口
 """
+import hashlib
+import hmac
+import json
+import logging
 import os
 import time
-import json
-import hmac
-import hashlib
-import requests
-from typing import Dict, List, Optional, Any
-from enum import Enum
 from dataclasses import dataclass
-import logging
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +75,9 @@ class ExchangeAdapter:
     
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        secret: Optional[str] = None,
-        passphrase: Optional[str] = None,  # OKX需要
+        api_key: str | None = None,
+        secret: str | None = None,
+        passphrase: str | None = None,  # OKX需要
         testnet: bool = False
     ):
         self.api_key = api_key or os.getenv(f"{self.name.upper()}_API_KEY")
@@ -90,7 +93,7 @@ class ExchangeAdapter:
     
     # ========== 行情 ==========
     
-    def get_ticker(self, symbol: str) -> Optional[Ticker]:
+    def get_ticker(self, symbol: str) -> Ticker | None:
         """获取24小时行情"""
         raise NotImplementedError
     
@@ -103,7 +106,7 @@ class ExchangeAdapter:
         """获取K线数据"""
         raise NotImplementedError
     
-    def get_orderbook(self, symbol: str, limit: int = 20) -> Optional[OrderBook]:
+    def get_orderbook(self, symbol: str, limit: int = 20) -> OrderBook | None:
         """获取订单簿"""
         raise NotImplementedError
     
@@ -125,8 +128,8 @@ class ExchangeAdapter:
         side: str,  # "buy" or "sell"
         order_type: str,  # "market" or "limit"
         size: float,
-        price: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+        price: float | None = None
+    ) -> Dict[str, Any] | None:
         """下单"""
         raise NotImplementedError
     
@@ -187,10 +190,10 @@ class OKXAdapter(ExchangeAdapter):
         self,
         method: str,
         path: str,
-        params: Optional[Dict] = None,
-        data: Optional[Dict] = None,
+        params: Dict | None = None,
+        data: Dict | None = None,
         auth: bool = True
-    ) -> Optional[Dict]:
+    ) -> Dict | None:
         """发送请求"""
         url = self.base_url + path
         
@@ -228,7 +231,7 @@ class OKXAdapter(ExchangeAdapter):
         """交易所格式"""
         return self.normalize_symbol(symbol)
     
-    def get_ticker(self, symbol: str) -> Optional[Ticker]:
+    def get_ticker(self, symbol: str) -> Ticker | None:
         """获取24小时行情"""
         symbol = self.format_symbol(symbol)
         data = self._request(
@@ -290,7 +293,7 @@ class OKXAdapter(ExchangeAdapter):
             return candles
         return []
     
-    def get_orderbook(self, symbol: str, limit: int = 20) -> Optional[OrderBook]:
+    def get_orderbook(self, symbol: str, limit: int = 20) -> OrderBook | None:
         """获取订单簿"""
         symbol = self.format_symbol(symbol)
         data = self._request(
@@ -351,8 +354,8 @@ class OKXAdapter(ExchangeAdapter):
         side: str,
         order_type: str,
         size: float,
-        price: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+        price: float | None = None
+    ) -> Dict[str, Any] | None:
         """下单"""
         symbol = self.format_symbol(symbol)
         
@@ -427,9 +430,9 @@ class BinanceAdapter(ExchangeAdapter):
         self,
         method: str,
         path: str,
-        params: Optional[Dict] = None,
+        params: Dict | None = None,
         auth: bool = True
-    ) -> Optional[Dict]:
+    ) -> Dict | None:
         """发送请求"""
         url = self.base_url + path
         headers = {"X-MBX-APIKEY": self.api_key} if auth and self.api_key else {}
@@ -459,7 +462,7 @@ class BinanceAdapter(ExchangeAdapter):
         """交易所格式"""
         return self.normalize_symbol(symbol)
     
-    def get_ticker(self, symbol: str) -> Optional[Ticker]:
+    def get_ticker(self, symbol: str) -> Ticker | None:
         """获取24小时行情"""
         symbol = self.format_symbol(symbol)
         data = self._request("GET", "/api/v3/ticker/24hr", params={"symbol": symbol})
@@ -513,7 +516,7 @@ class BinanceAdapter(ExchangeAdapter):
             return candles
         return []
     
-    def get_orderbook(self, symbol: str, limit: int = 20) -> Optional[OrderBook]:
+    def get_orderbook(self, symbol: str, limit: int = 20) -> OrderBook | None:
         """获取订单簿"""
         symbol = self.format_symbol(symbol)
         data = self._request(
@@ -580,8 +583,8 @@ class BinanceAdapter(ExchangeAdapter):
         side: str,
         order_type: str,
         size: float,
-        price: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+        price: float | None = None
+    ) -> Dict[str, Any] | None:
         """下单"""
         symbol = self.format_symbol(symbol)
         
@@ -615,9 +618,9 @@ class BinanceAdapter(ExchangeAdapter):
 
 def create_exchange_adapter(
     exchange_type: ExchangeType,
-    api_key: Optional[str] = None,
-    secret: Optional[str] = None,
-    passphrase: Optional[str] = None,
+    api_key: str | None = None,
+    secret: str | None = None,
+    passphrase: str | None = None,
     testnet: bool = False
 ) -> ExchangeAdapter:
     """

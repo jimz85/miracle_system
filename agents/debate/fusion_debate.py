@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Fusion Debate Layer — 多空辩论层编排器
 
@@ -13,11 +15,11 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from .bull_researcher import BullResearcher, ResearchResult
 from .bear_researcher import BearResearcher
-from .debate_judge import DebateJudge, VerdictResult, DebateVerdict
+from .bull_researcher import BullResearcher, ResearchResult
+from .debate_judge import DebateJudge, DebateVerdict, VerdictResult
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ class FusionDebateLayer:
         - 单次辩论延迟 < 5秒 (快速模型)
     """
 
-    def __init__(self, llm_manager=None, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, llm_manager=None, config: Dict[str, Any] | None = None):
         """
         初始化辩论层
 
@@ -160,7 +162,7 @@ class FusionDebateLayer:
 
             return output
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"[FusionDebateLayer] 辩论超时({self.timeout}s)")
             raise
         except Exception as e:
@@ -222,15 +224,15 @@ class FusionDebateLayer:
         lines = [
             f"# 辩论裁决报告: {output.bull_case.split(chr(10))[0][:50] if output.bull_case else 'N/A'}...",
             "",
-            f"## 裁决结果",
+            "## 裁决结果",
             f"- **决策:** {verdict_action.upper()}",
             f"- **置信度:** {output.confidence:.2f}",
             f"- **延迟:** {output.latency_ms:.0f}ms",
             "",
-            f"## 多头论点 (Bull Case)",
+            "## 多头论点 (Bull Case)",
             f"{output.bull_case}",
             "",
-            f"### 多头证据",
+            "### 多头证据",
         ]
 
         for evidence in output.bull_evidence:
@@ -238,10 +240,10 @@ class FusionDebateLayer:
 
         lines.extend([
             "",
-            f"## 空头论点 (Bear Case)",
+            "## 空头论点 (Bear Case)",
             f"{output.bear_case}",
             "",
-            f"### 空头证据",
+            "### 空头证据",
         ])
 
         for evidence in output.bear_evidence:
@@ -249,7 +251,7 @@ class FusionDebateLayer:
 
         lines.extend([
             "",
-            f"## 关键洞察",
+            "## 关键洞察",
         ])
 
         for insight in output.key_insights:
@@ -257,7 +259,7 @@ class FusionDebateLayer:
 
         lines.extend([
             "",
-            f"## 技术位",
+            "## 技术位",
             f"- 支撑位: {output.support_levels}",
             f"- 阻力位: {output.resistance_levels}",
         ])

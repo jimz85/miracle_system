@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle System - Emergency Stop API
 ====================================
@@ -15,14 +17,15 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
-import json
 import threading
 from datetime import datetime
 from typing import Optional
-from flask import Flask, request, jsonify
+
+from flask import Flask, jsonify, request
 
 # 添加项目路径
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,9 +52,9 @@ class EmergencyStopManager:
     
     # 类级别的状态变量
     _emergency_stopped = False
-    _stop_reason: Optional[str] = None
-    _stop_time: Optional[str] = None
-    _stopped_by: Optional[str] = None
+    _stop_reason: str | None = None
+    _stop_time: str | None = None
+    _stopped_by: str | None = None
     
     def __new__(cls):
         if cls._instance is None:
@@ -65,15 +68,15 @@ class EmergencyStopManager:
         return self._emergency_stopped
     
     @property
-    def stop_reason(self) -> Optional[str]:
+    def stop_reason(self) -> str | None:
         return self._stop_reason
     
     @property
-    def stop_time(self) -> Optional[str]:
+    def stop_time(self) -> str | None:
         return self._stop_time
     
     @property
-    def stopped_by(self) -> Optional[str]:
+    def stopped_by(self) -> str | None:
         return self._stopped_by
     
     def trigger_emergency_stop(self, reason: str, triggered_by: str = "unknown") -> dict:
@@ -84,7 +87,7 @@ class EmergencyStopManager:
             self._stop_time = datetime.now().isoformat()
             self._stopped_by = triggered_by
             
-            logger.critical(f"🚨 EMERGENCY STOP TRIGGERED!")
+            logger.critical("🚨 EMERGENCY STOP TRIGGERED!")
             logger.critical(f"   Reason: {reason}")
             logger.critical(f"   Triggered by: {triggered_by}")
             logger.critical(f"   Time: {self._stop_time}")

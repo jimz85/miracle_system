@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 TradeLogger - 交易日志记录器
 ===========================
@@ -33,7 +35,7 @@ class TradeLogger:
         """从文件加载交易记录"""
         try:
             filepath = f"{self.config.log_dir}/{self.config.trade_log_file}"
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 self.trades = json.load(f)
         except FileNotFoundError:
             self.trades = []
@@ -136,7 +138,7 @@ class TradeLogger:
         """获取所有未平仓交易"""
         return [t for t in self.trades if t.get("status") == "open"]
 
-    def get_trade(self, trade_id: str) -> Optional[Dict]:
+    def get_trade(self, trade_id: str) -> Dict | None:
         """获取指定交易"""
         for t in self.trades:
             if t["trade_id"] == trade_id:

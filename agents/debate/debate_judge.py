@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Debate Judge Agent — 辩论裁决
 
@@ -11,8 +13,8 @@ Debate Judge Agent — 辩论裁决
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
 from enum import Enum
+from typing import Any, Dict, List
 
 from .bull_researcher import ResearchResult
 
@@ -180,7 +182,6 @@ class DebateJudge:
 
         # 技术因子决策
         bull_signals_data = bull_result.signals or {}
-        bear_signals_data = bear_result.signals or {}
 
         rsi = bull_signals_data.get('rsi', 50)
         adx = bull_signals_data.get('adx', 0)
@@ -233,7 +234,7 @@ class DebateJudge:
 
         lines.append(f"裁决: {verdict}")
         lines.append(f"置信度: {confidence:.2f}")
-        lines.append(f"关键洞察:")
+        lines.append("关键洞察:")
         for insight in insights:
             lines.append(f"- {insight}")
         lines.append(f"裁决理由: 多头权重{bull_weight:.2f}，空头权重{bear_weight:.2f}，{verdict}信号更强")

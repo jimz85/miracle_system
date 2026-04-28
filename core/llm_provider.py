@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle 2.0 - LLM Provider
 ===========================
 统一的大语言模型接口，支持多后端切换（Claude/GPT/Gemini/DeepSeek/Ollama）
 """
 
-import os
+import asyncio
 import json
 import logging
-import asyncio
+import os
 import time
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +47,11 @@ class LLMResponse:
     content: str
     provider: LLMProviderType
     model: str
-    tokens_used: Optional[int] = None
-    cost: Optional[float] = None
-    latency_ms: Optional[float] = None
-    raw_response: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    tokens_used: int | None = None
+    cost: float | None = None
+    latency_ms: float | None = None
+    raw_response: Dict[str, Any] | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -57,8 +59,8 @@ class LLMConfig:
     """LLM配置"""
     provider: LLMProviderType = LLMProviderType.CLAUDE
     model: str = "claude-3-5-sonnet-20241022"
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
     max_tokens: int = 4096
     temperature: float = 0.7
     timeout: int = 120
@@ -66,7 +68,7 @@ class LLMConfig:
     extra_config: Dict[str, Any] = field(default_factory=dict)
     
     @classmethod
-    def from_env(cls, provider: Optional[str] = None) -> "LLMConfig":
+    def from_env(cls, provider: str | None = None) -> LLMConfig:
         """从环境变量加载配置"""
         if provider:
             provider_type = LLMProviderType(provider.lower())
@@ -133,7 +135,7 @@ class BaseLLMProvider(ABC):
         """准备消息格式"""
         return [msg.to_dict() for msg in messages]
     
-    async def chat_simple(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
+    async def chat_simple(self, prompt: str, system: str | None = None) -> LLMResponse:
         """简单的对话接口"""
         messages = []
         if system:
@@ -512,8 +514,8 @@ class LLMProviderManager:
     
     _instance = None
     _providers: Dict[LLMProviderType, BaseLLMProvider] = {}
-    _current_provider: Optional[LLMProviderType] = None
-    _fallback_provider: Optional[LLMProviderType] = None
+    _current_provider: LLMProviderType | None = None
+    _fallback_provider: LLMProviderType | None = None
     _failure_count: Dict[LLMProviderType, int] = {}
     _max_retries: int = 3
     _auto_fallback_enabled: bool = True
@@ -583,7 +585,7 @@ class LLMProviderManager:
                     self._current_provider = priority
                     break
     
-    def _create_provider(self, provider_type: LLMProviderType, config: LLMConfig) -> Optional[BaseLLMProvider]:
+    def _create_provider(self, provider_type: LLMProviderType, config: LLMConfig) -> BaseLLMProvider | None:
         """创建指定类型的Provider"""
         if provider_type == LLMProviderType.CLAUDE:
             return ClaudeProvider(config)
@@ -597,7 +599,7 @@ class LLMProviderManager:
             return OllamaProvider(config)
         return None
     
-    def get_provider(self, provider_type: Optional[LLMProviderType] = None) -> Optional[BaseLLMProvider]:
+    def get_provider(self, provider_type: LLMProviderType | None = None) -> BaseLLMProvider | None:
         """获取指定Provider"""
         if provider_type is None:
             provider_type = self._current_provider
@@ -646,7 +648,7 @@ class LLMProviderManager:
         
         logger.error("No available fallback provider!")
     
-    def reset_failure_count(self, provider_type: Optional[LLMProviderType] = None):
+    def reset_failure_count(self, provider_type: LLMProviderType | None = None):
         """重置失败计数"""
         if provider_type:
             self._failure_count[provider_type] = 0
@@ -655,14 +657,14 @@ class LLMProviderManager:
                 self._failure_count[pt] = 0
     
     @property
-    def current_provider(self) -> Optional[LLMProviderType]:
+    def current_provider(self) -> LLMProviderType | None:
         return self._current_provider
     
     @property
     def available_providers(self) -> List[LLMProviderType]:
         return list(self._providers.keys())
     
-    async def chat(self, messages: List[Message], provider: Optional[LLMProviderType] = None, **kwargs) -> LLMResponse:
+    async def chat(self, messages: List[Message], provider: LLMProviderType | None = None, **kwargs) -> LLMResponse:
         """使用指定或当前Provider发送对话（带自动降级）"""
         prov = self.get_provider(provider)
         if not prov:
@@ -745,7 +747,7 @@ class LLMProviderManager:
             error="All LLM providers failed"
         )
     
-    async def embed(self, texts: List[str], provider: Optional[LLMProviderType] = None, **kwargs) -> List[List[float]]:
+    async def embed(self, texts: List[str], provider: LLMProviderType | None = None, **kwargs) -> List[List[float]]:
         """获取文本嵌入"""
         prov = self.get_provider(provider)
         if not prov:
@@ -753,8 +755,8 @@ class LLMProviderManager:
             return [[random.random() for _ in range(384)] for _ in texts]
         return await prov.embed(texts, **kwargs)
     
-    async def chat_simple(self, prompt: str, system: Optional[str] = None, 
-                          provider: Optional[LLMProviderType] = None) -> LLMResponse:
+    async def chat_simple(self, prompt: str, system: str | None = None, 
+                          provider: LLMProviderType | None = None) -> LLMResponse:
         """简单对话接口"""
         prov = self.get_provider(provider)
         if not prov:
@@ -769,7 +771,7 @@ class LLMProviderManager:
 
 # ==================== 全局单例 ====================
 
-_llm_manager: Optional[LLMProviderManager] = None
+_llm_manager: LLMProviderManager | None = None
 
 def get_llm_manager() -> LLMProviderManager:
     """获取LLM管理器单例"""
@@ -778,7 +780,7 @@ def get_llm_manager() -> LLMProviderManager:
         _llm_manager = LLMProviderManager()
     return _llm_manager
 
-def get_llm_provider(provider: Optional[str] = None) -> Optional[BaseLLMProvider]:
+def get_llm_provider(provider: str | None = None) -> BaseLLMProvider | None:
     """获取LLM Provider快捷函数"""
     if provider is not None and isinstance(provider, str):
         try:

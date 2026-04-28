@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Walk-Forward Validation Engine (P2.1)
 =====================================
@@ -21,15 +23,17 @@ Usage:
     result = validator.run(data, strategy_func)
 """
 
-import os
 import json
 import logging
-import numpy as np
+import os
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any, Callable
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger("miracle.backtest.walkforward")
 
@@ -233,7 +237,7 @@ class WalkForwardValidator:
                     # 尝试解析ISO格式
                     dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
                     return int(dt.timestamp() * 1000)
-                except Exception as e:
+                except Exception:
                     return 0
             
             # 修复: 直接使用时间戳比较，避免//3600000小时桶化导致边界错误
@@ -303,7 +307,7 @@ class WalkForwardValidator:
         window: WalkForwardWindow, 
         param_spaces: Dict,
         strategy_type: str
-    ) -> Optional[WindowResult]:
+    ) -> WindowResult | None:
         """
         训练期优化 + 测试期验证
         
@@ -373,7 +377,7 @@ class WalkForwardValidator:
         params: Dict, 
         strategy_type: str,
         is_train: bool = True
-    ) -> Optional[Dict]:
+    ) -> Dict | None:
         """
         使用指定参数运行回测
         
@@ -478,12 +482,12 @@ class WalkForwardValidator:
         params: Dict,
         strategy_type: str,
         idx: int
-    ) -> Optional[Dict]:
+    ) -> Dict | None:
         """生成交易信号"""
         if idx < 20:
             return None
         
-        current_price = closes[-1]
+        closes[-1]
         
         if strategy_type == "mean_reversion":
             return self._mean_reversion_signal(opens, highs, lows, closes, params, idx)
@@ -500,7 +504,7 @@ class WalkForwardValidator:
         closes: List[float],
         params: Dict,
         idx: int
-    ) -> Optional[Dict]:
+    ) -> Dict | None:
         """均值回归信号"""
         rsi_period = params.get("rsi_period", 14)
         rsi_oversold = params.get("rsi_oversold", 30)
@@ -601,7 +605,7 @@ class WalkForwardValidator:
         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
         # Wilder 平滑 (使用 EMA，alpha = 1/period)
-        alpha = 1.0 / period
+        1.0 / period
 
         # 初始平滑值 (简单移动平均)
         atr_smooth = np.mean(tr[1:period+1])
@@ -666,7 +670,7 @@ class WalkForwardValidator:
         closes: List[float],
         params: Dict,
         idx: int
-    ) -> Optional[Dict]:
+    ) -> Dict | None:
         """趋势跟踪信号"""
         adx_period = params.get("adx_period", 14)
         adx_threshold = params.get("adx_threshold", 25)
@@ -736,7 +740,7 @@ class WalkForwardValidator:
         - Short TP: 检查日内低点是否触发了止盈
         """
         direction = position["direction"]
-        entry_price = position["entry_price"]
+        position["entry_price"]
         stop_loss = position["stop_loss"]
         take_profit = position["take_profit"]
         

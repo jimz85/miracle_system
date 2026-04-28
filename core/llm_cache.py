@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 """
 LLM Cache - LLM请求缓存层
 使用Redis减少重复API调用，降低成本提高响应速度
 """
 import hashlib
 import json
-import os
-from typing import Optional, Dict, Any
-from datetime import datetime
 import logging
+import os
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +96,7 @@ class LLMCache:
             "enabled": self.enabled
         }
     
-    def _make_key(self, prompt: str, provider: str, model: Optional[str] = None) -> str:
+    def _make_key(self, prompt: str, provider: str, model: str | None = None) -> str:
         """生成缓存键"""
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:32]
         parts = ["llm", provider]
@@ -107,8 +109,8 @@ class LLMCache:
         self,
         prompt: str,
         provider: str,
-        model: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        model: str | None = None
+    ) -> Dict[str, Any] | None:
         """
         获取缓存的响应
         
@@ -144,8 +146,8 @@ class LLMCache:
         prompt: str,
         response: Any,
         provider: str,
-        model: Optional[str] = None,
-        ttl: Optional[int] = None
+        model: str | None = None,
+        ttl: int | None = None
     ) -> bool:
         """
         缓存响应
@@ -188,7 +190,7 @@ class LLMCache:
         self,
         prompt: str,
         provider: str,
-        model: Optional[str] = None
+        model: str | None = None
     ) -> bool:
         """删除缓存"""
         if not self.enabled:
@@ -245,7 +247,7 @@ class LLMCache:
 # 全局单例
 # ========================
 
-_global_cache: Optional[LLMCache] = None
+_global_cache: LLMCache | None = None
 
 
 def get_llm_cache() -> LLMCache:
@@ -260,7 +262,7 @@ def get_llm_cache() -> LLMCache:
 # 便捷函数
 # ========================
 
-def cache_get(prompt: str, provider: str, model: Optional[str] = None) -> Optional[Any]:
+def cache_get(prompt: str, provider: str, model: str | None = None) -> Any | None:
     """获取缓存的LLM响应"""
     cache = get_llm_cache()
     data = cache.get(prompt, provider, model)
@@ -273,8 +275,8 @@ def cache_set(
     prompt: str,
     response: Any,
     provider: str,
-    model: Optional[str] = None,
-    ttl: Optional[int] = None
+    model: str | None = None,
+    ttl: int | None = None
 ) -> bool:
     """缓存LLM响应"""
     cache = get_llm_cache()
@@ -309,9 +311,9 @@ class CachedLLMCaller:
     def __init__(
         self,
         provider: str,
-        model: Optional[str] = None,
-        ttl: Optional[int] = None,
-        cache: Optional[LLMCache] = None
+        model: str | None = None,
+        ttl: int | None = None,
+        cache: LLMCache | None = None
     ):
         self.provider = provider
         self.model = model

@@ -2,11 +2,11 @@
 PositionMonitor 持仓监控器测试
 """
 from unittest.mock import MagicMock
+
 import pytest
 
-from core.position_monitor import PositionMonitor
 from core.executor_config import ExecutorConfig
-
+from core.position_monitor import PositionMonitor
 
 # ══════════════════════════════════════════════════════════════
 # Fixtures

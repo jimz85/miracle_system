@@ -1,20 +1,27 @@
+from __future__ import annotations
+
 """
 Prometheus Metrics - 监控指标采集
 暴露交易系统关键指标供Prometheus抓取
 """
-import time
 import logging
-from typing import Dict, Any, Optional
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 # 尝试导入prometheus_client
 try:
     from prometheus_client import (
-        Counter, Gauge, Histogram, Summary,
-        CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
+        CONTENT_TYPE_LATEST,
+        CollectorRegistry,
+        Counter,
+        Gauge,
+        Histogram,
+        Summary,
+        generate_latest,
     )
     HAS_PROMETHEUS = True
 except ImportError:
@@ -48,7 +55,7 @@ class TradingMetrics:
     - circuit_breaker: 熔断器状态
     """
     
-    def __init__(self, config: Optional[MetricsConfig] = None):
+    def __init__(self, config: MetricsConfig | None = None):
         self.config = config or MetricsConfig()
         self._enabled = HAS_PROMETHEUS
         
@@ -188,7 +195,7 @@ class TradingMetrics:
         conf_bucket = "high" if confidence > 0.8 else "medium" if confidence > 0.5 else "low"
         self.signals_generated.labels(symbol=symbol, direction=direction, confidence=conf_bucket).inc()
     
-    def get_metrics(self) -> Optional[bytes]:
+    def get_metrics(self) -> bytes | None:
         """获取所有指标"""
         if not self._enabled:
             return None
@@ -210,7 +217,7 @@ class LLMMetrics:
     - llm_fallbacks: 降级次数
     """
     
-    def __init__(self, config: Optional[MetricsConfig] = None):
+    def __init__(self, config: MetricsConfig | None = None):
         self.config = config or MetricsConfig()
         self._enabled = HAS_PROMETHEUS
         
@@ -299,7 +306,7 @@ class SystemMetrics:
     - system_errors: 系统错误
     """
     
-    def __init__(self, config: Optional[MetricsConfig] = None):
+    def __init__(self, config: MetricsConfig | None = None):
         self.config = config or MetricsConfig()
         self._enabled = HAS_PROMETHEUS
         self._start_time = time.time()
@@ -358,9 +365,9 @@ class SystemMetrics:
 # 全局指标实例
 # ========================
 
-_trading_metrics: Optional[TradingMetrics] = None
-_llm_metrics: Optional[LLMMetrics] = None
-_system_metrics: Optional[SystemMetrics] = None
+_trading_metrics: TradingMetrics | None = None
+_llm_metrics: LLMMetrics | None = None
+_system_metrics: SystemMetrics | None = None
 
 
 def get_trading_metrics() -> TradingMetrics:
@@ -387,7 +394,7 @@ def get_system_metrics() -> SystemMetrics:
     return _system_metrics
 
 
-def get_all_metrics() -> Optional[bytes]:
+def get_all_metrics() -> bytes | None:
     """获取所有指标"""
     trading = get_trading_metrics()
     if trading.enabled:
@@ -406,8 +413,8 @@ def create_metrics_app():
         app = Flask(__name__)
         
         trading = get_trading_metrics()
-        llm = get_llm_metrics()
-        system = get_system_metrics()
+        get_llm_metrics()
+        get_system_metrics()
         
         @app.route("/metrics")
         def metrics():

@@ -6,22 +6,33 @@ Tests for RSI, ADX, MACD, ATR, factor calculations, and risk metrics.
 Run with: pytest tests/test_miracle_core.py -v
 """
 
-import pytest
-import sys
 import math
+import sys
 from pathlib import Path
+
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from miracle_core import (
-    calc_rsi, calc_adx, calc_macd, calc_atr,
-    calc_factors, calc_trend_strength, calc_leverage,
-    calc_position_size, check_stops, can_trade,
-    check_risk_limits, format_trade_signal, update_factor_weights,
-    Direction, TradeSignal, Trade
+    Direction,
+    Trade,
+    TradeSignal,
+    calc_adx,
+    calc_atr,
+    calc_factors,
+    calc_leverage,
+    calc_macd,
+    calc_position_size,
+    calc_rsi,
+    calc_trend_strength,
+    can_trade,
+    check_risk_limits,
+    check_stops,
+    format_trade_signal,
+    update_factor_weights,
 )
-
 
 # =============================================================================
 # Test Fixtures

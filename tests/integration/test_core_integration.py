@@ -1,8 +1,10 @@
 """
 集成测试 - 核心模块协同工作
 """
-import pytest
 import socket
+
+import pytest
+
 
 def _is_network_available():
     """检查是否能连接OKX API（DNS解析 + TCP连接探测）"""
@@ -18,12 +20,14 @@ def _is_network_available():
     except Exception:
         return True   # 解析或连接失败 → 跳过
 
+from core.exchange_adapter import ExchangeType, OKXAdapter, create_exchange_adapter
 from core.risk_management import (
-    DynamicPositionSizer, CrossCurrencyRiskMonitor,
-    SlippageFeeSimulator, Position
+    CrossCurrencyRiskMonitor,
+    DynamicPositionSizer,
+    Position,
+    SlippageFeeSimulator,
 )
-from core.exchange_adapter import OKXAdapter, ExchangeType, create_exchange_adapter
-from plugins import PluginManager, PluginHook, create_plugin
+from plugins import PluginHook, PluginManager, create_plugin
 
 
 class TestRiskManagementIntegration:

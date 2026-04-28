@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Agent-M: 市场情报Agent
 Miracle 1.0.1 — 高频趋势跟踪+事件驱动混合系统
@@ -23,14 +25,14 @@ LLM增强版：
     report = agent.generate_intel_report_sync()
 """
 
-import time
-import logging
 import json
+import logging
 import os
+import time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
-from dataclasses import dataclass, asdict
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 # 尝试导入需要的库
 try:
@@ -119,13 +121,13 @@ def get_timestamp() -> str:
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def load_cache(symbol: str, data_type: str) -> Optional[CacheData]:
+def load_cache(symbol: str, data_type: str) -> CacheData | None:
     """从缓存加载数据"""
     cache_file = os.path.join(CACHE_DIR, f"{symbol}_{data_type}.json")
     if not os.path.exists(cache_file):
         return None
     try:
-        with open(cache_file, "r") as f:
+        with open(cache_file) as f:
             cached = json.load(f)
         return CacheData(
             data=cached.get("data"),
@@ -152,7 +154,7 @@ def save_cache(symbol: str, data_type: str, data: Any):
 
 
 def api_request(url: str, params: Dict = None, headers: Dict = None,
-                method: str = "GET", timeout: int = 10) -> Optional[Dict]:
+                method: str = "GET", timeout: int = 10) -> Dict | None:
     """统一的API请求方法，带超时和错误处理"""
     if not HAS_REQUESTS:
         logger.error("requests库未安装")
@@ -596,7 +598,7 @@ class OnChainIntel:
         logger.info(f"{symbol}净流量信号: {signal:.3f} (流入:{inflow:.0f}, 流出:{outflow:.0f})")
         return round(signal, 3)
 
-    def _fetch_free_exchange_flow(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _fetch_free_exchange_flow(self, symbol: str) -> Dict[str, Any] | None:
         """
         使用免费API获取交易所净流量（无需API Key）
         策略：使用OKX公开API获取近期K线，判断主动买卖压力。
@@ -1001,15 +1003,15 @@ class MarketIntelAgent:
             f"📰 新闻情感: {report['news_sentiment']['score']:+.2f}",
             f"   {', '.join(report['news_sentiment']['labels'])}",
             "",
-            f"🔗 链上数据:",
+            "🔗 链上数据:",
             f"   交易所流量信号: {report['onchain']['exchange_flow_signal']:+.2f}",
             f"   大额转账数: {report['onchain']['large_transfer_count']}",
             "",
-            f"💼 钱包分布:",
+            "💼 钱包分布:",
             f"   集中度信号: {report['wallet']['concentration_signal']:+.2f}",
             f"   Top10占比: {report['wallet']['top10_pct']:.1f}%",
             "",
-            f"━━━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━━━",
             f"📈 综合评分: {report['combined_score']:+.2f}",
             f"🎯 推荐: {report['recommendation']}",
             f"🔒 置信度: {report['confidence']:.0%}",

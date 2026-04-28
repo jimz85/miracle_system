@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Multi-Agent Debate Layer for Miracle+TradingAgents Fusion
 
@@ -20,10 +22,16 @@ Usage:
 import logging
 from typing import List
 
-from .bull_researcher import BullResearcher
 from .bear_researcher import BearResearcher
+from .bull_researcher import BullResearcher
 from .debate_judge import DebateJudge, DebateVerdict
-from .fusion_debate import FusionDebateLayer, DebateInput, DebateOutput, ResearchResult, VerdictResult
+from .fusion_debate import (
+    DebateInput,
+    DebateOutput,
+    FusionDebateLayer,
+    ResearchResult,
+    VerdictResult,
+)
 
 __all__ = [
     "BullResearcher",

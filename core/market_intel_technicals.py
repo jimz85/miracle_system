@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel Technicals - 技术指标分析模块
 ==========================================
@@ -103,7 +105,7 @@ class ExchangeFlowAnalyzer:
             "interpretation": self._interpret_flow(flow_data, pattern, trend)
         }
 
-    async def _get_exchange_flow_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+    async def _get_exchange_flow_data(self, symbol: str) -> Dict[str, Any] | None:
         """获取交易所流量数据"""
         cached = load_cache(symbol, "exchange_flow")
         if cached and (time.time() - cached.timestamp) < 300:
@@ -114,7 +116,7 @@ class ExchangeFlowAnalyzer:
 
         return None
 
-    def _fetch_free_exchange_flow(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _fetch_free_exchange_flow(self, symbol: str) -> Dict[str, Any] | None:
         """使用OKX公开API获取流量代理数据"""
         import requests
         sym_map = {"BTC": "BTC-USDT", "ETH": "ETH-USDT", "SOL": "SOL-USDT"}

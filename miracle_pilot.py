@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle Pilot驾驶舱 - 状态监控面板
 ====================================
@@ -19,7 +21,6 @@ Miracle Pilot驾驶舱 - 状态监控面板
   python miracle_pilot.py --log N     查看最近N行日志
 """
 
-from __future__ import annotations
 
 import argparse
 import json
@@ -31,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 # 添加项目路径
 SCRIPT_DIR = Path(__file__).parent
@@ -84,13 +85,17 @@ def log_error(msg):
 
 # ── 核心模块导入 ──────────────────────────────────────────
 try:
-    from miracle_core import (
-        load_config, RiskMetrics, get_ic_adjusted_weights,
-        calc_factors, calc_trend_strength, format_trade_signal
-    )
-    from agents.agent_risk import AgentRisk, AccountState, CircuitBreaker
+    from agents.agent_risk import AccountState, AgentRisk, CircuitBreaker
     from agents.agent_signal import AgentSignal
     from core.data_fetcher import get_klines, get_ticker
+    from miracle_core import (
+        RiskMetrics,
+        calc_factors,
+        calc_trend_strength,
+        format_trade_signal,
+        get_ic_adjusted_weights,
+        load_config,
+    )
     CORE_AVAILABLE = True
 except ImportError as e:
     CORE_AVAILABLE = False
@@ -288,13 +293,13 @@ def print_status_summary():
     
     # 账户信息
     acc = status['account']
-    print(f"\n💰 账户信息:")
+    print("\n💰 账户信息:")
     print(f"   权益: ${acc.get('equity', 0):,.2f}")
     print(f"   总盈亏: ${acc.get('total_pnl', 0):+.2f}")
     print(f"   胜率: {acc.get('win_rate', 0):.1f}% ({acc.get('total_trades', 0)}笔)")
     
     # 持仓信息
-    print(f"\n📈 持仓状态:")
+    print("\n📈 持仓状态:")
     print(f"   活跃持仓: {status['active_positions']}/3")
     print(f"   待处理信号: {status['pending_signals']}")
     
@@ -311,7 +316,7 @@ def print_status_summary():
     
     # 错误信息
     if status['errors']:
-        print(f"\n❌ 错误:")
+        print("\n❌ 错误:")
         for err in status['errors']:
             print(f"   - {err}")
     
@@ -328,7 +333,7 @@ def load_paper_trades() -> List[Dict]:
         try:
             with open(PAPER_TRADES_FILE) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             pass
     return []
 
@@ -462,7 +467,7 @@ def load_signals() -> List[Dict]:
                 if isinstance(data, list):
                     return data
                 return data.get('signals', [])
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             pass
     return []
 
@@ -744,11 +749,11 @@ def print_risk_dashboard():
     # 风险指标
     metrics = get_risk_metrics()
     
-    print(f"\n📊 风险指标:")
+    print("\n📊 风险指标:")
     print(f"   总交易: {metrics['total_trades']}笔 | 开放仓位: {metrics['open_positions']}/3")
     print(f"   总盈亏: ${metrics['total_pnl']:+.2f} | 权益: ${metrics['equity']:,.2f}")
     
-    print(f"\n📉 风险度量:")
+    print("\n📉 风险度量:")
     risk_icon = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴", "CRITICAL": "🔴🔴"}.get(
         metrics['risk_level'], "❓"
     )
@@ -763,7 +768,7 @@ def print_risk_dashboard():
     print(f"   Sharpe:     {metrics['sharpe_ratio']:.2f} (最优>1.0)")
     print(f"   Sortino:    {metrics['sortino_ratio']:.2f} (最优>1.5)")
     
-    print(f"\n🎯 交易绩效:")
+    print("\n🎯 交易绩效:")
     wr_color = "🟢" if metrics['win_rate'] >= 50 else ("🟡" if metrics['win_rate'] >= 40 else "🔴")
     print(f"   胜率:       {wr_color} {metrics['win_rate']:.1f}%")
     print(f"   平均盈利:   ${metrics['avg_win']:+.2f}")
@@ -774,7 +779,7 @@ def print_risk_dashboard():
     
     # 熔断器状态
     cb = get_circuit_breaker_status()
-    print(f"\n🛡️ 熔断器状态:")
+    print("\n🛡️ 熔断器状态:")
     if cb['can_trade']:
         print(f"   ✅ 正常 (连亏: {cb['loss_streak']}笔)")
     else:
@@ -783,7 +788,7 @@ def print_risk_dashboard():
             print(f"   ⏰ 冷却至: {cb['cooldown_until']}")
     
     # 风控建议
-    print(f"\n💡 风控建议:")
+    print("\n💡 风控建议:")
     suggestions = []
     
     if metrics['max_drawdown'] > 20:

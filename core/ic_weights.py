@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 IC-based Factor Weight System (P1.4)
 ====================================
@@ -23,13 +25,13 @@ Usage:
     manager.update_weights()         # 从Memory Log更新IC并刷新权重
 """
 
-import os
-import sys
 import json
 import logging
-from typing import Dict, Optional
+import os
+import sys
 from dataclasses import dataclass, field
 from threading import Lock
+from typing import Dict, Optional
 
 # 确保项目根目录在path中 (用于直接运行此脚本时)
 # Python会自动将脚本所在目录加入sys.path[0],这会遮挡真正的memory/目录
@@ -41,6 +43,7 @@ if sys.path[0] != _project_root:
 
 # Import memory.fusion_memory directly to avoid namespace package issues
 import memory.fusion_memory as _fusion_memory
+
 get_all_entries = _fusion_memory.get_all_entries
 get_ic_feedback = _fusion_memory.get_ic_feedback
 
@@ -84,7 +87,7 @@ class ICWeights:
     weights: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
     ic_values: Dict[str, float] = field(default_factory=lambda: {f: 0.0 for f in FACTORS})
     sample_counts: Dict[str, int] = field(default_factory=lambda: {f: 0 for f in FACTORS})
-    last_updated: Optional[str] = None
+    last_updated: str | None = None
 
 
 # ==================== IC权重管理器 ====================
@@ -100,7 +103,7 @@ class ICWeightManager:
     4. 输出权重用于FusionDecision
     """
 
-    _instance: Optional['ICWeightManager'] = None
+    _instance: ICWeightManager | None = None
     _lock = Lock()
 
     def __init__(self):
@@ -108,7 +111,7 @@ class ICWeightManager:
         self._load()
 
     @classmethod
-    def get_instance(cls) -> 'ICWeightManager':
+    def get_instance(cls) -> ICWeightManager:
         """单例获取"""
         if cls._instance is None:
             with cls._lock:
@@ -121,7 +124,7 @@ class ICWeightManager:
         if not os.path.exists(CACHE_FILE):
             return
         try:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+            with open(CACHE_FILE, encoding='utf-8') as f:
                 data = json.load(f)
             self._state.weights = data.get('weights', dict(DEFAULT_WEIGHTS))
             self._state.ic_values = data.get('ic_values', {f: 0.0 for f in FACTORS})
@@ -260,7 +263,7 @@ class ICWeightManager:
 
         return 0
 
-    def _check_outcome(self, predicted: int, verdict: str, outcome: str) -> Optional[bool]:
+    def _check_outcome(self, predicted: int, verdict: str, outcome: str) -> bool | None:
         """
         检查预测是否正确
 
@@ -449,7 +452,7 @@ class ICWeightManager:
 
 # ==================== 便捷函数 ====================
 
-_manager: Optional[ICWeightManager] = None
+_manager: ICWeightManager | None = None
 
 
 def get_ic_manager() -> ICWeightManager:

@@ -8,11 +8,12 @@ Covers:
 - Exception handling: invalid inputs, division by zero
 """
 
-import pytest
-import sys
 import os
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -20,13 +21,12 @@ sys.path.insert(0, str(project_root))
 
 from core.risk_management import (
     ATRCalculator,
+    CrossCurrencyRiskMonitor,
     DynamicPositionSizer,
     Position,
-    CrossCurrencyRiskMonitor,
     SlippageFeeSimulator,
     create_risk_manager,
 )
-
 
 # ============================================================================
 # ATRCalculator Tests

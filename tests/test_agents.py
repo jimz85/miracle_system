@@ -6,19 +6,22 @@ Tests for Agent-S (Signal Generator), Agent-R (Risk), Agent-M (Market Intel).
 Run with: pytest tests/test_agents.py -v
 """
 
-import pytest
-import sys
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.agent_signal import (
-    PriceFactors, SignalGenerator, WhitelistFilter,
-    TrendDetector, AgentSignal
+    AgentSignal,
+    PriceFactors,
+    SignalGenerator,
+    TrendDetector,
+    WhitelistFilter,
 )
-
 
 # =============================================================================
 # Test Fixtures
@@ -64,7 +67,7 @@ def sample_intel_report():
 def config():
     """Load trading config"""
     config_path = Path(__file__).parent.parent / "miracle_config.json"
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         return json.load(f)
 
 
@@ -331,7 +334,7 @@ class TestSignalGenerator:
         }
         intel = {"sentiment": "neutral", "sentiment_score": 0, "onchain": {}, "wallet": {}}
 
-        signal = sg.generate_signal("BTC", price_data, intel)
+        sg.generate_signal("BTC", price_data, intel)
         # Signal should be generated but with lower confidence due to whitelist
 
 

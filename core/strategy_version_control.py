@@ -1,21 +1,25 @@
+from __future__ import annotations
+
 """
 Strategy Version Control - 策略版本控制与一键回滚
 防止错误策略导致重大损失，支持版本历史追溯和快速回滚
 """
+import hashlib
 import json
 import os
-import hashlib
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 from filelock import FileLock
+
 
 class StrategyVersion:
     """策略版本数据类"""
     
     def __init__(self, version_id: str, params: Dict[str, Any], description: str,
-                 created_at: str, created_by: str = "system", parent_version: Optional[str] = None):
+                 created_at: str, created_by: str = "system", parent_version: str | None = None):
         self.version_id = version_id
         self.params = params
         self.description = description
@@ -38,7 +42,7 @@ class StrategyVersion:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'StrategyVersion':
+    def from_dict(cls, data: Dict[str, Any]) -> StrategyVersion:
         v = cls(
             version_id=data["version_id"],
             params=data["params"],
@@ -85,7 +89,7 @@ class StrategyVersionControl:
     def _load_index(self):
         """加载版本索引"""
         if self.index_file.exists():
-            with open(self.index_file, 'r') as f:
+            with open(self.index_file) as f:
                 data = json.load(f)
                 self.versions = {v["version_id"]: StrategyVersion.from_dict(v) 
                                for v in data.get("versions", [])}
@@ -130,8 +134,8 @@ class StrategyVersionControl:
         return None
     
     def create_version(self, params: Dict[str, Any], description: str = "",
-                      created_by: str = "system", parent_version: Optional[str] = None,
-                      metrics: Optional[Dict[str, Any]] = None) -> StrategyVersion:
+                      created_by: str = "system", parent_version: str | None = None,
+                      metrics: Dict[str, Any] | None = None) -> StrategyVersion:
         """
         创建新版本
         
@@ -182,15 +186,15 @@ class StrategyVersionControl:
         with open(self.active_file, 'w') as f:
             json.dump(version.to_dict(), f, indent=2)
     
-    def get_active_version(self) -> Optional[StrategyVersion]:
+    def get_active_version(self) -> StrategyVersion | None:
         """获取当前活跃版本"""
         if self.active_file.exists():
-            with open(self.active_file, 'r') as f:
+            with open(self.active_file) as f:
                 data = json.load(f)
                 return StrategyVersion.from_dict(data)
         return None
     
-    def get_version(self, version_id: str) -> Optional[StrategyVersion]:
+    def get_version(self, version_id: str) -> StrategyVersion | None:
         """获取指定版本"""
         return self.versions.get(version_id)
     
@@ -363,7 +367,7 @@ class StrategyVersionControl:
 
 
 # 全局单例
-_global_vc: Optional[StrategyVersionControl] = None
+_global_vc: StrategyVersionControl | None = None
 
 
 def get_version_control(strategy_name: str = "default") -> StrategyVersionControl:

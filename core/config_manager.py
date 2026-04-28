@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 配置管理器
 统一配置管理系统
@@ -12,7 +14,7 @@ Miracle 1.0.1 - 配置管理器
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("miracle")
 
@@ -29,7 +31,7 @@ class ConfigManager:
     使用单例模式，确保全局配置一致
     """
 
-    _instance: Optional['ConfigManager'] = None
+    _instance: ConfigManager | None = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -41,7 +43,7 @@ class ConfigManager:
         if self._initialized:
             return
         self._config: Dict[str, Any] = {}
-        self._config_path: Optional[Path] = None
+        self._config_path: Path | None = None
         self._initialized = True
         self._load_config()
 
@@ -54,7 +56,7 @@ class ConfigManager:
             raise ConfigError(f"配置文件不存在: {config_path}")
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, encoding='utf-8') as f:
                 self._config = json.load(f)
             logger.info(f"配置加载成功: {config_path}")
         except json.JSONDecodeError as e:
@@ -145,7 +147,7 @@ class ConfigManager:
 
 
 # 全局配置实例
-_config_instance: Optional[ConfigManager] = None
+_config_instance: ConfigManager | None = None
 
 
 def get_config() -> ConfigManager:

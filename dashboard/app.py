@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 FastAPI Web Dashboard - 实时行情与交易信号监控
 提供Web界面展示实时行情、持仓、信号
@@ -9,20 +11,20 @@ import asyncio
 import json
 import random
 import time
-from datetime import datetime
-from typing import Dict, List, Optional
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import uvicorn
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import uvicorn
 
 # 尝试导入项目模块
 try:
-    from core.exchange_adapter import create_exchange_adapter, ExchangeType
+    from core.exchange_adapter import ExchangeType, create_exchange_adapter
     from core.risk_management import CrossCurrencyRiskMonitor, Position
     HAS_EXCHANGE = True
 except ImportError:

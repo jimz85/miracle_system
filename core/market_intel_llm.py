@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel LLM - LLM驱动的情感分析
 =====================================
@@ -33,12 +35,12 @@ logger = logging.getLogger("MarketIntelLLM")
 # 尝试导入LLM Provider
 try:
     from core.llm_provider import (
-        get_llm_manager,
+        LLMConfig,
         LLMProviderManager,
         LLMProviderType,
-        Message,
         LLMResponse,
-        LLMConfig,
+        Message,
+        get_llm_manager,
     )
     HAS_LLM = True
 except ImportError as e:
@@ -88,7 +90,7 @@ class LLMSentimentAnalyzer:
                 logger.warning(f"LLM Manager初始化失败: {e}")
                 self.llm_manager = None
 
-    async def analyze_single_news(self, news_item: Dict) -> Optional[LLMSentimentResult]:
+    async def analyze_single_news(self, news_item: Dict) -> LLMSentimentResult | None:
         """使用LLM分析单条新闻"""
         if not self.llm_manager:
             return None
@@ -218,7 +220,7 @@ class LLMSentimentAnalyzer:
 
         return self._default_result()
 
-    def _parse_llm_response(self, content: str) -> Optional[LLMSentimentResult]:
+    def _parse_llm_response(self, content: str) -> LLMSentimentResult | None:
         """解析LLM的JSON响应"""
         try:
             json_match = re.search(r'\{[^{}]*"score"[^{}]*\}', content, re.DOTALL)

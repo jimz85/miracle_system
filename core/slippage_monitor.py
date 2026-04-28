@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 SlippageMonitor - 滑点监控
 ==========================
@@ -32,7 +34,7 @@ class SlippageMonitor:
         """从文件加载历史滑点记录"""
         try:
             filepath = f"{self.config.log_dir}/{self.config.slippage_log_file}"
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 self.slippage_records = json.load(f)
         except FileNotFoundError:
             self.slippage_records = []

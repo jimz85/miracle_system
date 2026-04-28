@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel OnChain - 链上分析增强模块
 ==========================================
@@ -109,7 +111,7 @@ class EnhancedOnChainAnalyzer:
             "interpretation": self._interpret_flow(flow_data, pattern, trend)
         }
 
-    def _get_exchange_flow_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _get_exchange_flow_data(self, symbol: str) -> Dict[str, Any] | None:
         """获取交易所流量数据"""
         cached = load_cache(symbol, "exchange_flow")
         if cached and (time.time() - cached.timestamp) < 300:
@@ -120,7 +122,7 @@ class EnhancedOnChainAnalyzer:
 
         return None
 
-    def _fetch_free_exchange_flow(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _fetch_free_exchange_flow(self, symbol: str) -> Dict[str, Any] | None:
         """使用OKX公开API获取流量代理数据"""
         import requests
         sym_map = {"BTC": "BTC-USDT", "ETH": "ETH-USDT", "SOL": "SOL-USDT"}

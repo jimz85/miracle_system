@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Feishu Notifier - 分级告警系统 (P2.3)
 =====================================
@@ -21,13 +23,13 @@ Usage:
     notifier.info('心跳', '系统正常运行')
 """
 
-import os
-import sys
 import json
 import logging
-from enum import Enum
+import os
+import sys
 from datetime import datetime
-from typing import Optional, Dict, Any
+from enum import Enum
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +221,7 @@ class FeishuNotifier:
 
 # ==================== 便捷函数 ====================
 
-_notifier: Optional[FeishuNotifier] = None
+_notifier: FeishuNotifier | None = None
 
 
 def get_notifier() -> FeishuNotifier:

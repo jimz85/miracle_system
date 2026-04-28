@@ -8,35 +8,35 @@ Covers:
 - Exception handling: invalid entries, missing data, file errors
 """
 
-import pytest
-import sys
-import os
 import json
+import os
+import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from core.ic_weights import (
+    DECAY_FACTOR,
+    DEFAULT_WEIGHTS,
+    FACTORS,
+    MIN_SAMPLES,
+    MIN_WEIGHT,
+    FactorStats,
     ICWeightManager,
     ICWeights,
-    FactorStats,
-    DEFAULT_WEIGHTS,
-    MIN_WEIGHT,
-    MIN_SAMPLES,
-    DECAY_FACTOR,
-    FACTORS,
-    get_weights,
-    update_weights,
-    get_ic_values,
     calculate_ic,
-    reset_weights,
     get_ic_manager,
+    get_ic_values,
+    get_weights,
+    reset_weights,
+    update_weights,
 )
-
 
 # ============================================================================
 # ICWeightManager Basic Tests
@@ -307,7 +307,7 @@ class TestWeightUpdate:
 
         # Mock get_all_entries to return fewer than MIN_SAMPLES entries
         with patch('core.ic_weights.get_all_entries', return_value=[]):
-            new_weights = manager.update_weights()
+            manager.update_weights()
 
         # With no samples, weights should remain unchanged
         assert manager.get_weights() == old_weights

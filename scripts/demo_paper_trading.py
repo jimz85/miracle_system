@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 2.0 Paper Trading Demo
 演示完整的Paper Trading流程
@@ -6,23 +8,25 @@ Miracle 2.0 Paper Trading Demo
     python demo_paper_trading.py --symbol BTC-USDT --balance 10000 --periods 100
 """
 import argparse
-import sys
 import random
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
 from pathlib import Path
+from typing import Dict, List, Optional
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.risk_management import (
-    DynamicPositionSizer, CrossCurrencyRiskMonitor, 
-    SlippageFeeSimulator, create_risk_manager, Position
-)
+from core.exchange_adapter import ExchangeType, OKXAdapter, create_exchange_adapter
 from core.logging_config import get_trade_logger, setup_root_logger
-from core.exchange_adapter import OKXAdapter, ExchangeType, create_exchange_adapter
-from plugins import PluginManager, PluginHook, create_plugin
-
+from core.risk_management import (
+    CrossCurrencyRiskMonitor,
+    DynamicPositionSizer,
+    Position,
+    SlippageFeeSimulator,
+    create_risk_manager,
+)
+from plugins import PluginHook, PluginManager, create_plugin
 
 # ========================
 # 市场数据生成器
@@ -307,7 +311,7 @@ class PaperTradingEngine:
     def run(self, market_data_generator: MarketDataGenerator, periods: int = 100):
         """运行Paper Trading"""
         print(f"\n{'='*60}")
-        print(f"Miracle 2.0 Paper Trading Demo")
+        print("Miracle 2.0 Paper Trading Demo")
         print(f"{'='*60}")
         print(f"Symbol: {self.symbol}")
         print(f"Initial Balance: ${self.initial_balance:,.2f}")
@@ -382,7 +386,7 @@ class PaperTradingEngine:
         min_pnl = min((p["pnl"] for p in self.closed_positions), default=0)
         
         print(f"\n{'='*60}")
-        print(f"Final Report")
+        print("Final Report")
         print(f"{'='*60}")
         print(f"Initial Balance:  ${self.initial_balance:,.2f}")
         print(f"Final Balance:    ${self.balance:,.2f}")

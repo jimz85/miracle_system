@@ -6,11 +6,14 @@ CircuitBreaker 补充测试 - 覆盖核心风险控制逻辑
   - MiracleCircuitBreaker (line 341): 统一包装，方法 check / record_outcome / get_tier / can_open_position
 """
 import pytest
-from core.circuit_breaker import (
-    CircuitBreaker, MiracleCircuitBreaker, EquitySnapshot,
-    SurvivalTier, CircuitBreakerResult
-)
 
+from core.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerResult,
+    EquitySnapshot,
+    MiracleCircuitBreaker,
+    SurvivalTier,
+)
 
 # ══════════════════════════════════════════════════════════════
 # CircuitBreaker 核心实现测试

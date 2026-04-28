@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel Context - 市场上下文构建
 ====================================

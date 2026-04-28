@@ -6,17 +6,17 @@ End-to-end integration tests for the trading system.
 Run with: pytest tests/test_integration.py -v
 """
 
-import pytest
-import sys
 import json
-from pathlib import Path
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.agent_coordinator import MiracleCoordinator, CoordinatorState
-
+from agents.agent_coordinator import CoordinatorState, MiracleCoordinator
 
 # =============================================================================
 # Coordinator Integration Tests

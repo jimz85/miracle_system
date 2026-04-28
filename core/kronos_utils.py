@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 kronos_utils.py - Kronos共享工具函数
 ====================================
@@ -6,11 +8,19 @@ OKX API封装、Treasury检查、OCO验证、集中度检查、日志幂等
 
 版本: 1.0.0
 """
-import logging, os, json, hmac, base64, hashlib, time, requests
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
 
 _logger = logging.getLogger(__name__)
 
@@ -35,7 +45,7 @@ def okx_req(method: str, path: str, body: str = '', api_key: str = None,
     """
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(time.time() * 1000) % 1000)
     key = api_key or os.environ.get('OKX_API_KEY', '')
-    secret_key = secret or os.environ.get('OKX_SECRET', '')
+    secret or os.environ.get('OKX_SECRET', '')
     phrase = passphrase or os.environ.get('OKX_PASSPHRASE', '')
     flag = os.environ.get('OKX_FLAG', '1')
 
@@ -57,7 +67,9 @@ def okx_req(method: str, path: str, body: str = '', api_key: str = None,
 # ═══════════════════════════════════════════════════════════
 #  原子写入工具（防断电损坏）
 # ═══════════════════════════════════════════════════════════
-import tempfile, os as _os
+import os as _os
+import tempfile
+
 
 def atomic_write_json(path: Path, data, indent: int = 2) -> None:
     """
@@ -411,12 +423,12 @@ def parallel_scan_coins(
         }
         
         for future in as_completed(future_to_coin, timeout=timeout):
-            coin = future_to_coin[future]
+            future_to_coin[future]
             try:
                 result = future.result(timeout=timeout)
                 if result is not None:
                     results.append(result)
-            except Exception as e:
+            except Exception:
                 # 单币失败不影响整体
                 pass
     
@@ -427,6 +439,7 @@ def parallel_scan_coins(
 #  日志幂等系统
 # ═══════════════════════════════════════════════════════════
 import hashlib as hashlib_
+
 
 def generate_trade_idempotency_key(
     symbol: str, 

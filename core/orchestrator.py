@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle 2.0 - Orchestrator 协调器
 =================================
@@ -7,21 +9,21 @@ LLM驱动的大脑，负责任务分解、结果聚合、自我反思
 增强版本 - 带LLM降级机制
 """
 
+import asyncio
 import json
 import logging
+import sys
 import time
 import uuid
-import asyncio
-from datetime import datetime
-from pathlib import Path
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.llm_provider import get_llm_provider, LLMResponse
+from core.llm_provider import LLMResponse, get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +56,9 @@ class TradingDecision:
     decision: DecisionType
     symbol: str
     direction: str
-    entry_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    entry_price: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
     position_size_pct: float = 0.0
     leverage: int = 1
     rr_ratio: float = 0.0
@@ -84,13 +86,13 @@ class TradingDecision:
 class OrchestratorState:
     current_cycle: int = 0
     decisions_today: int = 0
-    last_decision_time: Optional[str] = None
+    last_decision_time: str | None = None
     consecutive_waits: int = 0
     total_reflections: int = 0
     # LLM降级机制状态
     llm_failures: int = 0              # 连续LLM失败次数
     llm_degraded: bool = False         # 是否已降级到规则引擎
-    last_llm_retry: Optional[float] = None  # 上次LLM重试时间戳
+    last_llm_retry: float | None = None  # 上次LLM重试时间戳
     total_llm_fallbacks: int = 0       # 总降级次数
 
 # ==================== 系统提示词 ====================
@@ -142,7 +144,7 @@ class Orchestrator:
     - 自动恢复: 定期尝试恢复LLM
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Dict[str, Any] | None = None):
         self.config = {**DEFAULT_CONFIG, **(config or {})}
         self.state = OrchestratorState()
         self.llm = None
@@ -408,6 +410,6 @@ class Orchestrator:
 
 # ==================== 便捷函数 ====================
 
-def get_orchestrator(config: Optional[Dict] = None) -> Orchestrator:
+def get_orchestrator(config: Dict | None = None) -> Orchestrator:
     """获取Orchestrator实例"""
     return Orchestrator(config)

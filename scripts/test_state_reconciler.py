@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle State Reconciler 测试脚本
 ================================
@@ -6,16 +8,16 @@ Miracle State Reconciler 测试脚本
 测试幽灵仓位检测、OCO订单修复、状态文件一致性功能
 """
 
-import sys
-import os
-from pathlib import Path
-import tempfile
 import json
+import os
+import sys
+import tempfile
+from pathlib import Path
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.state_reconciler import StateReconciler, ReconcileResult
+from core.state_reconciler import ReconcileResult, StateReconciler
 
 
 def test_import():
@@ -34,8 +36,14 @@ def test_reconciler_init():
 def test_data_classes():
     """测试数据结构"""
     from core.state_reconciler import (
-        OrderInfo, PositionInfo, LocalPositionRecord,
-        PhantomPosition, ZombiePosition, OrphanOrder, OCOIssue, ReconcileResult
+        LocalPositionRecord,
+        OCOIssue,
+        OrderInfo,
+        OrphanOrder,
+        PhantomPosition,
+        PositionInfo,
+        ReconcileResult,
+        ZombiePosition,
     )
     
     # 测试 PositionInfo
@@ -57,7 +65,7 @@ def test_phantom_detection():
     """测试幽灵仓位检测逻辑"""
     from core.state_reconciler import LocalPositionRecord
     
-    reconciler = StateReconciler()
+    StateReconciler()
     
     # 模拟本地有但交易所没有的持仓
     local_positions = {
@@ -140,8 +148,8 @@ def test_oco_issue_detection():
     
     assert len(issues) == 1
     assert issues[0].issue_type == 'missing_algo'
-    assert issues[0].position_exists == True
-    assert issues[0].algo_exists == False
+    assert issues[0].position_exists
+    assert not issues[0].algo_exists
     print("✓ OCO问题检测逻辑正确")
 
 
@@ -222,7 +230,7 @@ def test_reconcile_result_structure():
 
 def test_phantom_position_class():
     """测试PhantomPosition数据结构"""
-    from core.state_reconciler import PhantomPosition, LocalPositionRecord
+    from core.state_reconciler import LocalPositionRecord, PhantomPosition
     
     local_record = LocalPositionRecord(
         inst_id="BTC-USDT-SWAP",

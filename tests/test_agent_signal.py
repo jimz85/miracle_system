@@ -8,22 +8,22 @@ Covers:
 - Exception handling: invalid inputs, empty data
 """
 
-import pytest
-import sys
 import math
+import sys
 from pathlib import Path
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from agents.agent_signal import (
+    MultiTimeframeFilter,
     PriceFactors,
     TrendDetector,
     WhitelistFilter,
-    MultiTimeframeFilter,
 )
-
 
 # ============================================================================
 # RSI Calculation Tests
@@ -354,7 +354,7 @@ class TestVolumeFilter:
         volumes.append(2000)  # 2x average = confirmed
 
         result = PriceFactors.calc_volume_filter(volumes, period=20)
-        assert result["is_confirmed"] == True  # use == instead of is for numpy bool
+        assert result["is_confirmed"]  # use == instead of is for numpy bool
         assert result["confidence_penalty"] == 0.0
 
     def test_volume_filter_low_volume_penalizes(self):

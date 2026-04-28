@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 ExecutorFeishuNotifier - 执行引擎专用飞书通知
 ==========================================
@@ -162,7 +164,7 @@ class ExecutorFeishuNotifier:
             if result.get("code") != 0:
                 logger.warning(f"飞书API返回错误: {result}")
             else:
-                logger.info(f"飞书通知发送成功")
+                logger.info("飞书通知发送成功")
 
         except Exception as e:
             logger.error(f"飞书通知发送失败: {e}")

@@ -1,9 +1,12 @@
-from pydantic import BaseModel, Field
-from enum import Enum
+from __future__ import annotations
+
+from enum import Enum, StrEnum
 from typing import Optional
 
+from pydantic import BaseModel, Field
 
-class TradeAction(str, Enum):
+
+class TradeAction(StrEnum):
     """交易动作枚举"""
     BUY = "Buy"
     HOLD = "Hold"
@@ -11,7 +14,7 @@ class TradeAction(str, Enum):
     WAIT = "Wait"
 
 
-class PositionRating(str, Enum):
+class PositionRating(StrEnum):
     """仓位评级枚举"""
     STRONG_BUY = "StrongBuy"
     BUY = "Buy"
@@ -37,19 +40,19 @@ class FusionDecision(BaseModel):
     reasoning: str = Field(
         description="决策理由，2-4句话总结核心逻辑"
     )
-    entry_price: Optional[float] = Field(
+    entry_price: float | None = Field(
         default=None,
         description="推荐入场价格"
     )
-    stop_loss: Optional[float] = Field(
+    stop_loss: float | None = Field(
         default=None,
         description="止损价格"
     )
-    take_profit: Optional[float] = Field(
+    take_profit: float | None = Field(
         default=None,
         description="止盈价格"
     )
-    position_size: Optional[str] = Field(
+    position_size: str | None = Field(
         default=None,
         description="仓位大小，如 '5% of portfolio'"
     )

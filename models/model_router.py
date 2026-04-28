@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Model Router - Fast/Slow Thinking Model Selection (P1.5)
 =======================================================
@@ -33,16 +35,16 @@ Usage:
     stats = router.get_cost_stats()
 """
 
-import os
-import sys
 import json
 import logging
+import os
+import sys
 import time
-from typing import Dict, Optional, List, Any
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from threading import Lock
-from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +120,7 @@ class CostStats:
     request_count: int = 0
     quick_think_count: int = 0
     deep_think_count: int = 0
-    last_updated: Optional[str] = None
+    last_updated: str | None = None
 
 
 @dataclass
@@ -154,10 +156,10 @@ class ModelRouter:
     使用单例模式确保全局唯一
     """
 
-    _instance: Optional['ModelRouter'] = None
+    _instance: ModelRouter | None = None
     _lock = Lock()
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         """
         初始化模型路由器
 
@@ -170,7 +172,7 @@ class ModelRouter:
         self._load_cost_stats()
 
     @classmethod
-    def get_instance(cls, config_path: Optional[str] = None) -> 'ModelRouter':
+    def get_instance(cls, config_path: str | None = None) -> ModelRouter:
         """单例获取"""
         if cls._instance is None:
             with cls._lock:
@@ -178,7 +180,7 @@ class ModelRouter:
                     cls._instance = cls(config_path)
         return cls._instance
 
-    def _load_config(self, config_path: Optional[str] = None) -> None:
+    def _load_config(self, config_path: str | None = None) -> None:
         """从配置文件加载模型映射表"""
         if config_path is None:
             config_path = os.path.expanduser('~/.miracle_memory/model_router_config.json')
@@ -188,7 +190,7 @@ class ModelRouter:
             return
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, encoding='utf-8') as f:
                 data = json.load(f)
             self._model_map = data.get('model_map', DEFAULT_MODEL_MAP)
             logger.info(f"[Router] 从 {config_path} 加载模型映射表")
@@ -200,7 +202,7 @@ class ModelRouter:
         if not os.path.exists(COST_STATS_FILE):
             return
         try:
-            with open(COST_STATS_FILE, 'r', encoding='utf-8') as f:
+            with open(COST_STATS_FILE, encoding='utf-8') as f:
                 data = json.load(f)
             self._cost_stats = CostStats(
                 total_tokens=data.get('total_tokens', 0),
@@ -233,12 +235,12 @@ class ModelRouter:
 
     def should_use_deep(
         self,
-        confidence: Optional[float] = None,
+        confidence: float | None = None,
         requires_ic_update: bool = False,
         has_factor_conflict: bool = False,
         is_critical_risk: bool = False,
         survival_tier: str = "normal",
-        task_type: Optional[TaskType] = None,
+        task_type: TaskType | None = None,
     ) -> bool:
         """
         判断是否需要使用深度思考模型
@@ -290,7 +292,7 @@ class ModelRouter:
                 return False
 
         # 深度思考触发条件检查
-        triggers = DeepThinkTriggers(
+        DeepThinkTriggers(
             confidence=confidence or 1.0,
             requires_ic_update=requires_ic_update,
             has_factor_conflict=has_factor_conflict,
@@ -305,17 +307,17 @@ class ModelRouter:
 
         # 条件2: IC权重更新
         if requires_ic_update:
-            logger.debug(f"[Router] IC权重更新场景 -> 使用深度模型")
+            logger.debug("[Router] IC权重更新场景 -> 使用深度模型")
             return True
 
         # 条件3: 多因子冲突
         if has_factor_conflict:
-            logger.debug(f"[Router] 多因子冲突 -> 使用深度模型")
+            logger.debug("[Router] 多因子冲突 -> 使用深度模型")
             return True
 
         # 条件4: 关键风险场景
         if is_critical_risk:
-            logger.debug(f"[Router] 关键风险场景 -> 使用深度模型")
+            logger.debug("[Router] 关键风险场景 -> 使用深度模型")
             return True
 
         # 条件5: 危险生存层级
@@ -392,7 +394,7 @@ class ModelRouter:
         task_type: str,
         tokens_used: int,
         cost: float,
-        model_type: Optional[ModelType] = None,
+        model_type: ModelType | None = None,
     ) -> None:
         """
         记录模型使用情况并更新成本统计
@@ -426,7 +428,7 @@ class ModelRouter:
             f"cost=${cost:.6f}, model={model_type.value}"
         )
 
-    def _task_type_to_enum(self, task_type: str) -> Optional[TaskType]:
+    def _task_type_to_enum(self, task_type: str) -> TaskType | None:
         """将字符串任务类型转换为枚举"""
         try:
             return TaskType(task_type)
@@ -517,7 +519,7 @@ class ModelRouter:
                 'reasoning': f"标准决策场景, 置信度={confidence:.2f}",
             }
 
-    def export_config(self, path: Optional[str] = None) -> None:
+    def export_config(self, path: str | None = None) -> None:
         """导出当前配置到文件"""
         if path is None:
             path = os.path.expanduser('~/.miracle_memory/model_router_config.json')
@@ -533,7 +535,7 @@ class ModelRouter:
 
 # ==================== 便捷函数 ====================
 
-_router: Optional[ModelRouter] = None
+_router: ModelRouter | None = None
 
 
 def get_router() -> ModelRouter:
@@ -545,12 +547,12 @@ def get_router() -> ModelRouter:
 
 
 def should_use_deep(
-    confidence: Optional[float] = None,
+    confidence: float | None = None,
     requires_ic_update: bool = False,
     has_factor_conflict: bool = False,
     is_critical_risk: bool = False,
     survival_tier: str = "normal",
-    task_type: Optional[str] = None,
+    task_type: str | None = None,
 ) -> bool:
     """
     判断是否需要深度思考 (快捷函数)

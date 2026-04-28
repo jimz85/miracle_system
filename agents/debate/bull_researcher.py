@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Bull Researcher Agent — 多头论点研究
 
@@ -11,7 +13,7 @@ Bull Researcher Agent — 多头论点研究
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +181,7 @@ class BullResearcher:
         # 布林带分析
         bb_lower = factor_context.get('bb_lower', 0)
         if price < bb_lower:
-            lines.append(f"- 价格触及布林下轨，可能反弹")
+            lines.append("- 价格触及布林下轨，可能反弹")
 
         # 波动率分析
         volatility = factor_context.get('volatility', 0)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Position Monitor - 持仓监控器
 ==============================
@@ -13,12 +15,12 @@ Position Monitor - 持仓监控器
 """
 
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+
+# 向前引用 ExchangeClient（运行时才检查）
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 from core.executor_config import ExecutorConfig
 
-# 向前引用 ExchangeClient（运行时才检查）
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from core.exchange_client import ExchangeClient
 
@@ -29,7 +31,7 @@ class PositionMonitor:
     负责持仓监控、止损检查和自动平仓
     """
 
-    def __init__(self, exchange_client: 'ExchangeClient', config: ExecutorConfig):
+    def __init__(self, exchange_client: ExchangeClient, config: ExecutorConfig):
         self.client = exchange_client
         self.config = config
         self.positions: Dict[str, Dict] = {}
@@ -42,7 +44,7 @@ class PositionMonitor:
             (should_exit, reason)
             reason: "none" | "sl" | "tp" | "structure" | "atr"
         """
-        symbol = trade.get("symbol")
+        trade.get("symbol")
         side = trade.get("side")
         entry_price = trade.get("entry_price")
         stop_loss = trade.get("stop_loss")
@@ -126,7 +128,7 @@ class PositionMonitor:
         return pnl
 
     def check_moving_stop(self, trade: Dict, current_price: float,
-                         atr: float = None) -> Optional[float]:
+                         atr: float = None) -> float | None:
         """
         检查移动止损
 
@@ -160,7 +162,7 @@ class PositionMonitor:
         if symbol in self.positions:
             del self.positions[symbol]
 
-    def get_position(self, symbol: str) -> Optional[Dict]:
+    def get_position(self, symbol: str) -> Dict | None:
         """获取持仓数据"""
         return self.positions.get(symbol)
 

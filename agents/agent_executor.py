@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Agent-E: 执行引擎Agent
 Miracle 1.0.1 — 高频趋势跟踪+事件驱动混合系统
@@ -19,37 +21,31 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from typing import Dict, Any, Optional, List, Callable, Tuple
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
-from enum import Enum
-import uuid
+import base64
 import json
-import time
 import logging
 import threading
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
+
 import requests
-import base64
 from requests.exceptions import RequestException, Timeout
 
-# 安全密钥管理器已迁移到 core/secure_key_manager.py
-from core.secure_key_manager import SecureKeyManager, get_key_manager
-
+# 交易所客户端已迁移到 core/exchange_client.py
+from core.exchange_client import ExchangeClient
 
 # ============================================================
 # 配置已迁移到 core/executor_config.py
 from core.executor_config import ExecutorConfig
-# 交易所客户端已迁移到 core/exchange_client.py
-from core.exchange_client import ExchangeClient
-
-# 滑点监控已迁移到 core/slippage_monitor.py
-from core.slippage_monitor import SlippageMonitor
-from core.trade_logger import TradeLogger
 from core.executor_feishu_notifier import FeishuNotifier
 
 # ============================================================
 # 订单管理器
-
 # ============================================================
 # 订单管理器已迁移到 core/order_manager.py
 from core.order_manager import OrderManager
@@ -57,6 +53,13 @@ from core.order_manager import OrderManager
 # ============================================================
 # 持仓监控器已迁移到 core/position_monitor.py
 from core.position_monitor import PositionMonitor
+
+# 安全密钥管理器已迁移到 core/secure_key_manager.py
+from core.secure_key_manager import SecureKeyManager, get_key_manager
+
+# 滑点监控已迁移到 core/slippage_monitor.py
+from core.slippage_monitor import SlippageMonitor
+from core.trade_logger import TradeLogger
 
 # ============================================================
 # 执行器 (主类)
@@ -102,7 +105,7 @@ class Executor:
 
         # 持仓监控
         self._monitoring = False
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._callbacks: Dict[str, Callable] = {}  # 回调函数
 
         # 设置日志
@@ -110,7 +113,6 @@ class Executor:
 
     def _setup_logging(self):
         """设置日志（仅在未配置时）"""
-        import os
         os.makedirs(self.config.log_dir, exist_ok=True)
 
         # 只在root logger尚无handler时配置（防止多次调用basicConfig覆盖）
@@ -145,7 +147,6 @@ class Executor:
         2. 本地emergency_stop状态文件
         3. 远程紧急停止API（如果配置了）
         """
-        import os
         from pathlib import Path
         
         # 1. 检查环境变量
@@ -193,7 +194,6 @@ class Executor:
         """
         触发紧急停止（写入状态文件，供交易进程检查）
         """
-        import os
         import json
         from pathlib import Path
         
@@ -231,7 +231,7 @@ class Executor:
             except Exception as e:
                 logging.error(f"回调执行失败 [{event}]: {e}")
 
-    def execute_signal(self, approved_signal: Dict) -> Optional[Dict]:
+    def execute_signal(self, approved_signal: Dict) -> Dict | None:
         """
         执行经过风控审批的信号
 

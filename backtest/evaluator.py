@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.2 - Adaptive Evaluator
 ====================================
@@ -12,10 +14,10 @@ Features:
 """
 
 import logging
-from typing import Dict, List, Any, Optional, Tuple, Set
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .learner import (
     WalkForwardValidator,
@@ -330,7 +332,7 @@ class OverfittingDetector:
             train_ic, _ = calc_information_coefficient(train_signals, train_returns)
             
             # Test: use trained "params" (mean signal from train) on test window (out-of-sample)
-            train_mean_signal = sum(train_signals) / len(train_signals)
+            sum(train_signals) / len(train_signals)
             test_signals = [d["signal"] for d in test_window]
             test_returns = [d["return"] for d in test_window]
             test_ic, _ = calc_information_coefficient(test_signals, test_returns)
@@ -513,7 +515,7 @@ class PCAAnomalyDetector:
             
             # T2统计量（到PCA主成分空间的马氏距离）
             pca_transformed = self.pca.transform(scaled)
-            t2_score = np.sum(pca_transformed[0] ** 2)
+            np.sum(pca_transformed[0] ** 2)
             
             # 重构误差
             reconstructed = self.pca.inverse_transform(pca_transformed)
@@ -529,7 +531,7 @@ class PCAAnomalyDetector:
             logger.warning(f"PCAAnomalyDetector: Error calculating anomaly score: {e}")
             return 0.0
     
-    def detect_drift(self) -> Optional[Dict[str, Any]]:
+    def detect_drift(self) -> Dict[str, Any] | None:
         """
         检测概念漂移（因子权重分布变化）
         
@@ -588,7 +590,7 @@ class PCAAnomalyDetector:
             "baseline_reconstruction_error": float(baseline_error)
         }
     
-    def check_anomaly(self) -> Optional[AnomalyAlert]:
+    def check_anomaly(self) -> AnomalyAlert | None:
         """
         检查是否应该触发警报
         
@@ -634,7 +636,7 @@ class PCAAnomalyDetector:
         
         return alert
     
-    def check_market_volatility(self, window: int = 20) -> Optional[AnomalyAlert]:
+    def check_market_volatility(self, window: int = 20) -> AnomalyAlert | None:
         """
         检测市场波动异常（基于收益分布）
         

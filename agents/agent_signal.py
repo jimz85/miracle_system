@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Agent-S: Signal Generation Agent for Miracle 1.0.1
 高频趋势跟踪+事件驱动混合系统
@@ -21,12 +23,14 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
+
+from core.ic_weights import get_weights as get_ic_weights
+
 # Core modules (extracted classes re-exported for backwards compatibility)
 from core.price_factors import PriceFactors
-from core.signal_filters import MultiTimeframeFilter, TrendDetector, WhitelistFilter
-from core.ic_weights import get_weights as get_ic_weights
 from core.regime_classifier import RegimeClassifier
-
+from core.signal_filters import MultiTimeframeFilter, TrendDetector, WhitelistFilter
 
 # ============================================================================
 # 保留类：SignalGenerator / AgentSignal
@@ -52,7 +56,7 @@ class SignalGenerator:
     - wallet: 0.1 (钱包数据权重)
     """
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Dict | None = None):
         self.config = config or {}
         
         # 加载IC权重，替换硬编码的0.6/0.2/0.1/0.1
@@ -346,7 +350,7 @@ class SignalGenerator:
 
     def generate_signal(self, symbol: str, price_data: Dict,
                         intel_report: Dict,
-                        price_data_4h: Optional[Dict] = None,
+                        price_data_4h: Dict | None = None,
                         override_mt_filter: bool = False) -> Dict:
         """
         生成综合交易信号
@@ -765,13 +769,13 @@ class AgentSignal:
     - 输出: 高置信度交易信号给 Agent-R
     """
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Dict | None = None):
         self.config = config or {}
         self.generator = SignalGenerator(self.config)
 
     def process_intel(self, symbol: str, price_data: Dict,
                        intel_report: Dict,
-                       price_data_4h: Optional[Dict] = None) -> Dict:
+                       price_data_4h: Dict | None = None) -> Dict:
         """
         处理Agent-M情报，生成交易信号
 

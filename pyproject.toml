@@ -39,11 +39,18 @@ exclude = '''
 )/
 '''
 
+[tool.ruff.lint]
+select = ["E", "F", "I", "C90", "UP"]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "UP006",  # X | Y union syntax requires Python 3.10+, project targets 3.9
+    "F401",  # unused imports — many are optional dependency checks
+    "E402",  # sys.path.insert pattern causes module import order warnings
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-select = ["E", "F", "I", "C90", "UP"]
-ignore = ["E501"]  # line too long (handled by black)
 
 [tool.isort]
 profile = "black"

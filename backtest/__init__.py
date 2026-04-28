@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Backtest Package (P2.1)
 ======================
@@ -20,21 +22,20 @@ Usage:
     runner.save_results("output.json")
 """
 
+from .backtest import (
+    BacktestConfig,
+    BacktestRunner,
+    load_klines_from_csv,
+    run_backtest,
+)
 from .walkforward import (
-    WalkForwardValidator,
-    WalkForwardResult,
-    WindowResult,
-    StrategyType,
-    run_walk_forward,
     MEAN_REVERSION_PARAMS,
     TREND_FOLLOWING_PARAMS,
-)
-
-from .backtest import (
-    BacktestRunner,
-    BacktestConfig,
-    run_backtest,
-    load_klines_from_csv,
+    StrategyType,
+    WalkForwardResult,
+    WalkForwardValidator,
+    WindowResult,
+    run_walk_forward,
 )
 
 __all__ = [

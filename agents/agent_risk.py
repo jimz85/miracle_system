@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Agent-R: 风险与仓位管理Agent
 Miracle 1.0.1 — 高频趋势跟踪+事件驱动混合系统
@@ -12,11 +14,10 @@ Miracle 1.0.1 — 高频趋势跟踪+事件驱动混合系统
 7. 输出最终执行指令给Agent-E
 """
 
-from typing import Dict, Any, Optional, Tuple
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-import math
-
+from typing import Any, Dict, Optional, Tuple
 
 # ============================================================
 # 数据结构
@@ -44,20 +45,20 @@ class AccountState:
     today_pnl: float             # 今日盈亏
     today_trades: int = 0         # 今日交易次数
     loss_streak: int = 0          # 连续亏损次数
-    last_trade_time: Optional[datetime] = None  # 最后交易时间
+    last_trade_time: datetime | None = None  # 最后交易时间
 
 
 @dataclass
 class RiskApproval:
     """风控审批结果"""
     approved: bool
-    rejection_reason: Optional[str] = None
+    rejection_reason: str | None = None
     leverage: int = 1
     position_size_pct: float = 0.0
     stop_loss: float = 0.0
     take_profit: float = 0.0
     risk_reward: float = 0.0
-    modified_signal: Optional[Signal] = None
+    modified_signal: Signal | None = None
     warnings: list = field(default_factory=list)
 
 
@@ -73,7 +74,7 @@ class CircuitBreaker:
     - 连续亏损触发冷却期
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Dict[str, Any] | None = None):
         cfg = config or {}
         self.max_daily_loss_pct: float = cfg.get("max_daily_loss_pct", 5.0)      # 单日亏损5%停止
         self.max_drawdown_pct: float = cfg.get("max_drawdown_pct", 20.0)         # 总回撤20%停止
@@ -81,7 +82,7 @@ class CircuitBreaker:
         self.cooldown_3_losses_hours: int = cfg.get("cooldown_3_losses_hours", 24) # 3连亏暂停1天
         self.min_trend_strength: float = cfg.get("min_trend_strength", 30.0)      # 最低趋势强度阈值
 
-    def check_daily_loss(self, today_pnl: float, account_balance: float) -> Tuple[bool, Optional[str]]:
+    def check_daily_loss(self, today_pnl: float, account_balance: float) -> Tuple[bool, str | None]:
         """
         检查单日亏损是否触发熔断
         Returns: (passed, reason_if_failed)
@@ -96,7 +97,7 @@ class CircuitBreaker:
 
         return True, None
 
-    def check_drawdown(self, peak_balance: float, current_balance: float) -> Tuple[bool, Optional[str]]:
+    def check_drawdown(self, peak_balance: float, current_balance: float) -> Tuple[bool, str | None]:
         """
         检查总回撤是否触发熔断
         Returns: (passed, reason_if_failed)
@@ -111,7 +112,7 @@ class CircuitBreaker:
 
         return True, None
 
-    def check_consecutive_losses(self, loss_streak: int, last_trade_time: Optional[datetime]) -> Tuple[bool, Optional[str], Optional[datetime]]:
+    def check_consecutive_losses(self, loss_streak: int, last_trade_time: datetime | None) -> Tuple[bool, str | None, datetime | None]:
         """
         检查连续亏损是否触发冷却期
         Returns: (can_trade, reason_if_blocked, resume_time)
@@ -202,7 +203,7 @@ class AgentRisk:
     完整风控流程：熔断 → 趋势/置信度检查 → 杠杆 → 仓位 → 止损 → 止盈 → 审批
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Dict[str, Any] | None = None):
         self.config = config or {}
         self.circuit_breaker = CircuitBreaker(self.config.get("circuit_breaker"))
 

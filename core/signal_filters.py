@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Signal Filters: 趋势检测 + 白名单过滤 + 多周期确认
 从 agents/agent_signal.py 提取
@@ -93,7 +95,7 @@ class WhitelistFilter:
         self.blacklist: set = set()
 
     def check(self, signal: Dict, factors: Dict,
-              factors_4h: Optional[Dict] = None) -> Dict[str, Any]:
+              factors_4h: Dict | None = None) -> Dict[str, Any]:
         rsi = factors.get("rsi", 50)
         adx = factors.get("adx", 0)
         trend = factors.get("trend", "range")
@@ -145,7 +147,7 @@ class WhitelistFilter:
         }
 
     def _get_pattern_key(self, rsi: float, adx: float, trend: str,
-                         factors_4h: Optional[Dict] = None) -> str:
+                         factors_4h: Dict | None = None) -> str:
         rsi_bucket = "low" if rsi < 40 else ("mid" if rsi < 60 else "high")
         adx_bucket = "low" if adx < 25 else ("mid" if adx < 40 else "high")
 
@@ -277,7 +279,7 @@ class MultiTimeframeFilter:
                 confirmations += 1
                 check_details['rsi_extreme_check'] = {
                     'passed': True,
-                    'reason': f'Neither in extreme zone: neutral confirmation'
+                    'reason': 'Neither in extreme zone: neutral confirmation'
                 }
 
         # Check 4: 4H成交量确认

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 coin_optimizer.py - 每币种参数优化模块
 =====================================
@@ -18,14 +20,14 @@ Author: Miracle System
 Version: 1.0.0
 """
 
+import copy
 import json
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
-import copy
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("miracle.coin_optimizer")
 
@@ -54,10 +56,10 @@ class CoinParams:
     performance: Dict[str, Any]
     notes: str
     excluded: bool
-    excluded_reason: Optional[str]
+    excluded_reason: str | None
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'CoinParams':
+    def from_dict(cls, data: Dict) -> CoinParams:
         return cls(
             symbol=data['symbol'],
             enabled=data.get('enabled', True),
@@ -87,7 +89,7 @@ class OptimizationResult:
     max_drawdown: float
     trades: int
     params: Dict[str, float]
-    ic_score: Optional[float] = None
+    ic_score: float | None = None
     walk_forward_passed: bool = False
     notes: str = ""
 
@@ -140,7 +142,7 @@ class CoinParameterOptimizer:
             return
         
         try:
-            with open(self.params_path, 'r', encoding='utf-8') as f:
+            with open(self.params_path, encoding='utf-8') as f:
                 data = json.load(f)
             
             coins_data = data.get('coins', [])
@@ -160,7 +162,7 @@ class CoinParameterOptimizer:
             return
         
         try:
-            with open(self.KRONOS_COIN_STRATEGY_MAP, 'r', encoding='utf-8') as f:
+            with open(self.KRONOS_COIN_STRATEGY_MAP, encoding='utf-8') as f:
                 data = json.load(f)
             
             for coin_data in data.get('coins', []):
@@ -173,7 +175,7 @@ class CoinParameterOptimizer:
         except Exception as e:
             logger.error(f"加载Kronos配置失败: {e}")
     
-    def get_coin_params(self, symbol: str) -> Optional[CoinParams]:
+    def get_coin_params(self, symbol: str) -> CoinParams | None:
         """
         获取指定币种的参数配置
         
@@ -228,7 +230,7 @@ class CoinParameterOptimizer:
             return self._get_default_position_params()
         
         pos = params.position
-        leverage_key = f"leverage_strong_trend" if trend_strength == "strong" else "leverage"
+        leverage_key = "leverage_strong_trend" if trend_strength == "strong" else "leverage"
         
         return {
             "base_position_pct": pos.get("base_position_pct", 2.0),
@@ -255,7 +257,7 @@ class CoinParameterOptimizer:
         """获取所有配置的币种列表"""
         return list(self._coin_params.keys())
     
-    def get_kronos_comparison(self, symbol: str) -> Optional[Dict]:
+    def get_kronos_comparison(self, symbol: str) -> Dict | None:
         """
         获取 Kronos 对比数据
         
@@ -457,7 +459,7 @@ class CoinSignalGenerator:
         self.optimizer = optimizer or CoinParameterOptimizer()
     
     def generate_signal(self, symbol: str, prices: List[float], highs: List[float], 
-                       lows: List[float], index: int) -> Optional[Dict]:
+                       lows: List[float], index: int) -> Dict | None:
         """
         生成交易信号（与 backtest.py 兼容）
         
@@ -471,7 +473,7 @@ class CoinSignalGenerator:
         Returns:
             信号字典或 None
         """
-        from miracle_core import calc_rsi, calc_adx, calc_atr, calc_macd
+        from miracle_core import calc_adx, calc_atr, calc_macd, calc_rsi
         
         params = self.optimizer.get_coin_params(symbol)
         if not params or not params.enabled or params.excluded:
@@ -514,7 +516,7 @@ class CoinSignalGenerator:
             )
     
     def _generate_rsi_mr_signal(self, symbol, prices, highs, lows, index,
-                               rsi, adx, atr, signal_params, params) -> Optional[Dict]:
+                               rsi, adx, atr, signal_params, params) -> Dict | None:
         """RSI 均值回归策略"""
         rsi_oversold = signal_params.get('rsi_oversold', 30)
         adx_min = signal_params.get('adx_min', 15)
@@ -539,7 +541,7 @@ class CoinSignalGenerator:
         return None
     
     def _generate_rsi_eman_signal(self, symbol, prices, highs, lows, index,
-                                 rsi, adx, atr, signal_params, params) -> Optional[Dict]:
+                                 rsi, adx, atr, signal_params, params) -> Dict | None:
         """RSI + EMA 共振策略"""
         from miracle_core import calc_macd
         
@@ -568,14 +570,14 @@ class CoinSignalGenerator:
         return None
     
     def _generate_rsi_vol_signal(self, symbol, prices, highs, lows, index,
-                                rsi, adx, atr, signal_params, params) -> Optional[Dict]:
+                                rsi, adx, atr, signal_params, params) -> Dict | None:
         """RSI + 成交量策略"""
         # 需要成交量数据，这里简化处理
         return self._generate_rsi_mr_signal(symbol, prices, highs, lows, index,
                                            rsi, adx, atr, signal_params, params)
     
     def _generate_vol_brk_signal(self, symbol, prices, highs, lows, index,
-                                rsi, adx, atr, signal_params, params) -> Optional[Dict]:
+                                rsi, adx, atr, signal_params, params) -> Dict | None:
         """成交量突破策略"""
         # 需要成交量数据，这里简化处理
         return None
@@ -615,7 +617,7 @@ if __name__ == "__main__":
     # 查看 BTC 参数
     btc_params = optimizer.get_coin_params("BTC")
     if btc_params:
-        print(f"\nBTC 参数:")
+        print("\nBTC 参数:")
         print(f"  策略: {btc_params.optimal_strategy}")
         print(f"  周期: {btc_params.timeframe}")
         print(f"  置信度: {btc_params.confidence}")

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.2 - Strategy Evolution
 ===================================
@@ -10,11 +12,11 @@ Features:
 """
 
 import logging
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime
-from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from backtest.learner import (
     DecisionJournal,
@@ -185,7 +187,7 @@ class TradeHooks:
         self.pattern_evaluator = pattern_evaluator
         self.strategy_evolution = strategy_evolution
     
-    def on_trade_entry(self, trade_data: Dict) -> Tuple[str, bool, Optional[str]]:
+    def on_trade_entry(self, trade_data: Dict) -> Tuple[str, bool, str | None]:
         """
         交易入场时调用 - 记录入场信息
         

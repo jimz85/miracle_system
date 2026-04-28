@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.2 - Adaptive Learning System (重构版本)
 ==================================================
@@ -19,33 +21,32 @@ Features:
 |- strategy_evolution.py: 策略演化、因子权重调整、模式识别
 """
 
-from typing import Dict, List, Any, Optional, Tuple
-from pathlib import Path
+import json
 import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("miracle.adaptive_learner")
 
 # 从子模块导入所有公开API，保持向后兼容
+from backtest.evaluator import (
+    AnomalyAlert,
+    FactorEvaluator,
+    OverfittingDetector,
+    PatternEvaluator,
+    PCAAnomalyDetector,
+)
 from backtest.learner import (
     DecisionJournal,
     DecisionJournalEntry,
     WalkForwardValidator,
     calc_information_coefficient,
 )
-
-from backtest.evaluator import (
-    FactorEvaluator,
-    PatternEvaluator,
-    OverfittingDetector,
-    PCAAnomalyDetector,
-    AnomalyAlert,
-)
-
 from scripts.strategy_evolution import (
     StrategyEvolution,
     TradeHooks,
 )
-
 
 # ============================================================
 # AdaptiveLearner - 整合所有组件
@@ -122,7 +123,7 @@ class AdaptiveLearner:
         """加载学习日志"""
         if self.learning_log_path.exists():
             try:
-                with open(self.learning_log_path, 'r') as f:
+                with open(self.learning_log_path) as f:
                     data = json.load(f)
                     # 恢复因子表现数据
                     factor_perf_data = data.get("factor_performance", {})
@@ -413,7 +414,7 @@ class AdaptiveLearner:
         """
         return self.pca_anomaly_detector.add_sample(features, return_value)
 
-    def check_pca_anomaly(self) -> Optional[AnomalyAlert]:
+    def check_pca_anomaly(self) -> AnomalyAlert | None:
         """
         检查PCA异常并返回警报
 
@@ -439,7 +440,7 @@ class AdaptiveLearner:
         """获取最近的PCA警报"""
         return self.pca_anomaly_detector.get_recent_alerts(n)
 
-    def on_trade_entry(self, trade_data: Dict) -> Tuple[str, bool, Optional[str]]:
+    def on_trade_entry(self, trade_data: Dict) -> Tuple[str, bool, str | None]:
         """
         交易入场时调用 - 记录入场信息
 
@@ -519,6 +520,7 @@ __all__ = [
 
 if __name__ == "__main__":
     import random
+
     import numpy as np
 
     # Test WalkForwardValidator
@@ -604,7 +606,7 @@ if __name__ == "__main__":
         baseline_features = np.random.randn(100, 4).tolist()
         baseline_returns = np.random.randn(100).tolist()
         learner.fit_pca_baseline(baseline_features, baseline_returns)
-        print(f"PCA baseline fitted")
+        print("PCA baseline fitted")
 
         # Add some samples
         for i in range(20):

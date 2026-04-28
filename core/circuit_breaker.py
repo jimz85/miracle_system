@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle Circuit Breaker - 熔断机制封装
 =======================================
@@ -24,14 +26,21 @@ Miracle Circuit Breaker - 熔断机制封装
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
 
+try:
+    from enum import StrEnum
+except ImportError:
+    # Python < 3.11 fallback
+    class StrEnum(str, Enum):
+        pass
+
+from typing import List, Optional
 
 # ══════════════════════════════════════════════════════════════════════
 # Survival Tier Enum
 # ══════════════════════════════════════════════════════════════════════
 
-class SurvivalTier(str, Enum):
+class SurvivalTier(StrEnum):
     """五级生存层"""
     NORMAL = "normal"      # 正常交易
     CAUTION = "caution"    # 谨慎交易 (50%仓位)
@@ -179,7 +188,7 @@ class CircuitBreaker:
         self.current_tier = SurvivalTier.NORMAL
         self.consecutive_losses = 0
         self.equity_snapshot = EquitySnapshot()
-        self.last_trade_time: Optional[float] = None
+        self.last_trade_time: float | None = None
         self._last_recovery_check_equity: float = 0.0  # 上次检查时的权益
 
     def check_treasury_limits(
@@ -347,7 +356,7 @@ class MiracleCircuitBreaker:
     所有交易结果后必须调用 record_outcome() 方法。
     """
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: dict | None = None):
         """
         初始化熔断器
 
@@ -358,7 +367,6 @@ class MiracleCircuitBreaker:
                 - cooldown_hours_after_2_losses: 2连亏冷却小时数
                 - cooldown_hours_after_3_losses: 3连亏冷却小时数
         """
-        from typing import Optional
         cfg = config or {}
 
         self.cb = CircuitBreaker(
@@ -407,7 +415,7 @@ class MiracleCircuitBreaker:
 # Factory Function
 # ══════════════════════════════════════════════════════════════════════
 
-def create_circuit_breaker(config: Optional[dict] = None) -> MiracleCircuitBreaker:
+def create_circuit_breaker(config: dict | None = None) -> MiracleCircuitBreaker:
     """
     创建熔断器的便捷函数
 
@@ -425,8 +433,8 @@ def create_circuit_breaker(config: Optional[dict] = None) -> MiracleCircuitBreak
 # ══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    from datetime import datetime, timedelta
     import time
+    from datetime import datetime, timedelta
 
     print("=== Circuit Breaker Test ===\n")
 

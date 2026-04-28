@@ -1,15 +1,18 @@
+from __future__ import annotations
+
 """
 Plugin System - 可扩展插件架构
 支持信号生成器、策略、风险管理器的热插拔
 """
+import importlib
+import logging
 import os
 import sys
-import logging
-import importlib
-from typing import Dict, List, Optional, Any, Callable, Type
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Type
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,7 @@ class PluginMetadata:
     author: str
     description: str
     hooks: List[str] = field(default_factory=list)
-    config_schema: Optional[Dict] = None
+    config_schema: Dict | None = None
 
 
 # ========================
@@ -74,7 +77,7 @@ class BasePlugin:
     enabled: bool = True
     config: Dict[str, Any] = {}
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Dict[str, Any] | None = None):
         self.config = config or {}
         self._hooks: Dict[PluginHook, List[Callable]] = {}
     
@@ -131,7 +134,7 @@ class BasePlugin:
 class SignalPlugin(BasePlugin):
     """信号生成插件基类"""
     
-    def generate_signal(self, market_data: Dict) -> Optional[Dict]:
+    def generate_signal(self, market_data: Dict) -> Dict | None:
         """生成信号 - 子类实现"""
         raise NotImplementedError
     
@@ -148,7 +151,7 @@ class SignalPlugin(BasePlugin):
 class StrategyPlugin(BasePlugin):
     """策略插件基类"""
     
-    def select_signal(self, signals: List[Dict], context: Dict) -> Optional[Dict]:
+    def select_signal(self, signals: List[Dict], context: Dict) -> Dict | None:
         """从多个信号中选择"""
         if not signals:
             return None
@@ -202,7 +205,7 @@ class PluginRegistry:
             logger.info(f"Unregistered plugin: {name}")
     
     @classmethod
-    def get(cls, name: str) -> Optional[BasePlugin]:
+    def get(cls, name: str) -> BasePlugin | None:
         """获取插件"""
         return cls._plugins.get(name)
     
@@ -313,16 +316,16 @@ class RSISignalPlugin(SignalPlugin):
         hooks=["on_signal_generate"]
     )
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Dict | None = None):
         super().__init__(config)
         self.period = self.config.get("period", 14)
         self.oversold = self.config.get("oversold", 30)
         self.overbought = self.config.get("overbought", 70)
     
-    def generate_signal(self, market_data: Dict) -> Optional[Dict]:
+    def generate_signal(self, market_data: Dict) -> Dict | None:
         """生成RSI信号"""
         rsi = market_data.get("rsi", 50)
-        price = market_data.get("close", 0)
+        market_data.get("close", 0)
         
         if rsi < self.oversold:
             return {
@@ -354,7 +357,7 @@ class MACDSignalPlugin(SignalPlugin):
         hooks=["on_signal_generate"]
     )
     
-    def generate_signal(self, market_data: Dict) -> Optional[Dict]:
+    def generate_signal(self, market_data: Dict) -> Dict | None:
         """生成MACD信号"""
         macd = market_data.get("macd", 0)
         signal = market_data.get("macd_signal", 0)
@@ -389,7 +392,7 @@ class MaxPositionRiskPlugin(RiskManagementPlugin):
         hooks=["on_risk_check"]
     )
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Dict | None = None):
         super().__init__(config)
         self.max_position_pct = self.config.get("max_position_pct", 0.3)  # 单币种30%
         self.max_total_pct = self.config.get("max_total_pct", 1.0)         # 总仓位100%
@@ -418,7 +421,7 @@ class MaxPositionRiskPlugin(RiskManagementPlugin):
 # 装饰器
 # ========================
 
-def signal_plugin(config: Optional[Dict] = None):
+def signal_plugin(config: Dict | None = None):
     """信号插件装饰器"""
     def decorator(cls):
         cls.metadata = getattr(cls, "metadata", PluginMetadata(
@@ -431,7 +434,7 @@ def signal_plugin(config: Optional[Dict] = None):
     return decorator
 
 
-def strategy_plugin(config: Optional[Dict] = None):
+def strategy_plugin(config: Dict | None = None):
     """策略插件装饰器"""
     def decorator(cls):
         cls.metadata = getattr(cls, "metadata", PluginMetadata(
@@ -444,7 +447,7 @@ def strategy_plugin(config: Optional[Dict] = None):
     return decorator
 
 
-def risk_plugin(config: Optional[Dict] = None):
+def risk_plugin(config: Dict | None = None):
     """风险管理插件装饰器"""
     def decorator(cls):
         cls.metadata = getattr(cls, "metadata", PluginMetadata(
@@ -461,7 +464,7 @@ def risk_plugin(config: Optional[Dict] = None):
 # 工厂函数
 # ========================
 
-def create_plugin(plugin_type: str, config: Optional[Dict] = None) -> Optional[BasePlugin]:
+def create_plugin(plugin_type: str, config: Dict | None = None) -> BasePlugin | None:
     """创建内置插件"""
     plugins = {
         "rsi": RSISignalPlugin,

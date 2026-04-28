@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 核心交易引擎
 高频趋势跟踪+事件驱动混合系统
@@ -5,18 +7,22 @@ Miracle 1.0.1 - 核心交易引擎
 
 import copy
 import json
-import math
 import logging
+import math
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 # 因子计算（从 core.factor_calculations 导入，避免与 core/price_factors.py 重复）
 from core.factor_calculations import (
-    calc_rsi, calc_adx, calc_macd, calc_atr,
-    normalize_macd_histogram, calc_combined_score
+    calc_adx,
+    calc_atr,
+    calc_combined_score,
+    calc_macd,
+    calc_rsi,
+    normalize_macd_histogram,
 )
 
 # ===== IC动态权重 =====
@@ -270,7 +276,7 @@ def load_config(config_path: str = None) -> Dict:
     """加载配置文件"""
     if config_path is None:
         config_path = Path(__file__).parent / "miracle_config.json"
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         return json.load(f)
 
 CONFIG = load_config()
@@ -371,8 +377,8 @@ def calc_news_sentiment() -> float:
     logger.warning("calc_news_sentiment() called - STUB implementation returning 0.0 (neutral). Weight contribution disabled.")
     return 0.0
 
-def calc_factors(price_data: Dict, onchain_data: Optional[Dict] = None, 
-                 news_data: Optional[Dict] = None) -> Dict[str, Any]:
+def calc_factors(price_data: Dict, onchain_data: Dict | None = None, 
+                 news_data: Dict | None = None) -> Dict[str, Any]:
     """
     计算所有因子值
     
@@ -395,7 +401,7 @@ def calc_factors(price_data: Dict, onchain_data: Optional[Dict] = None,
     plus_di = adx_data["plus_di"]
     minus_di = adx_data["minus_di"]
     macd_data = calc_macd(closes)
-    macd = macd_data["macd"]
+    macd_data["macd"]
     signal = macd_data["signal"]
     hist = macd_data["histogram"]
     atr = calc_atr(highs, lows, closes)
@@ -1032,7 +1038,7 @@ def get_recent_price_data(symbol: str, days: int = 30, interval: str = "1h") -> 
     limit = min(days * 24 if interval == "1h" else days * 24 * 4, 1000)
 
     try:
-        url = f"https://api.binance.com/api/v3/klines"
+        url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": binance_sym, "interval": interval_binance, "limit": limit}
         resp = requests.get(url, params=params, timeout=10)
         if resp.status_code != 200:
@@ -1095,12 +1101,13 @@ def get_account_state(simulated: bool = None) -> Dict[str, Any]:
         simulated: 是否模拟盘。默认读环境变量 MIRACLE_SIMULATED_TRADING，
                   未设置时默认为 True（模拟盘）。真实交易时设为 False。
     """
-    import os
-    import requests
-    import hmac
     import base64
     import hashlib
+    import hmac
+    import os
     from datetime import datetime
+
+    import requests
 
     api_key = os.getenv("OKX_API_KEY")
     secret = os.getenv("OKX_SECRET")
@@ -1169,6 +1176,7 @@ def get_account_state(simulated: bool = None) -> Dict[str, Any]:
 def _notify_fallback(reason: str, detail: str):
     """网络异常时飞书通知（静默降级前通知用户）"""
     import os
+
     import requests as _req
     webhook = os.getenv("MIRACLE_FEISHU_WEBHOOK", os.getenv("FEISHU_WEBHOOK", ""))
     if not webhook:

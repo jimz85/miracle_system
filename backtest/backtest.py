@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Backtest Main Interface (P2.1)
 ===============================
@@ -28,13 +30,14 @@ Usage:
     runner.run_all()
 """
 
-import os
 import json
 import logging
+import os
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any, Callable
-from dataclasses import dataclass, field, asdict
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("miracle.backtest")
 
@@ -79,9 +82,9 @@ class CoinResult:
     symbol: str
     success: bool
     error: str = ""
-    mean_reversion: Optional[Dict] = None
-    trend_following: Optional[Dict] = None
-    comparison: Optional[Dict] = None
+    mean_reversion: Dict | None = None
+    trend_following: Dict | None = None
+    comparison: Dict | None = None
     best_strategy: str = ""
     best_return: float = 0
 
@@ -113,7 +116,7 @@ class BacktestRunner:
         self.config = BacktestConfig(**{**DEFAULT_BACKTEST_CONFIG, **(config or {})})
         self.data: Dict[str, List[Dict]] = {}  # symbol -> klines
         self.results: Dict[str, CoinResult] = {}
-        self.batch_result: Optional[BatchResult] = None
+        self.batch_result: BatchResult | None = None
         
         # 延迟导入walkforward模块，避免循环导入
         from backtest.walkforward import WalkForwardValidator
@@ -165,7 +168,7 @@ class BacktestRunner:
             symbol = basename.replace("klines_", "").replace(".csv", "").split("_")[0]
         
         klines = []
-        with open(csv_path, 'r', encoding='utf-8') as f:
+        with open(csv_path, encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 klines.append({
@@ -431,7 +434,7 @@ def load_klines_from_csv(csv_path: str) -> Tuple[str, List[Dict]]:
     symbol = basename.replace("klines_", "").replace(".csv", "").split("_")[0]
     
     klines = []
-    with open(csv_path, 'r', encoding='utf-8') as f:
+    with open(csv_path, encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             klines.append({

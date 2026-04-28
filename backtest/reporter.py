@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 回测报告模块
 ================================
@@ -10,14 +12,15 @@ Miracle 1.0.1 - 回测报告模块
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Dict, List, Callable
+from typing import Dict, List
 
 logger = logging.getLogger("miracle.backtest.reporter")
 
 from dataclasses import asdict
-from .engine import BacktestEngine
 
+from .engine import BacktestEngine
 
 # ============================================================
 # 便捷函数

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 回测引擎模块
 ================================
@@ -12,14 +14,21 @@ Miracle 1.0.1 - 回测引擎模块
 """
 
 import logging
+from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Callable
-from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
 from .stats import (
-    BacktestTrade, BacktestStats, ICStats,
-    calc_stats, calc_ic, calc_ic_simple, calc_rank_ic
+    BacktestStats,
+    BacktestTrade,
+    ICStats,
+    calc_ic,
+    calc_ic_simple,
+    calc_rank_ic,
+    calc_stats,
 )
 
 logger = logging.getLogger("miracle.backtest.engine")
@@ -197,7 +206,7 @@ class BacktestEngine:
     def _check_exit(self, position: Dict, current_idx: int) -> Tuple[bool, str]:
         """检查是否应该退出"""
         direction = position["direction"]
-        entry_price = position["entry_price"]
+        position["entry_price"]
         stop_loss = position["stop_loss"]
         take_profit = position["take_profit"]
         entry_time = position["entry_time"]
@@ -375,7 +384,7 @@ class WalkForwardEngine:
         return score
     
     def _backtest_with_params(self, klines: List[Dict], params: Dict, 
-                              train: bool = True) -> Optional[Dict]:
+                              train: bool = True) -> Dict | None:
         """使用指定参数运行回测"""
         engine = BacktestEngine({
             "initial_balance": self.initial_balance,
@@ -457,11 +466,11 @@ class WalkForwardEngine:
         min_ts = min(timestamps)
         max_ts = max(timestamps)
         
-        from datetime import datetime, timedelta
+        from datetime import datetime
         start_dt = datetime.fromtimestamp(min_ts / 1000) if isinstance(min_ts, (int, float)) else datetime.fromisoformat(str(min_ts))
         end_dt = datetime.fromtimestamp(max_ts / 1000) if isinstance(max_ts, (int, float)) else datetime.fromisoformat(str(max_ts))
         
-        total_days = (end_dt - start_dt).days
+        (end_dt - start_dt).days
         windows = []
         
         current = start_dt + timedelta(days=self.train_days)

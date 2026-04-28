@@ -2,18 +2,24 @@
 StateReconciler 状态协调器测试
 测试幽灵仓位检测、孤立订单检测、仓位对账等核心逻辑
 """
-import json, tempfile, os
+import json
+import os
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from core.state_reconciler import (
-    StateReconciler,
-    PhantomPosition, ZombiePosition, OrphanOrder, OCOIssue,
+    LocalOrderRecord,
+    LocalPositionRecord,
+    OCOIssue,
+    OrphanOrder,
+    PhantomPosition,
     ReconcileResult,
-    LocalPositionRecord, LocalOrderRecord,
+    StateReconciler,
+    ZombiePosition,
 )
-
 
 # ══════════════════════════════════════════════════════════════
 # Fixtures
@@ -289,7 +295,7 @@ class TestStateReconcilerInit:
         shutil.rmtree(parent_dir, ignore_errors=True)
 
         with patch('core.state_reconciler.ExchangeClient'):
-            reconciler = StateReconciler(
+            StateReconciler(
                 state_file=temp_state_file,
                 trade_log_file=temp_trade_log,
                 exchange="okx"

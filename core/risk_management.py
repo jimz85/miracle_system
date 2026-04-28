@@ -1,14 +1,15 @@
+from __future__ import annotations
+
 """
 Risk Management - 风险管理模块
 包含: ATR动态仓位, 跨币种风险监控, 滑点手续费模拟
 """
+import hashlib
 import json
 import os
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
-import hashlib
-
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 # ========================
 # ATR 动态仓位计算
@@ -232,7 +233,7 @@ class CrossCurrencyRiskMonitor:
         self.positions[position.symbol] = position
         self._record_history("add", position)
     
-    def remove_position(self, symbol: str) -> Optional[Position]:
+    def remove_position(self, symbol: str) -> Position | None:
         """移除持仓"""
         if symbol in self.positions:
             pos = self.positions.pop(symbol)
@@ -370,7 +371,7 @@ class CrossCurrencyRiskMonitor:
     def import_positions(self, filepath: str):
         """从文件导入持仓"""
         if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
+            with open(filepath) as f:
                 data = json.load(f)
                 for symbol, pos_data in data.get("positions", {}).items():
                     pos = Position(
@@ -496,13 +497,12 @@ class SlippageFeeSimulator:
         """
         total_fees = 0
         total_slippage = 0
-        trade_count = 0
         
         for trade in trades:
             if "exit_price" in trade and "entry_price" in trade:
                 size = trade.get("size", 0)
                 entry = trade["entry_price"]
-                exit = trade["exit_price"]
+                trade["exit_price"]
                 
                 result = self.simulate_trade(
                     symbol=trade.get("symbol", "UNKNOWN"),
@@ -549,7 +549,7 @@ class SlippageFeeSimulator:
 # 工厂函数
 # ========================
 
-def create_risk_manager(config: Optional[Dict[str, Any]] = None) -> Tuple[DynamicPositionSizer, CrossCurrencyRiskMonitor, SlippageFeeSimulator]:
+def create_risk_manager(config: Dict[str, Any] | None = None) -> Tuple[DynamicPositionSizer, CrossCurrencyRiskMonitor, SlippageFeeSimulator]:
     """
     创建风险管理器便捷函数
     
@@ -611,7 +611,7 @@ if __name__ == "__main__":
     # 3. 滑点手续费
     fee_sim = SlippageFeeSimulator()
     trade = fee_sim.simulate_trade("BTC", "buy", 0.1, 50000, "market")
-    print(f"\nTrade simulation:")
+    print("\nTrade simulation:")
     print(f"  Execution: ${trade['execution_price']:.2f}")
     print(f"  Slippage: {trade['slippage_pct']*100:.3f}%")
     print(f"  Fees: ${trade['fees']:.2f}")

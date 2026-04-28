@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle Autonomous 2.0 - 自主研究循环主程序
 
@@ -14,19 +16,20 @@ Miracle Autonomous 2.0 - 自主研究循环主程序
 参考: Karpathy Autoresearch Keep/Discard循环模式
 """
 
-import os
-import sys
-import json
-import time
-import random
-import traceback
 import argparse
+import json
 import logging
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+import os
+import random
+import sys
+import time
+import traceback
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
 
@@ -37,14 +40,20 @@ KRONOS_AUTORESEARCH_SRC = WORKSPACE / "kronos_autoresearch" / "src"
 if KRONOS_AUTORESEARCH_SRC.exists():
     sys.path.insert(0, str(KRONOS_AUTORESEARCH_SRC))
 
-from strategy_config import StrategyConfig, BacktestResult
-from backtest_engine import run_walkforward, run_single_backtest
-from data_loader import load_timeframe_data, compute_indicators, COINS
+from backtest_engine import run_single_backtest, run_walkforward
+from data_loader import COINS, compute_indicators, load_timeframe_data
 from experiment_logger import (
-    ExperimentRecord, write_experiment, get_best_result,
-    get_git_commit, generate_experiment_id, init_results_tsv,
-    print_summary, ensure_dirs, RESULTS_DIR
+    RESULTS_DIR,
+    ExperimentRecord,
+    ensure_dirs,
+    generate_experiment_id,
+    get_best_result,
+    get_git_commit,
+    init_results_tsv,
+    print_summary,
+    write_experiment,
 )
+from strategy_config import BacktestResult, StrategyConfig
 
 # ===== 日志配置 =====
 logging.basicConfig(
@@ -100,7 +109,7 @@ class Hypothesis:
     mutations: Dict[str, float]  # 参数名 -> 新值
     confidence: float = 0.5  # 置信度
     source: str = "random"  # random / trend / analysis
-    parent_id: Optional[str] = None  # 父假设ID
+    parent_id: str | None = None  # 父假设ID
 
 
 @dataclass
@@ -109,7 +118,7 @@ class LoopState:
     stage: LoopStage = LoopStage.DATA_COLLECTION
     iteration: int = 0
     best_sharpe: float = 0.0
-    best_config: Optional[StrategyConfig] = None
+    best_config: StrategyConfig | None = None
     total_experiments: int = 0
     kept_count: int = 0
     discarded_count: int = 0
@@ -141,7 +150,7 @@ class DataCollector:
         self.cache: Dict[str, pd.DataFrame] = {}
 
     def load_coin_data(self, coin: str, timeframe: str = "1h",
-                       bear_only: bool = True) -> Optional[pd.DataFrame]:
+                       bear_only: bool = True) -> pd.DataFrame | None:
         """加载单个币种数据"""
         cache_key = f"{coin}_{timeframe}"
         if cache_key in self.cache:
@@ -519,7 +528,7 @@ class ReflectionImprover:
                 ic_data = json.load(f)
 
             weights = ic_data.get('weights', {})
-            original = dict(weights)
+            dict(weights)
 
             # 读取最近实验结果
             results_path = RESULTS_DIR / "results.tsv"
@@ -567,8 +576,6 @@ class ReflectionImprover:
             else:
                 decay = 0.0
 
-            BTC_GEMMA_MAX = 0.20
-            TECH_MIN = 0.03
             coin_factors = ['RSI', 'ADX', 'Bollinger', 'Vol', 'MACD']
 
             if decay > 0:
@@ -801,7 +808,7 @@ class AutonomousLoop:
     def run(self, n_iterations: int = 50, max_time_minutes: int = 480):
         """运行自主研究循环"""
         logger.info(f"\n{'#'*70}")
-        logger.info(f"# MIRACLE AUTONOMOUS 2.0 - 自主研究循环启动")
+        logger.info("# MIRACLE AUTONOMOUS 2.0 - 自主研究循环启动")
         logger.info(f"# 币种: {self.coins}")
         logger.info(f"# 时间周期: {self.timeframe}")
         logger.info(f"# 最大迭代: {n_iterations}")
@@ -850,7 +857,7 @@ class AutonomousLoop:
         # 最终总结
         total_time = (time.time() - start_time) / 60
         logger.info(f"\n{'='*60}")
-        logger.info(f"[AUTONOMOUS LOOP COMPLETE]")
+        logger.info("[AUTONOMOUS LOOP COMPLETE]")
         logger.info(f"总迭代: {self.state.iteration}")
         logger.info(f"运行时间: {total_time:.1f}分钟")
         logger.info(f"Keep: {self.state.kept_count} | Discard: {self.state.discarded_count} | Crash: {self.state.crashed_count}")

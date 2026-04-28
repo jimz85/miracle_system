@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 统一数据源模块
 ============================================
@@ -9,11 +11,11 @@ Miracle 1.0.1 - 统一数据源模块
 3. yfinance (Yahoo Finance) - 备用
 """
 
-import time
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("miracle.data_fetcher")
 
@@ -63,7 +65,7 @@ class OKXDataSource:
     """OKX交易所数据源（国内可用）"""
 
     @staticmethod
-    def get_ticker(symbol: str) -> Optional[Dict]:
+    def get_ticker(symbol: str) -> Dict | None:
         """
         获取实时行情
 
@@ -115,7 +117,7 @@ class OKXDataSource:
             return None
 
     @staticmethod
-    def get_klines(symbol: str, timeframe: str = "1H", limit: int = 100) -> Optional[List[Dict]]:
+    def get_klines(symbol: str, timeframe: str = "1H", limit: int = 100) -> List[Dict] | None:
         """
         获取K线数据
 
@@ -169,7 +171,7 @@ class OKXDataSource:
             return None
 
     @staticmethod
-    def get_orderbook(symbol: str, depth: int = 20) -> Optional[Dict]:
+    def get_orderbook(symbol: str, depth: int = 20) -> Dict | None:
         """获取订单簿（深度）"""
         cache_key = f"okx_ob_{symbol}_{depth}"
         cached = _get_cached(cache_key, ttl=2)
@@ -203,7 +205,7 @@ class YFinanceDataSource:
 
     @staticmethod
     def get_klines(symbol: str, period: str = "30d",
-                   interval: str = "1h") -> Optional[List[Dict]]:
+                   interval: str = "1h") -> List[Dict] | None:
         """
         获取K线数据
 
@@ -245,7 +247,7 @@ class YFinanceDataSource:
             return None
 
     @staticmethod
-    def get_ticker(symbol: str) -> Optional[Dict]:
+    def get_ticker(symbol: str) -> Dict | None:
         """获取实时行情"""
         cache_key = f"yf_ticker_{symbol}"
         cached = _get_cached(cache_key, ttl=5)
@@ -299,7 +301,7 @@ class DataFetcher:
     def __init__(self, prefer_source: str = "okx"):
         self.prefer_source = prefer_source
 
-    def get_ticker(self, symbol: str) -> Optional[Dict]:
+    def get_ticker(self, symbol: str) -> Dict | None:
         """获取实时行情"""
         okx_sym = self.SYMBOL_MAP.get(symbol, {}).get("okx", f"{symbol}-USDT")
 
@@ -321,7 +323,7 @@ class DataFetcher:
         return OKXDataSource.get_ticker(okx_sym)
 
     def get_klines(self, symbol: str, timeframe: str = "1H",
-                  limit: int = 100) -> Optional[List[Dict]]:
+                  limit: int = 100) -> List[Dict] | None:
         """获取K线数据"""
         okx_sym = self.SYMBOL_MAP.get(symbol, {}).get("okx", f"{symbol}-USDT")
 
@@ -346,7 +348,7 @@ class DataFetcher:
         # 降级到OKX
         return OKXDataSource.get_klines(okx_sym, timeframe, limit)
 
-    def get_orderbook(self, symbol: str, depth: int = 20) -> Optional[Dict]:
+    def get_orderbook(self, symbol: str, depth: int = 20) -> Dict | None:
         """获取订单簿（仅OKX支持）"""
         okx_sym = self.SYMBOL_MAP.get(symbol, {}).get("okx", f"{symbol}-USDT")
         return OKXDataSource.get_orderbook(okx_sym, depth)
@@ -359,17 +361,17 @@ class DataFetcher:
 _fetcher = DataFetcher()
 
 
-def get_ticker(symbol: str) -> Optional[Dict]:
+def get_ticker(symbol: str) -> Dict | None:
     """获取实时行情"""
     return _fetcher.get_ticker(symbol)
 
 
-def get_klines(symbol: str, timeframe: str = "1H", limit: int = 100) -> Optional[List[Dict]]:
+def get_klines(symbol: str, timeframe: str = "1H", limit: int = 100) -> List[Dict] | None:
     """获取K线数据"""
     return _fetcher.get_klines(symbol, timeframe, limit)
 
 
-def get_orderbook(symbol: str, depth: int = 20) -> Optional[Dict]:
+def get_orderbook(symbol: str, depth: int = 20) -> Dict | None:
     """获取订单簿"""
     return _fetcher.get_orderbook(symbol, depth)
 
@@ -401,7 +403,7 @@ if __name__ == "__main__":
     # 测试订单簿
     ob = fetcher.get_orderbook("BTC", 5)
     if ob:
-        print(f"BTC订单簿: ✅ 买卖各5档")
+        print("BTC订单簿: ✅ 买卖各5档")
         print(f"  买一: {ob['bids'][0][0]}, 卖一: {ob['asks'][0][0]}")
     else:
         print("BTC订单簿: ❌ 获取失败")
@@ -418,7 +420,7 @@ class BlockstreamDataSource:
     """
 
     @staticmethod
-    def get_address_stats(address: str) -> Optional[Dict]:
+    def get_address_stats(address: str) -> Dict | None:
         """获取BTC地址统计"""
         try:
             url = f"https://blockstream.info/api/address/{address}"
@@ -437,7 +439,7 @@ class BlockstreamDataSource:
         return None
 
     @staticmethod
-    def get_latest_block_height() -> Optional[int]:
+    def get_latest_block_height() -> int | None:
         """获取最新区块高度"""
         try:
             r = requests.get("https://blockstream.info/api/blocks/tip/height", timeout=5)
@@ -448,7 +450,7 @@ class BlockstreamDataSource:
         return None
 
     @staticmethod
-    def get_mempool_stats() -> Optional[Dict]:
+    def get_mempool_stats() -> Dict | None:
         """获取内存池统计"""
         try:
             r = requests.get("https://blockstream.info/api/mempool", timeout=5)
@@ -471,7 +473,7 @@ class DeFiLlamaDataSource:
     """
 
     @staticmethod
-    def get_protocol_tvl(protocol: str) -> Optional[float]:
+    def get_protocol_tvl(protocol: str) -> float | None:
         """获取协议TVL（美元）"""
         try:
             url = f"https://api.llama.fi/protocol/{protocol}"
@@ -499,17 +501,17 @@ class DeFiLlamaDataSource:
 # 便捷函数
 # ============================================================
 
-def get_btc_mempool() -> Optional[Dict]:
+def get_btc_mempool() -> Dict | None:
     """获取BTC内存池状态"""
     return BlockstreamDataSource.get_mempool_stats()
 
 
-def get_btc_block_height() -> Optional[int]:
+def get_btc_block_height() -> int | None:
     """获取BTC最新区块高度"""
     return BlockstreamDataSource.get_latest_block_height()
 
 
-def get_defi_tvl(protocol: str = None) -> Optional[Dict]:
+def get_defi_tvl(protocol: str = None) -> Dict | None:
     """获取DeFi TVL数据"""
     if protocol:
         tvl = DeFiLlamaDataSource.get_protocol_tvl(protocol)

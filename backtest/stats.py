@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 回测统计模块
 ================================
@@ -10,9 +12,9 @@ Miracle 1.0.1 - 回测统计模块
 """
 
 import logging
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("miracle.backtest.stats")
 
@@ -81,9 +83,9 @@ class BacktestStats:
     max_drawdown_pct: float
     avg_hold_hours: float
     avg_trades_per_day: float
-    ic: Optional[float] = None         # IC信息系数
-    rank_ic: Optional[float] = None    # Rank IC
-    icir: Optional[float] = None       # ICIR
+    ic: float | None = None         # IC信息系数
+    rank_ic: float | None = None    # Rank IC
+    icir: float | None = None       # ICIR
 
 
 # ============================================================
@@ -93,7 +95,7 @@ class BacktestStats:
 def calc_stats(trades: List[BacktestTrade], 
                equity_curve: List[float],
                initial_balance: float,
-               ic_stats: Optional[ICStats] = None) -> BacktestStats:
+               ic_stats: ICStats | None = None) -> BacktestStats:
     """
     计算回测统计指标
     
@@ -214,7 +216,7 @@ def calc_stats(trades: List[BacktestTrade],
     )
 
 
-def calc_ic(ic_signals: List[Dict]) -> Optional[ICStats]:
+def calc_ic(ic_signals: List[Dict]) -> ICStats | None:
     """
     计算IC(Information Coefficient)信息系数
 

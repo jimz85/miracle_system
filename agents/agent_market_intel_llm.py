@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel LLM 模块 - 向后兼容重导出
 =========================================
@@ -24,57 +26,97 @@ Agent:
 # 重导出所有公共接口
 from agents.market_intel_llm_agent import (
     MarketIntelAgentLLM as MarketIntelAgentLLM,
-    main_async as main_async,
+)
+from agents.market_intel_llm_agent import (
     main as main,
+)
+from agents.market_intel_llm_agent import (
+    main_async as main_async,
+)
+from core.market_intel_base import (
+    # 配置
+    API_CONFIG as API_CONFIG,
+)
+from core.market_intel_base import (
+    CACHE_DIR as CACHE_DIR,
+)
+from core.market_intel_base import (
+    DEFAULT_LLM_PROVIDER as DEFAULT_LLM_PROVIDER,
+)
+from core.market_intel_base import (
+    SYMBOL_MAP as SYMBOL_MAP,
+)
+from core.market_intel_base import (
+    CacheData as CacheData,
+)
+from core.market_intel_base import (
+    # ContextBuilder
+    ContextBuilder as ContextBuilder,
+)
+from core.market_intel_base import (
+    # 数据类
+    IntelReport as IntelReport,
+)
+from core.market_intel_base import (
+    LLMSentimentResult as LLMSentimentResult,
+)
+from core.market_intel_base import (
+    MarketContext as MarketContext,
+)
+from core.market_intel_base import (
+    OnChainPattern as OnChainPattern,
 )
 
 # 基础模块
 from core.market_intel_base import (
     # 枚举
     SentimentLabel as SentimentLabel,
+)
+from core.market_intel_base import (
     SignalStrength as SignalStrength,
-    # 数据类
-    IntelReport as IntelReport,
-    LLMSentimentResult as LLMSentimentResult,
-    OnChainPattern as OnChainPattern,
-    MarketContext as MarketContext,
-    CacheData as CacheData,
+)
+from core.market_intel_base import (
+    api_request as api_request,
+)
+from core.market_intel_base import (
     # 工具函数
     get_timestamp as get_timestamp,
+)
+from core.market_intel_base import (
     load_cache as load_cache,
+)
+from core.market_intel_base import (
     save_cache as save_cache,
-    api_request as api_request,
-    # ContextBuilder
-    ContextBuilder as ContextBuilder,
-    # 配置
-    API_CONFIG as API_CONFIG,
-    DEFAULT_LLM_PROVIDER as DEFAULT_LLM_PROVIDER,
-    CACHE_DIR as CACHE_DIR,
-    SYMBOL_MAP as SYMBOL_MAP,
 )
 
+# 上下文构建器
 # LLM分析器
 from core.market_intel_llm import LLMSentimentAnalyzer as LLMSentimentAnalyzer
+
+# 增强链上分析
+from core.market_intel_onchain import EnhancedOnChainAnalyzer as EnhancedOnChainAnalyzer
+from core.market_intel_sentiment import (
+    KeywordSentimentAnalyzer as KeywordSentimentAnalyzer,
+)
 
 # 情绪数据模块
 from core.market_intel_sentiment import (
     NewsSentimentAnalyzer as NewsSentimentAnalyzer,
-    KeywordSentimentAnalyzer as KeywordSentimentAnalyzer,
+)
+from core.market_intel_sentiment import (
     SentimentAggregator as SentimentAggregator,
 )
 
 # 技术指标模块
 from core.market_intel_technicals import (
     ExchangeFlowAnalyzer as ExchangeFlowAnalyzer,
-    WhaleTracker as WhaleTracker,
+)
+from core.market_intel_technicals import (
     TechnicalPatternRecognizer as TechnicalPatternRecognizer,
 )
-
-# 增强链上分析
-from core.market_intel_onchain import EnhancedOnChainAnalyzer as EnhancedOnChainAnalyzer
-
-# 上下文构建器
-from core.market_intel_context import ContextBuilder as ContextBuilder
+from core.market_intel_technicals import (
+    WhaleTracker as WhaleTracker,
+)
 
 __all__ = [
     # 主类

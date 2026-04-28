@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 PriceFactors: 价格技术指标计算器
 从 agents/agent_signal.py 提取

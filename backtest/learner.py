@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.2 - Adaptive Learning Core
 =======================================
@@ -9,15 +11,15 @@ Features:
 3. Pattern performance statistics
 """
 
+import gzip
 import json
 import logging
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
-from dataclasses import dataclass, asdict, field
-from datetime import datetime, timedelta
-from collections import defaultdict, deque
 import sys
-import gzip
+from collections import defaultdict, deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -28,7 +30,6 @@ except ImportError:
     HAS_NUMPY = False
 
 from statistics import mean, stdev
-
 
 # ===== 日志配置 =====
 
@@ -75,7 +76,7 @@ class DecisionJournalEntry:
     
     # 执行结果
     execution_result: str = ""
-    execution_ok: Optional[bool] = None
+    execution_ok: bool | None = None
     
     # Miracle特有：因子权重快照
     factor_weights_snapshot: Dict[str, float] = field(default_factory=dict)
@@ -93,7 +94,7 @@ class DecisionJournalEntry:
         return asdict(self)
     
     @classmethod
-    def from_dict(cls, data: Dict) -> 'DecisionJournalEntry':
+    def from_dict(cls, data: Dict) -> DecisionJournalEntry:
         """从字典创建"""
         return cls(**data)
 
@@ -187,7 +188,7 @@ class DecisionJournal:
         # 加载今天的日记
         if self.current_journal_path.exists():
             try:
-                with open(self.current_journal_path, 'r', encoding='utf-8') as f:
+                with open(self.current_journal_path, encoding='utf-8') as f:
                     for line in f:
                         if line.strip():
                             data = json.loads(line)
@@ -218,7 +219,7 @@ class DecisionJournal:
         }
     
     def compare_with_kronos(self, 
-                           time_window: Optional[str] = None,
+                           time_window: str | None = None,
                            limit: int = 100) -> Dict[str, Any]:
         """
         与Kronos decision_journal.jsonl对比分析
@@ -247,7 +248,7 @@ class DecisionJournal:
         # 读取Kronos日记
         kronos_entries = []
         try:
-            with open(self.kronos_journal_path, 'r', encoding='utf-8') as f:
+            with open(self.kronos_journal_path, encoding='utf-8') as f:
                 for i, line in enumerate(f):
                     if i >= limit:
                         break

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Fusion Memory Log System
 =======================
@@ -34,14 +36,14 @@ Usage:
     ic = get_ic_feedback(factor_name="rsi")
 """
 
-import os
 import json
 import logging
-from datetime import datetime
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, field, asdict
+import os
 from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from threading import Lock
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +68,9 @@ class DecisionEntry:
     confidence: float
     factors: Dict[str, Any]
     market_context: Dict[str, Any] = field(default_factory=dict)
-    outcome: Optional[str] = None  # WIN/LOSS/PENDING
-    pnl_pct: Optional[float] = None
-    updated_at: Optional[str] = None
+    outcome: str | None = None  # WIN/LOSS/PENDING
+    pnl_pct: float | None = None
+    updated_at: str | None = None
 
 
 @dataclass
@@ -105,7 +107,7 @@ class _FusionMemoryStore:
         if not os.path.exists(LOG_FILE):
             return
         try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
+            with open(LOG_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             self._entries = deque([DecisionEntry(**e) for e in data.get("entries", [])], maxlen=MAX_ENTRIES)
             self._next_id = data.get("next_id", 1)
@@ -212,7 +214,7 @@ class _FusionMemoryStore:
             self._dirty = True
             self._save()
 
-    def get_ic_score(self, factor_name: str) -> Optional[float]:
+    def get_ic_score(self, factor_name: str) -> float | None:
         """计算IC分数"""
         with self._lock:
             feedbacks = self._ic_cache.get(factor_name, [])
@@ -229,7 +231,7 @@ class _FusionMemoryStore:
 
 
 # 全局单例
-_store: Optional[_FusionMemoryStore] = None
+_store: _FusionMemoryStore | None = None
 
 
 def _get_store() -> _FusionMemoryStore:
@@ -249,7 +251,7 @@ def store_decision(
     verdict: str,
     confidence: float,
     factors: Dict[str, Any],
-    market_context: Optional[Dict[str, Any]] = None
+    market_context: Dict[str, Any] | None = None
 ) -> int:
     """
     存储辩论决策到记忆日志
@@ -324,7 +326,7 @@ def get_past_context(ticker: str, limit: int = 5) -> List[Dict[str, Any]]:
     return _get_store().get_past_context(ticker, limit)
 
 
-def get_ic_feedback(factor_name: str) -> Optional[float]:
+def get_ic_feedback(factor_name: str) -> float | None:
     """
     获取因子IC反馈分数
 
@@ -377,7 +379,7 @@ def format_log_entry(entry: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def get_all_entries(ticker: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+def get_all_entries(ticker: str | None = None, limit: int = 100) -> List[Dict[str, Any]]:
     """
     获取所有（或按ticker过滤）记忆条目
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Miracle-Kronos Unified Trading System
 ======================================
@@ -17,35 +19,48 @@ P0+P1修复:
   python miracle_kronos.py --mode audit --equity 100000
   python miracle_kronos.py --mode live
 """
-import os, sys, json, time, argparse, logging
+import argparse
+import json
+import logging
+import os
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, Dict, List, Tuple, Any
-
-# ===== 内部模块 =====
-from core.kronos_utils import (
-    atomic_write_json,
-    check_treasury_trade_allowed,
-    check_treasury_tier,
-    check_concentration,
-    validate_oco_order,
-    check_existing_oco_orders,
-    parallel_scan_coins,
-    generate_trade_idempotency_key,
-    check_and_record_idempotent,
-    get_account_balance as _get_balance,
-    okx_req as _okx_req,
-    TREASURY_LIMITS,
-    CONCENTRATION_LIMITS,
-)
+from typing import Any, Dict, List, Optional, Tuple
 
 # ===== Agent学习模块 =====
 from agents.agent_learner import AgentLearner
 
+# ===== 内部模块 =====
+from core.kronos_utils import (
+    CONCENTRATION_LIMITS,
+    TREASURY_LIMITS,
+    atomic_write_json,
+    check_and_record_idempotent,
+    check_concentration,
+    check_existing_oco_orders,
+    check_treasury_tier,
+    check_treasury_trade_allowed,
+    generate_trade_idempotency_key,
+    parallel_scan_coins,
+    validate_oco_order,
+)
+from core.kronos_utils import (
+    get_account_balance as _get_balance,
+)
+from core.kronos_utils import (
+    okx_req as _okx_req,
+)
+from core.market_intel_base import (
+    get_fomc_confidence_multiplier,
+    get_market_regime,
+    get_regime_confidence_multiplier,
+)
+
 # ===== Memory模块 =====
 from core.memory import get_structured_memory
-from core.market_intel_base import get_fomc_confidence_multiplier, get_market_regime, get_regime_confidence_multiplier
 
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
@@ -61,15 +76,19 @@ logger = logging.getLogger('miracle_kronos')
 
 # ===== OKX API (兼容旧接口) =====
 def _sign(ts, method, path, body=''):
-    import hmac, hashlib, base64
-    key = os.environ.get('OKX_API_KEY', '')
+    import base64
+    import hashlib
+    import hmac
+    os.environ.get('OKX_API_KEY', '')
     secret = os.environ.get('OKX_SECRET', '')
     msg = ts + method + path + body
     return base64.b64encode(hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
 
 def okx_req(method, path, body=''):
-    import requests, time as _time
+    import time as _time
     from datetime import datetime
+
+    import requests
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(_time.time() * 1000) % 1000)
     headers = {
         'OK-ACCESS-KEY': os.environ.get('OKX_API_KEY', ''),
@@ -341,23 +360,23 @@ def check_tier(equity, treasury) -> tuple:
     if session_dd_pct >= 0.20:
         tier = 'suspended'
         can_trade = False
-        reason = f'回撤20%触发熔断'
+        reason = '回撤20%触发熔断'
     elif daily_loss_pct >= 0.10:
         tier = 'critical'
         can_trade = False
-        reason = f'日亏10%触发熔断'
+        reason = '日亏10%触发熔断'
     elif hourly_loss_pct >= 0.05:
         tier = 'caution'
         can_trade = True
-        reason = f'小时亏5%'
+        reason = '小时亏5%'
     elif hourly_loss_pct >= 0.02:
         tier = 'normal'
         can_trade = True
-        reason = f'正常'
+        reason = '正常'
     else:
         tier = 'normal'
         can_trade = True
-        reason = f'正常'
+        reason = '正常'
     
     return tier, can_trade, reason, {
         'hourly_loss_pct': hourly_loss_pct,
@@ -486,13 +505,10 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
     # 判断趋势方向
     if adx > 25:
         trend_desc = "强趋势"
-        trend_dir = "上升" if bb_pos < 50 else "下降"
     elif adx > 15:
         trend_desc = "弱趋势"
-        trend_dir = "偏多" if bb_pos < 50 else "偏空"
     else:
         trend_desc = "震荡"
-        trend_dir = "中性"
 
     # RSI解读
     if rsi < 30:
@@ -581,7 +597,7 @@ confidence表示你对方向判断的确信程度：
         vote = -1
         failure_type = 'timeout'
 
-    except Exception as e:
+    except Exception:
         # 其他异常 → vote=-1 跳过
         vote = -1
         failure_type = 'timeout'
@@ -961,8 +977,8 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
         return None
     
     # 评分
-    di = di_plus if vote['direction'] == 'long' else di_minus
-    score = abs(vote['score'])
+    di_plus if vote['direction'] == 'long' else di_minus
+    abs(vote['score'])
     
     # 综合评分 = IC投票分 × 4H确认修正
     # 4H确认: 做多时也有帮助，做空时必需
@@ -1535,9 +1551,9 @@ def main():
     if action == 'blocked':
         print(f'🚫 系统熔断: {reason}')
     elif action == 'wait':
-        print(f'⏸️  无信号，等待')
+        print('⏸️  无信号，等待')
         if result.get('candidates'):
-            print(f'  TOP候选:')
+            print('  TOP候选:')
             for c in result['candidates'][:3]:
                 print(f'    {c["symbol"]:6s} {c["direction"]:5s} score={c["score"]:.2f} RSI={c["rsi"]:.0f} ADX={c["adx"]:.0f}')
     elif action == 'open':

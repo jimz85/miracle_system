@@ -1,51 +1,36 @@
+from __future__ import annotations
+
 """
 Miracle 2.0 Core Module
 ========================
 包含核心交易引擎和LLM驱动的Orchestrator协调器
 """
 
-from core.config_manager import ConfigManager, get_config, reload_config, ConfigError
-from core.regime_classifier import RegimeClassifier, MarketRegime, RegimeMetrics, detect_regime
+from core.config_manager import ConfigError, ConfigManager, get_config, reload_config
 from core.feishu_notifier import (
     FeishuNotifier,
     get_notifier,
+    is_feishu_configured,
     push_feishu,
     push_feishu_alert,
     push_feishu_report,
-    is_feishu_configured
 )
 
 # LLM Provider (Miracle 2.0)
 from core.llm_provider import (
     BaseLLMProvider,
     ClaudeProvider,
-    GPTProvider,  # OpenAI/GPT Provider
-    GeminiProvider,
     DeepSeekProvider,
-    OllamaProvider,
+    GeminiProvider,
+    GPTProvider,  # OpenAI/GPT Provider
+    LLMConfig,
     LLMProviderManager,
     LLMProviderType,
-    LLMConfig,
     LLMResponse,
     Message,
-    get_llm_provider,
+    OllamaProvider,
     get_llm_manager,
-)
-
-# Memory System (Miracle 2.0)
-from core.memory import (
-    VectorMemory,
-    get_vector_memory,
-    StructuredMemory,
-    get_structured_memory,
-    MemorySystem,
-    get_memory_system,
-    TradeRecord,
-    FactorPerformance,
-    StrategyParams,
-    Lesson,
-    MemoryType,
-    MemoryEntry,
+    get_llm_provider,
 )
 
 # Orchestrator (Miracle 2.0) - TODO: implement
@@ -65,51 +50,66 @@ from core.memory import (
 #     AgentL,
 #     get_orchestrator,
 # )
-
 # Market Intel Modules
 from core.market_intel_base import (
-    SentimentLabel,
-    SignalStrength,
+    API_CONFIG,
+    CACHE_DIR,
+    DEFAULT_LLM_PROVIDER,
+    SYMBOL_MAP,
+    CacheData,
+    ContextBuilder,
     IntelReport,
     LLMSentimentResult,
-    OnChainPattern,
     MarketContext,
-    CacheData,
+    OnChainPattern,
+    SentimentLabel,
+    SignalStrength,
+    api_request,
     get_timestamp,
     load_cache,
     save_cache,
-    api_request,
-    ContextBuilder,
-    API_CONFIG,
-    DEFAULT_LLM_PROVIDER,
-    CACHE_DIR,
-    SYMBOL_MAP,
 )
-
+from core.market_intel_context import ContextBuilder as MarketContextBuilder
 from core.market_intel_llm import LLMSentimentAnalyzer
+from core.market_intel_onchain import EnhancedOnChainAnalyzer
 from core.market_intel_sentiment import (
-    NewsSentimentAnalyzer,
     KeywordSentimentAnalyzer,
+    NewsSentimentAnalyzer,
     SentimentAggregator,
 )
 from core.market_intel_technicals import (
     ExchangeFlowAnalyzer,
-    WhaleTracker,
     TechnicalPatternRecognizer,
+    WhaleTracker,
 )
-from core.market_intel_onchain import EnhancedOnChainAnalyzer
-from core.market_intel_context import ContextBuilder as MarketContextBuilder
+
+# Memory System (Miracle 2.0)
+from core.memory import (
+    FactorPerformance,
+    Lesson,
+    MemoryEntry,
+    MemorySystem,
+    MemoryType,
+    StrategyParams,
+    StructuredMemory,
+    TradeRecord,
+    VectorMemory,
+    get_memory_system,
+    get_structured_memory,
+    get_vector_memory,
+)
+from core.regime_classifier import MarketRegime, RegimeClassifier, RegimeMetrics, detect_regime
 
 # Coin Parameter Optimizer (per-coin parameter optimization, inspired by Kronos coin_strategy_map.json)
 try:
     from coin_optimizer import (
         CoinParameterOptimizer,
-        CoinSignalGenerator,
         CoinParams,
+        CoinSignalGenerator,
         OptimizationResult,
         StrategyType,
         get_coin_optimizer,
-        get_coin_signal_generator
+        get_coin_signal_generator,
     )
     HAS_COIN_OPTIMIZER = True
 except ImportError:

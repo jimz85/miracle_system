@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Vector Memory using SQLite (Downgraded from ChromaDB)
 ====================================================
@@ -5,23 +7,23 @@ Vector Memory using SQLite (Downgraded from ChromaDB)
 移除了向量语义搜索，改用关键词匹配+时间衰减排序
 """
 
+import logging
 import os
 import sqlite3
-import logging
 import uuid
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 # 全局SQLite连接
-_sqlite_conn: Optional[sqlite3.Connection] = None
-_sqlite_path: Optional[str] = None
+_sqlite_conn: sqlite3.Connection | None = None
+_sqlite_path: str | None = None
 
 
-def _get_db_path(persist_directory: Optional[str] = None) -> str:
+def _get_db_path(persist_directory: str | None = None) -> str:
     """获取SQLite数据库路径"""
     if persist_directory is None:
         persist_directory = os.path.expanduser("~/.miracle_memory/sqlite")
@@ -29,7 +31,7 @@ def _get_db_path(persist_directory: Optional[str] = None) -> str:
     return os.path.join(persist_directory, "miracle_memories.db")
 
 
-def _get_connection(persist_directory: Optional[str] = None) -> sqlite3.Connection:
+def _get_connection(persist_directory: str | None = None) -> sqlite3.Connection:
     """获取SQLite连接"""
     global _sqlite_conn, _sqlite_path
     
@@ -87,10 +89,10 @@ class MemoryEntry:
     id: str
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
-    embedding: Optional[List[float]] = None
+    embedding: List[float] | None = None
     created_at: datetime = field(default_factory=datetime.now)
     memory_type: str = "general"  # general, trade, market, lesson, pattern
-    expires_at: Optional[datetime] = None  # 过期时间，None表示永不过期
+    expires_at: datetime | None = None  # 过期时间，None表示永不过期
     
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -135,7 +137,7 @@ class VectorMemory:
     COLLECTION_NAME = "miracle_memories"
     DB_NAME = "miracle_memories.db"
     
-    def __init__(self, persist_directory: Optional[str] = None, 
+    def __init__(self, persist_directory: str | None = None, 
                  collection_name: str = COLLECTION_NAME,
                  llm_provider=None):
         """
@@ -177,9 +179,9 @@ class VectorMemory:
             "similarity": 1.0  # 兼容ChromaDB接口
         }
     
-    def add(self, content: str, metadata: Optional[Dict[str, Any]] = None,
-            memory_type: str = "general", id: Optional[str] = None,
-            expires_at: Optional[datetime] = None) -> str:
+    def add(self, content: str, metadata: Dict[str, Any] | None = None,
+            memory_type: str = "general", id: str | None = None,
+            expires_at: datetime | None = None) -> str:
         """
         添加记忆条目
         
@@ -250,8 +252,8 @@ class VectorMemory:
         return ids
     
     def search(self, query: str, k: int = 5, 
-               memory_type: Optional[str] = None,
-               filter_metadata: Optional[Dict[str, Any]] = None,
+               memory_type: str | None = None,
+               filter_metadata: Dict[str, Any] | None = None,
                include_embeddings: bool = False) -> List[Dict[str, Any]]:
         """
         搜索记忆（关键词匹配+时间衰减）
@@ -290,7 +292,7 @@ class VectorMemory:
         # 元数据过滤（简单实现：JSON包含关键key-value）
         if filter_metadata:
             for key, value in filter_metadata.items():
-                sql += f" AND metadata LIKE ?"
+                sql += " AND metadata LIKE ?"
                 params.append(f'%"{key}": "{value}"%')
         
         # 获取所有候选记录
@@ -330,7 +332,7 @@ class VectorMemory:
         
         return results[:k]
     
-    def get(self, memory_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, memory_id: str) -> Dict[str, Any] | None:
         """获取指定记忆"""
         import json
         
@@ -353,8 +355,8 @@ class VectorMemory:
             return True
         return False
     
-    def update(self, memory_id: str, content: Optional[str] = None,
-               metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def update(self, memory_id: str, content: str | None = None,
+               metadata: Dict[str, Any] | None = None) -> bool:
         """更新记忆"""
         import json
         
@@ -406,7 +408,7 @@ class VectorMemory:
         rows = cursor.fetchall()
         return [self._row_to_memory(row) for row in rows]
     
-    def count(self, memory_type: Optional[str] = None) -> int:
+    def count(self, memory_type: str | None = None) -> int:
         """统计记忆数量"""
         from datetime import datetime as dt
         
@@ -459,7 +461,7 @@ class VectorMemory:
         return {"total": total, "by_type": by_type}
     
     def search_with_context(self, query: str, k: int = 5,
-                            memory_types: Optional[List[str]] = None) -> str:
+                            memory_types: List[str] | None = None) -> str:
         """
         检索记忆并格式化为上下文字符串
         
@@ -543,7 +545,7 @@ class VectorMemory:
         }
     
     def cleanup_by_age(self, max_age_days: int = 30, 
-                      memory_types: Optional[List[str]] = None,
+                      memory_types: List[str] | None = None,
                       dry_run: bool = False) -> Dict[str, int]:
         """
         按年龄清理记忆
@@ -556,7 +558,7 @@ class VectorMemory:
         Returns:
             Dict: 清理统计
         """
-        from datetime import datetime as dt, timedelta
+        from datetime import datetime as dt
         
         cutoff_time = dt.now() - timedelta(days=max_age_days)
         
@@ -602,7 +604,7 @@ class VectorMemory:
         Returns:
             Dict: 统计信息
         """
-        from datetime import datetime as dt, timedelta
+        from datetime import datetime as dt
         
         cursor = self._conn.cursor()
         
@@ -642,7 +644,7 @@ class VectorMemory:
 
 
 # 全局实例
-_vector_memory: Optional[VectorMemory] = None
+_vector_memory: VectorMemory | None = None
 
 def get_vector_memory(llm_provider=None) -> VectorMemory:
     """获取向量记忆全局实例"""

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Market Intel Base - 市场情报基础模块
 =====================================
@@ -287,13 +289,13 @@ def get_timestamp() -> str:
     return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def load_cache(symbol: str, data_type: str) -> Optional[CacheData]:
+def load_cache(symbol: str, data_type: str) -> CacheData | None:
     """从缓存加载数据"""
     cache_file = os.path.join(CACHE_DIR, f"{symbol}_{data_type}.json")
     if not os.path.exists(cache_file):
         return None
     try:
-        with open(cache_file, "r") as f:
+        with open(cache_file) as f:
             cached = json.load(f)
         return CacheData(
             data=cached.get("data"),
@@ -320,7 +322,7 @@ def save_cache(symbol: str, data_type: str, data: Any):
 
 
 def api_request(url: str, params: Dict = None, headers: Dict = None,
-                method: str = "GET", timeout: int = 10) -> Optional[Dict]:
+                method: str = "GET", timeout: int = 10) -> Dict | None:
     """统一的API请求方法，带超时和错误处理"""
     if not HAS_REQUESTS:
         logger.error("requests库未安装")

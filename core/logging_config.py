@@ -1,17 +1,18 @@
+from __future__ import annotations
+
 """
 Logging Configuration - 结构化日志配置
 支持JSON格式输出、日志轮转、分类日志
 """
-import os
-import sys
 import json
 import logging
+import os
+import sys
 import traceback
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional, Dict, Any
+from datetime import UTC, datetime, timezone
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
-
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 # ========================
 # JSON日志格式化
@@ -38,7 +39,7 @@ class JSONFormatter(logging.Formatter):
         self,
         include_extra: bool = True,
         include_location: bool = True,
-        default_fields: Optional[Dict[str, Any]] = None
+        default_fields: Dict[str, Any] | None = None
     ):
         super().__init__()
         self.include_extra = include_extra
@@ -47,7 +48,7 @@ class JSONFormatter(logging.Formatter):
     
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -83,7 +84,7 @@ class JSONFormatter(logging.Formatter):
 class PlainFormatter(logging.Formatter):
     """普通格式日志"""
     
-    def __init__(self, fmt: Optional[str] = None):
+    def __init__(self, fmt: str | None = None):
         if fmt is None:
             fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
         super().__init__(fmt)
@@ -105,9 +106,9 @@ def ensure_log_dir(log_dir: Path) -> Path:
 
 def setup_root_logger(
     log_level: int = DEFAULT_LOG_LEVEL,
-    log_dir: Optional[Path] = None,
+    log_dir: Path | None = None,
     json_logs: bool = False,
-    log_file: Optional[str] = None,
+    log_file: str | None = None,
     max_bytes: int = 10_000_000,  # 10MB
     backup_count: int = 5
 ) -> logging.Logger:
@@ -166,10 +167,10 @@ def setup_root_logger(
 
 def get_json_logger(
     name: str,
-    log_file: Optional[str] = None,
-    log_dir: Optional[Path] = None,
+    log_file: str | None = None,
+    log_dir: Path | None = None,
     level: int = DEFAULT_LOG_LEVEL,
-    default_fields: Optional[Dict[str, Any]] = None
+    default_fields: Dict[str, Any] | None = None
 ) -> logging.Logger:
     """
     获取JSON日志器
@@ -210,7 +211,7 @@ def get_json_logger(
 
 
 def get_trade_logger(
-    log_dir: Optional[Path] = None
+    log_dir: Path | None = None
 ) -> logging.Logger:
     """
     获取交易专用日志器
@@ -235,7 +236,7 @@ def get_trade_logger(
 
 
 def get_audit_logger(
-    log_dir: Optional[Path] = None
+    log_dir: Path | None = None
 ) -> logging.Logger:
     """
     获取审计专用日志器
@@ -270,7 +271,7 @@ def log_trade_event(
     side: str,
     size: float,
     price: float,
-    pnl: Optional[float] = None,
+    pnl: float | None = None,
     **extra
 ):
     """记录交易事件"""
@@ -293,7 +294,7 @@ def log_signal_event(
     symbol: str,
     direction: str,
     confidence: float,
-    factors: Optional[Dict[str, Any]] = None
+    factors: Dict[str, Any] | None = None
 ):
     """记录信号事件"""
     log_data = {

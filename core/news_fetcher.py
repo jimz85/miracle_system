@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 免费新闻数据源模块 - Miracle 1.0.1
 ============================================
@@ -8,12 +10,13 @@
 2. 价格动量代理 - 当无新闻时使用
 """
 
-import requests
-import xml.etree.ElementTree as ET
-import time
 import logging
-from typing import List, Dict, Optional
+import time
+import xml.etree.ElementTree as ET
 from datetime import datetime
+from typing import Dict, List, Optional
+
+import requests
 
 logger = logging.getLogger("miracle.news")
 

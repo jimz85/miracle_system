@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Miracle 1.0.1 - 回测引擎 (重构版本)
 ====================================
@@ -19,24 +21,22 @@ Miracle 1.0.1 - 回测引擎 (重构版本)
 # 从子模块导入所有公开API，保持向后兼容
 from .engine import (
     BacktestEngine,
-    WalkForwardEngine,
     MultiCoinBacktest,
     ParameterOptimizer,
+    WalkForwardEngine,
     calc_ic_simple,
     calc_rank_ic,
 )
-
-from .stats import (
-    BacktestTrade,
-    BacktestStats,
-    ICStats,
-    calc_stats,
-    calc_ic,
-)
-
 from .reporter import (
-    run_simple_backtest,
     _format_summary,
+    run_simple_backtest,
+)
+from .stats import (
+    BacktestStats,
+    BacktestTrade,
+    ICStats,
+    calc_ic,
+    calc_stats,
 )
 
 __all__ = [

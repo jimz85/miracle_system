@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 SecureKeyManager - 安全密钥管理器
 ================================
@@ -14,9 +16,9 @@ SecureKeyManager - 安全密钥管理器
     from core.secure_key_manager import SecureKeyManager, get_key_manager
 """
 
-import os
 import base64
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +35,7 @@ class SecureKeyManager:
     3. 运行时解密
     """
 
-    def __init__(self, encryption_key_path: Optional[str] = None):
+    def __init__(self, encryption_key_path: str | None = None):
         self.encryption_key = self._load_or_create_key(encryption_key_path)
         self.cipher = None
         if self.encryption_key:
@@ -44,7 +46,7 @@ class SecureKeyManager:
                 logger.warning("cryptography库未安装，加密功能不可用")
         self._keys_cache = {}
 
-    def _load_or_create_key(self, key_path: Optional[str]) -> Optional[bytes]:
+    def _load_or_create_key(self, key_path: str | None) -> bytes | None:
         """加载或创建加密密钥"""
         if key_path and Path(key_path).exists():
             with open(key_path, 'rb') as f:
@@ -55,7 +57,7 @@ class SecureKeyManager:
             return base64.urlsafe_b64decode(master_key)
         return None
 
-    def get_key(self, exchange: str, key_type: str) -> Optional[str]:
+    def get_key(self, exchange: str, key_type: str) -> str | None:
         """
         获取API密钥
 
@@ -116,7 +118,7 @@ class SecureKeyManager:
 
 
 # 全局密钥管理器实例
-_key_manager: Optional[SecureKeyManager] = None
+_key_manager: SecureKeyManager | None = None
 
 
 def get_key_manager() -> SecureKeyManager:
