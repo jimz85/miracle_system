@@ -63,60 +63,11 @@ graph TB
     L --> VM
 ```
 
----
-
-## ASCII架构图 (纯文本版)
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Miracle 2.0 自主学习系统                       │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌──────────────────────────────────────────────────────────┐   │
-│   │              Orchestrator (LLM大脑)                       │   │
-│   │         任务分解 + 结果聚合 + 自我反思                    │   │
-│   └──────────────────────────────────────────────────────────┘   │
-│                              │                                   │
-│          ┌───────────────────┼───────────────────┐            │
-│          ▼                   ▼                   ▼                │
-│   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐        │
-│   │  Agent-M    │   │  Agent-S    │   │  Agent-L    │        │
-│   │  市场情报    │──▶│  信号生成    │──▶│  学习迭代    │        │
-│   │  (LLM增强)  │   │  (LLM增强)  │   │  (核心)     │        │
-│   └─────────────┘   └─────────────┘   └─────────────┘        │
-│          │                   │                   │                │
-│          │                   ▼                   │                │
-│          │           ┌─────────────┐            │                │
-│          └──────────▶│  Agent-R    │◀───────────┘                │
-│                      │  风险管理   │                             │
-│                      └─────────────┘                             │
-│                              │                                   │
-│                              ▼                                   │
-│                      ┌─────────────┐                            │
-│                      │  Agent-E    │                            │
-│                      │  执行引擎   │                            │
-│                      └─────────────┘                             │
-│                                                                  │
-│   ┌──────────────────────────────────────────────────────────┐   │
-│   │              Memory System (记忆系统)                     │   │
-│   │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │   │
-│   │  │向量记忆 │  │结构化  │  │示范库  │  │规则库  │   │   │
-│   │  │(Chroma)│  │经验库  │  │(Few-shot)│  │(Policy)│   │   │
-│   │  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │   │
-│   └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│   ┌──────────────────────────────────────────────────────────┐   │
-│   │              Autoresearch Loop (自主研究循环)              │   │
-│   │   数据收集 → 假设生成 → 回测验证 → 反思改进 → 持续进化     │   │
-│   └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
-```
+详细架构文档见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
 ## 核心能力
-
-### 1. 自主学习 (Agent-L)
 
 | 能力 | 1.0 | 2.0 |
 |------|------|------|
@@ -126,20 +77,7 @@ graph TB
 | 策略演化 | 月度淘汰 | 持续进化 |
 | 知识积累 | 规则存储 | 向量记忆检索 |
 
-### 2. Autoresearch 循环
-
-```python
-# 完整闭环
-while True:
-    data = collect_market_data()        # 1. 收集数据
-    hypothesis = generate_hypothesis(data) # 2. 生成假设
-    result = backtest(hypothesis)          # 3. 回测验证
-    insight = reflect(result)              # 4. 反思改进
-    update_memory(insight)                # 5. 更新记忆
-    evolve_strategy(insight)              # 6. 演化策略
-```
-
-### 3. 多Agent协同
+### 多Agent协同
 
 | Agent | 职责 | LLM增强 |
 |-------|------|---------|
@@ -160,7 +98,7 @@ while True:
 cd ~/miracle_system
 pip install -r requirements.txt
 
-# 可选：安装ChromaDB（向量记忆）
+# 可选：ChromaDB（向量记忆）
 pip install chromadb
 ```
 
@@ -201,153 +139,53 @@ python miracle_pilot.py --full
 
 ```
 miracle_system/
-├── miracle.py                    # 1.0主入口（兼容）
-├── miracle_autonomous.py         # 2.0主入口（自主学习）
+├── miracle.py                    # 主入口
+├── miracle_autonomous.py         # 自主学习入口
 ├── miracle_core.py               # 核心计算
 ├── miracle_pilot.py              # 驾驶舱
 ├── miracle_kronos.py             # Kronos兼容
 ├── backtest.py                  # 回测引擎
-├── adaptive_learner.py           # 自适应学习
-├── coin_optimizer.py            # 每币种参数优化
 │
-├── core/
-│   ├── orchestrator.py          # 协调器（LLM大脑）
-│   ├── llm_provider.py          # LLM接口（Claude/GPT/Gemini/DeepSeek）
+├── core/                        # 核心模块
+│   ├── orchestrator.py         # 协调器（LLM大脑）
+│   ├── llm_provider.py         # LLM接口
 │   ├── ic_weights.py            # IC动态权重
 │   ├── regime_classifier.py     # 市场状态分类
 │   ├── state_reconciler.py      # OKX状态同步
 │   ├── feishu_notifier.py       # 飞书通知
-│   ├── data_fetcher.py          # 数据获取
-│   └── memory/
-│       ├── vector_memory.py      # ChromaDB向量记忆
-│       ├── structured_memory.py  # SQLite结构化记忆
-│       └── system.py            # 记忆系统
+│   ├── circuit_breaker.py        # 熔断机制
+│   ├── executor_config.py        # 执行器配置
+│   ├── secure_key_manager.py     # 密钥管理
+│   ├── slippage_monitor.py       # 滑点监控
+│   ├── trade_logger.py           # 交易日志
+│   ├── executor_feishu_notifier.py # 执行引擎通知
+│   └── memory/                   # 记忆系统
 │
-├── agents/
+├── agents/                      # Agent模块
 │   ├── agent_market_intel.py     # 市场情报
+│   ├── agent_market_intel_llm.py # 市场情报LLM增强
 │   ├── agent_signal.py           # 信号生成
 │   ├── agent_risk.py             # 风险管理
 │   ├── agent_executor.py         # 执行引擎
-│   └── agent_learner.py          # 学习迭代
+│   ├── agent_learner.py          # 学习迭代
+│   └── agent_coordinator.py      # 协调器
 │
-├── data/
-│   ├── decision_journal/         # 决策日志
-│   └── cache/                   # 数据缓存
-│
-├── docs/
-│   ├── MIRACLE_LLM_ARCHITECTURE.md  # 详细架构设计
-│   ├── IC_WEIGHT_COMPARISON.md      # IC权重对比
-│   └── REGIME_CLASSIFIER_COMPARISON.md
-│
-├── tests/                       # 测试
-├── requirements.txt
+├── models/                     # 模型相关
+├── adaptive_learner.py          # 自适应学习
+├── coin_optimizer.py            # 每币种参数优化
+├── tests/                      # 测试
+│   ├── test_circuit_breaker.py
+│   ├── test_agent_signal.py
+│   ├── test_risk_management.py
+│   └── test_ic_weights.py
+├── docs/                       # 详细文档
+│   ├── ARCHITECTURE.md          # 架构设计详细文档
+│   └── DEVELOPMENT.md           # 开发指南
+├── requirements.txt              # 运行时依赖
+├── requirements-dev.txt          # 开发依赖
+├── pyproject.toml               # 项目配置
 └── README.md
 ```
-
----
-
-## 关键特性
-
-### Orchestrator LLM降级机制
-
-当LLM连续失败时，系统自动切换到规则引擎：
-
-```python
-# 配置降级参数
-config = {
-    "llm_failure_threshold": 3,      # 连续失败3次后降级
-    "llm_recovery_interval": 300,    # 每5分钟尝试恢复LLM
-    "rule_engine_fallback": True,    # 启用规则引擎
-}
-
-# 检查降级状态
-orchestrator = Orchestrator(config)
-status = orchestrator.get_degradation_status()
-# {
-#     "llm_available": True,
-#     "llm_degraded": False,
-#     "llm_failures": 0,
-#     "total_llm_fallbacks": 0
-# }
-```
-
-### Memory过期清理与遗忘机制
-
-```python
-from core.memory import get_memory_system
-
-memory = get_memory_system()
-
-# 健康报告
-health = memory.get_memory_health_report()
-
-# 遗忘低价值记忆（成功率<30%且应用次数>=5）
-result = memory.forget_low_value_memories(
-    min_success_rate=0.3,
-    min_applied=5,
-    dry_run=False  # 设为False执行遗忘
-)
-
-# 完整维护（清理旧数据）
-result = memory.run_memory_maintenance(
-    trade_days=90,         # 保留90天交易
-    vector_age_days=30,    # 30天以上的向量记忆
-    lesson_success_rate=0.3,
-    lesson_min_applied=5,
-    dry_run=True  # 先预览
-)
-```
-
-### Autoresearch 循环
-
-```python
-class AutoresearchLoop:
-    """
-    自主研究循环：Keep/Discard策略淘汰机制
-    """
-
-    def run(self, experiments=50):
-        """
-        运行自主研究循环
-
-        1. 数据收集 - 多源市场数据
-        2. 假设生成 - 随机/趋势外推/聚焦优化
-        3. 回测验证 - Walk-Forward多窗口
-        4. 反思改进 - IC权重反馈闭环
-        """
-        for i in range(eximents):
-            # 生成新策略假设
-            hypothesis = self.generate_hypothesis()
-
-            # 回测验证
-            result = self.backtest(hypothesis)
-
-            # 反思改进
-            insight = self.reflect(hypothesis, result)
-
-            # 更新记忆
-            self.update_memory(insight)
-
-            # 演化策略
-            self.evolve_strategy(insight)
-```
-
-### LLM Provider 支持
-
-| Provider | 模型 | 用途 |
-|----------|------|------|
-| Claude | Sonnet 4 | 主力推理 |
-| GPT-4o | GPT-4o | 备用 |
-| Gemini | Flash 2.0 | 成本优化 |
-| DeepSeek | Chat | 研究循环 |
-
-### Memory System
-
-- **ChromaDB**: 向量记忆，语义检索历史经验，支持过期时间(TTL)
-- **SQLite**: 结构化记忆，交易记录、因子表现、策略参数
-- **遗忘机制**: 自动清理低价值教训（成功率低+应用次数少）
-- **过期清理**: 自动清理过期数据和旧交易记录
-- **Few-shot**: 示范库，成功/失败模式
 
 ---
 
@@ -357,20 +195,18 @@ class AutoresearchLoop:
 
 ```bash
 # LLM API Keys
-export ANTHROPIC_API_KEY=sk-xxx        # Claude
-export OPENAI_API_KEY=sk-xxx           # GPT
-export GOOGLE_API_KEY=xxx               # Gemini
-export DEEPSEEK_API_KEY=sk-xxx         # DeepSeek
+export ANTHROPIC_API_KEY=sk-ant-...     # Claude
+export OPENAI_API_KEY=sk-...             # GPT
+export GOOGLE_API_KEY=...                 # Gemini
+export DEEPSEEK_API_KEY=sk-...           # DeepSeek
 
 # OKX API
-export OKX_API_KEY=xxx
-export OKX_SECRET_KEY=xxx
-export OKX_PASSPHRASE=xxx
+export OKX_API_KEY=...
+export OKX_SECRET_KEY=...
+export OKX_PASSPHRASE=...
 
 # 飞书通知
-export FEISHU_APP_ID=xxx
-export FEISHU_APP_SECRET=xxx
-export FEISHU_CHAT_ID=oc_xxx
+export FEISHU_WEBHOOK_URL=https://open.feishu.cn/...
 ```
 
 ### 配置文件
@@ -404,7 +240,28 @@ export FEISHU_CHAT_ID=oc_xxx
 
 ---
 
+## 功能状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| Orchestrator | ✅ | LLM大脑+规则降级 |
+| LLM Provider | ✅ | Claude/GPT/Gemini/DeepSeek |
+| Memory System | ✅ | ChromaDB + SQLite + 遗忘机制 |
+| Agent-M | ✅ | 市场情报 + LLM增强 |
+| Agent-S | ✅ | 信号生成 |
+| Agent-R | ✅ | 风险管理 + 熔断 |
+| Agent-E | ✅ | OKX/Binance执行 |
+| Agent-L | ✅ | 自主学习 + 策略演化 |
+| Autoresearch Loop | ✅ | Keep/Discard淘汰 |
+| OKX集成 | ✅ | 模拟盘+实盘 |
+| 飞书通知 | ✅ | 分级告警 |
+| 单元测试 | ✅ | 337个测试覆盖核心模块 |
+
+---
+
 ## 开发指南
+
+详细文档见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ### 添加新的Agent
 
@@ -413,42 +270,18 @@ from agents.base_agent import BaseAgent
 
 class MyAgent(BaseAgent):
     async def execute(self, context):
-        # 执行逻辑
         return {"result": "..."}
 ```
 
-### 添加新的工具
+### 运行测试
 
-```python
-from core.tools import register_tool
+```bash
+# 全部测试
+python -m pytest tests/ -v
 
-@register_tool
-async def my_tool(param1, param2):
-    """工具描述"""
-    return await do_something(param1, param2)
+# 单模块测试
+python -m pytest tests/test_circuit_breaker.py -v
 ```
-
----
-
-## 状态说明
-
-- ✅ 可用：已实现并测试通过
-- ⚠️ 需配置：需要API Key或其他配置
-- 🔄 开发中：正在实现
-
-| 功能 | 状态 |
-|------|------|
-| Orchestrator | ✅ |
-| LLM Provider | ✅ |
-| Memory System | ✅ |
-| Agent-M | ✅ |
-| Agent-S | ✅ |
-| Agent-R | ✅ |
-| Agent-E | ✅ |
-| Agent-L | ✅ |
-| Autoresearch Loop | ✅ |
-| OKX集成 | ✅ |
-| 飞书通知 | ✅ |
 
 ---
 
