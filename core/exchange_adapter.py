@@ -397,6 +397,67 @@ class OKXAdapter(ExchangeAdapter):
         result = self._request("POST", "/api/v5/trade/cancel-order", data=data, auth=True)
         return result is not None
 
+    def get_funding_rate(self, symbol: str) -> Dict[str, Any] | None:
+        """获取资金费率
+
+        Returns:
+            dict: {
+                "funding_rate": float,  # 当前资金费率 (e.g. 0.0001 = 0.01%)
+                "funding_time": int,    # 下次资金时间 (Unix ms)
+                "inst_id": str
+            } or None
+        """
+        symbol = self.format_symbol(symbol)
+        # 确保永续合约格式
+        if "SWAP" not in symbol and "USDT" in symbol:
+            symbol = symbol.replace("-USDT", "-USDT-SWAP")
+
+        data = self._request(
+            "GET",
+            "/api/v5/market/funding-rate",
+            params={"instId": symbol}
+        )
+
+        if data and data.get("data"):
+            r = data["data"][0]
+            return {
+                "funding_rate": float(r.get("fundingRate", 0)),
+                "funding_time": int(r.get("fundingTime", 0)),
+                "inst_id": r.get("instId", symbol),
+                "next_funding_time": int(r.get("nextFundingTime", 0)),
+            }
+        return None
+
+    def get_oi(self, symbol: str) -> Dict[str, Any] | None:
+        """获取持仓量(Open Interest)
+
+        Returns:
+            dict: {
+                "oi": float,        # 当前持仓量 (USDT等价)
+                "oi_usd": float,    # USD计价持仓量
+                "inst_id": str
+            } or None
+        """
+        symbol = self.format_symbol(symbol)
+        # 确保永续合约格式
+        if "SWAP" not in symbol and "USDT" in symbol:
+            symbol = symbol.replace("-USDT", "-USDT-SWAP")
+
+        data = self._request(
+            "GET",
+            "/api/v5/market/open-interest",
+            params={"instId": symbol}
+        )
+
+        if data and data.get("data"):
+            r = data["data"][0]
+            return {
+                "oi": float(r.get("oi", 0)),
+                "oi_usd": float(r.get("oiUsd", 0)),
+                "inst_id": r.get("instId", symbol),
+            }
+        return None
+
 
 # ========================
 # Binance 适配器

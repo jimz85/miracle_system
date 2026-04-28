@@ -393,3 +393,158 @@ class PriceFactors:
         for price in prices[1:]:
             ema = (price - ema) * multiplier + ema
         return float(ema)
+
+    # ========== Funding Rate & OI Factors ==========
+
+    @staticmethod
+    def calc_funding_rate_factor(
+        funding_rates: List[float],
+        side: str = "long",
+        high_funding_threshold: float = 0.0003
+    ) -> Dict[str, Any]:
+        """
+        计算资金费率因子
+
+        Args:
+            funding_rates: 历史资金费率列表 (最新在最后), e.g. [0.0001, 0.0002, 0.0001]
+            side: 当前交易方向 "long" or "short"
+            high_funding_threshold: 高资金费率阈值，默认0.0003 (0.03%)
+
+        Returns:
+            dict: {
+                "funding_rate": float,           # 当前资金费率
+                "funding_rate_trend": float,     # 3期均值
+                "funding_rate_direction": str,   # "increasing" / "decreasing" / "stable"
+                "short_high_funding_boost": float,  # 做空时高funding信心加成
+                "confidence_boost": float,       # 综合信心加成
+                "is_high_funding": bool,         # 是否高资金费率
+            }
+        """
+        if not funding_rates or len(funding_rates) == 0:
+            return {
+                "funding_rate": 0.0,
+                "funding_rate_trend": 0.0,
+                "funding_rate_direction": "stable",
+                "short_high_funding_boost": 0.0,
+                "confidence_boost": 0.0,
+                "is_high_funding": False,
+            }
+
+        current_fr = funding_rates[-1]
+        is_high_funding = abs(current_fr) > high_funding_threshold
+
+        # 计算3期均值 (trend)
+        lookback = min(3, len(funding_rates))
+        funding_rate_trend = sum(funding_rates[-lookback:]) / lookback
+
+        # 判断方向
+        if len(funding_rates) >= 3:
+            recent = sum(funding_rates[-3:]) / 3
+            prev = sum(funding_rates[-4:-1]) / 3 if len(funding_rates) >= 4 else recent
+            if recent > prev * 1.05:
+                direction = "increasing"
+            elif recent < prev * 0.95:
+                direction = "decreasing"
+            else:
+                direction = "stable"
+        else:
+            direction = "stable"
+
+        # 做空时高funding加成逻辑：
+        # 做空者收到资金费率，如果资金费率>阈值，做空更安全
+        short_high_funding_boost = 0.0
+        if side.lower() == "short" and is_high_funding:
+            # funding为正意味着多头支付空头，funding越高做空越有利
+            short_high_funding_boost = min(abs(current_fr) / high_funding_threshold * 0.1, 0.2)
+        elif side.lower() == "long" and is_high_funding:
+            # 做多时高funding意味着持仓成本高，轻微惩罚
+            short_high_funding_boost = -0.05
+
+        # 方向加成：funding正在上升对做空有利
+        if side.lower() == "short" and direction == "increasing":
+            short_high_funding_boost += 0.05
+
+        confidence_boost = short_high_funding_boost
+
+        return {
+            "funding_rate": float(current_fr),
+            "funding_rate_trend": float(funding_rate_trend),
+            "funding_rate_direction": direction,
+            "short_high_funding_boost": float(short_high_funding_boost),
+            "confidence_boost": float(confidence_boost),
+            "is_high_funding": is_high_funding,
+        }
+
+    @staticmethod
+    def calc_oi_change_rate(
+        oi_history: List[float],
+        period: int = 3
+    ) -> Dict[str, Any]:
+        """
+        计算OI变化率作为过滤因子
+
+        Args:
+            oi_history: 历史OI列表 (最新在最后)
+            period: 计算变化率的回看期
+
+        Returns:
+            dict: {
+                "oi_current": float,        # 当前OI
+                "oi_change_rate": float,    # 变化率 (百分比)
+                "oi_direction": str,        # "increasing" / "decreasing" / "stable"
+                "is_filtered": bool,        # 是否被过滤 (OI急剧下降可能意味趋势反转)
+                "filter_reason": str,       # 过滤原因
+                "confidence_penalty": float, # 信心惩罚
+            }
+        """
+        if not oi_history or len(oi_history) < 2:
+            return {
+                "oi_current": oi_history[-1] if oi_history else 0.0,
+                "oi_change_rate": 0.0,
+                "oi_direction": "stable",
+                "is_filtered": False,
+                "filter_reason": "",
+                "confidence_penalty": 0.0,
+            }
+
+        current_oi = oi_history[-1]
+
+        if len(oi_history) < period + 1:
+            prev_oi = oi_history[0]
+        else:
+            prev_oi = oi_history[-period - 1]
+
+        if prev_oi > 0:
+            oi_change_rate = (current_oi - prev_oi) / prev_oi
+        else:
+            oi_change_rate = 0.0
+
+        # 判断方向
+        if oi_change_rate > 0.05:  # 5%以上
+            oi_direction = "increasing"
+        elif oi_change_rate < -0.05:
+            oi_direction = "decreasing"
+        else:
+            oi_direction = "stable"
+
+        # 过滤逻辑：OI急剧下降(超过20%)可能是趋势反转信号，轻微惩罚
+        is_filtered = False
+        filter_reason = ""
+        confidence_penalty = 0.0
+
+        if oi_change_rate < -0.20:
+            is_filtered = True
+            filter_reason = "oi_sharp_decline"
+            confidence_penalty = 0.15
+        elif oi_change_rate < -0.10:
+            filter_reason = "oi_moderate_decline"
+            confidence_penalty = 0.05
+
+        return {
+            "oi_current": float(current_oi),
+            "oi_change_rate": float(oi_change_rate),
+            "oi_direction": oi_direction,
+            "is_filtered": is_filtered,
+            "filter_reason": filter_reason,
+            "confidence_penalty": float(confidence_penalty),
+        }
