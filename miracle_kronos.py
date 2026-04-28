@@ -787,10 +787,11 @@ def close_position(symbol: str, reason: str = "signal",
 
     body = json.dumps({
         'instId': inst_id,
-        'tdMode': 'isolated',  # 与place_oco保持一致
+        'tdMode': 'isolated',
         'side': close_side,
         'ordType': 'market',
         'sz': str(sz),
+        'posSide': pos_side,  # P0 Fix: OKX隔离保证金平仓必须传posSide
     })
     data = okx_req('POST', '/api/v5/trade/order', body)
     if data.get('code') == '0':
