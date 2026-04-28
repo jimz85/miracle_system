@@ -400,8 +400,10 @@ class Executor:
             if current_price is None:
                 continue
 
-            # 使用PositionMonitor检查是否需要平仓
-            should_exit, reason = self.position_monitor.monitor(trade, current_price)
+            # 使用PositionMonitor检查是否需要平仓（传入ATR用于结构止损）
+            factors = trade.get("factors", {})
+            atr = factors.get("atr")
+            should_exit, reason = self.position_monitor.monitor(trade, current_price, atr)
 
             if should_exit:
                 entry_time = datetime.fromisoformat(trade["timestamp"])

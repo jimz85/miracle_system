@@ -283,29 +283,44 @@ class PriceFactors:
         成交量过滤器 — 识别假突破
         
         真实突破需要成交量放大确认：
-        - 放量突破 = 真实信号
-        - 缩量突破 = 假信号，降低置信度
+        - 放量突破(volume_ratio >= 1.5) = 真实信号
+        - 缩量突破(volume_ratio < 1.5) = 假信号，降低置信度
+        - 极度缩量(volume_ratio < 0.3) = 硬过滤，直接拒绝信号
         
         Returns:
             {
                 "volume_ratio": float,   # 当前量/20日均量
                 "is_confirmed": bool,     # 是否放量确认
-                "confidence_penalty": float  # 置信度惩罚（0-0.3）
+                "is_rejected": bool,      # 是否被硬过滤（成交量<30%均量）
+                "confidence_penalty": float,  # 置信度惩罚（0-0.5）
+                "filter_reason": str      # 过滤原因
             }
         """
         if len(volumes) < period + 1:
-            return {"volume_ratio": 1.0, "is_confirmed": True, "confidence_penalty": 0.0}
+            return {"volume_ratio": 1.0, "is_confirmed": True, "is_rejected": False, "confidence_penalty": 0.0, "filter_reason": ""}
         
         recent_volumes = np.array(volumes[-period:])
         avg_volume = np.mean(recent_volumes)
         current_volume = volumes[-1]
         
         if avg_volume <= 0:
-            return {"volume_ratio": 1.0, "is_confirmed": True, "confidence_penalty": 0.0}
+            return {"volume_ratio": 1.0, "is_confirmed": True, "is_rejected": False, "confidence_penalty": 0.0, "filter_reason": ""}
         
         volume_ratio = current_volume / avg_volume
         
-        # 放量标准：成交量 > 1.5倍均线
+        # 硬过滤：成交量 < 30% 均量直接拒绝
+        if volume_ratio < 0.3:
+            return {
+                "volume_ratio": float(volume_ratio),
+                "is_confirmed": False,
+                "is_rejected": True,
+                "confidence_penalty": 0.5,  # 50%惩罚
+                "filter_reason": "volume_below_30pct_avg",
+                "avg_volume": float(avg_volume),
+                "current_volume": float(current_volume)
+            }
+        
+        # 放量标准：成交量 >= 1.5倍均线
         is_confirmed = volume_ratio >= 1.5
         
         # 缩量惩罚：成交量 < 0.7倍均线时降置信度
@@ -313,15 +328,15 @@ class PriceFactors:
             confidence_penalty = 0.3  # 降低30%置信度
         elif volume_ratio < 1.0:
             confidence_penalty = 0.15
-        elif volume_ratio >= 1.5:
-            confidence_penalty = 0.0  # 放量，不惩罚
         else:
             confidence_penalty = 0.0
         
         return {
             "volume_ratio": float(volume_ratio),
             "is_confirmed": is_confirmed,
+            "is_rejected": False,
             "confidence_penalty": confidence_penalty,
+            "filter_reason": "",
             "avg_volume": float(avg_volume),
             "current_volume": float(current_volume)
         }
@@ -1246,11 +1261,13 @@ class SignalGenerator:
 
         # === 3. 成交量过滤 ===
         volumes = price_data.get("volumes", [])
-        volume_filter_result = {"volume_ratio": 1.5, "is_confirmed": True, "confidence_penalty": 0.0}
+        volume_filter_result = {"volume_ratio": 1.5, "is_confirmed": True, "is_rejected": False, "confidence_penalty": 0.0, "filter_reason": ""}
         if len(volumes) >= 20:
             volume_filter_result = PriceFactors.calc_volume_filter(volumes)
         factors["volume_ratio"] = volume_filter_result["volume_ratio"]
         factors["volume_confirmed"] = volume_filter_result["is_confirmed"]
+        factors["volume_rejected"] = volume_filter_result["is_rejected"]
+        factors["volume_filter_reason"] = volume_filter_result["filter_reason"]
 
         # === 4. 多因子融合 ===
         scores = self.calc_combined_score(factors, intel_report)
@@ -1358,7 +1375,18 @@ class SignalGenerator:
             # 更新factors中的atr值（供风控模块使用）
             factors["atr"] = atr_value
 
-        # === 8. 多周期确认后的最终方向判断 ===
+        # === 9. 成交量硬过滤检查 ===
+        # 如果成交量 < 30% 均量，直接拒绝信号
+        if volume_filter_result.get("is_rejected", False):
+            logger = logging.getLogger(__name__)
+            logger.info(f"[{symbol}] 成交量过滤拒绝: {volume_filter_result.get('filter_reason')} (ratio={volume_filter_result.get('volume_ratio', 0):.2f})")
+            direction = "wait"
+            entry_price = None
+            stop_loss = None
+            take_profit = None
+            rr_ratio = 0.0
+
+        # === 10. 多周期确认后的最终方向判断 ===
         # 只有在置信度 >= 0.3 且 (确认通过 或 override) 时才执行
         if direction != "wait":
             if not override_mt_filter and mt_filter_result["applied"]:
@@ -1424,6 +1452,8 @@ class SignalGenerator:
             "volume_info": {
                 "volume_ratio": round(volume_filter_result["volume_ratio"], 2),
                 "is_confirmed": volume_filter_result["is_confirmed"],
+                "is_rejected": volume_filter_result["is_rejected"],
+                "filter_reason": volume_filter_result.get("filter_reason", ""),
                 "confidence_penalty": round(volume_filter_result["confidence_penalty"], 3),
                 "has_data": len(volumes) >= 20
             },

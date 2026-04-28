@@ -10,7 +10,12 @@
   "position": {
     "base_position_pct": 2,
     "max_position_pct": 15,
-    "max_total_exposure": 40
+    "max_total_exposure": 40,
+    "gradual_steps": {
+      "enabled": true,
+      "max_step": 3,
+      "step_increment_pct": 4.5
+    }
   },
   "leverage": {
     "strong_trend": {"min_adx": 35, "leverage": 3, "multiplier": 1.5},

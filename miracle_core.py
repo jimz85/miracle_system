@@ -820,6 +820,114 @@ def calc_position_size(account_balance: float, entry_price: float,
     
     return position, contracts
 
+
+def calc_gradual_position_size(account_balance: float, entry_price: float,
+                               stop_loss_pct: float, leverage: float,
+                               current_step: int = 1,
+                               max_loss_pct: float = None) -> Dict[str, Any]:
+    """
+    渐进式仓位计算 - 分步建仓
+    
+    策略：
+    - Step 1: 初始仓位 base_position_pct
+    - Step 2: 行情有利时加仓 step_increment_pct
+    - Step 3: 再次加仓直到 max_position_pct
+    - 每步都有独立的止损点
+    
+    Args:
+        account_balance: 账户余额（USD）
+        entry_price: 入场价格
+        stop_loss_pct: 止损百分比（小数）
+        leverage: 杠杆倍数
+        current_step: 当前步数（1, 2, 3）
+        max_loss_pct: 最大单笔亏损比例
+    
+    Returns:
+        {
+            "position_size": float,      # 仓位大小（USD）
+            "contracts": float,          # 合约数量
+            "position_pct": float,      # 仓位占比（%）
+            "step": int,                 # 当前步数
+            "is_final_step": bool,       # 是否最后一步
+            "next_step_pct": float,      # 下一步仓位%（用于显示）
+            "stop_loss_pct": float       # 本步止损%
+        }
+    """
+    if max_loss_pct is None:
+        max_loss_pct = CONFIG["risk"]["max_loss_per_trade_pct"]
+    
+    pos_config = CONFIG["position"]
+    gradual_config = pos_config.get("gradual_steps", {})
+    
+    if not gradual_config.get("enabled", False):
+        # 如果未启用渐进式，返回标准仓位
+        position, contracts = calc_position_size(
+            account_balance, entry_price, stop_loss_pct, leverage, max_loss_pct
+        )
+        return {
+            "position_size": position,
+            "contracts": contracts,
+            "position_pct": position / account_balance * 100,
+            "step": 1,
+            "is_final_step": True,
+            "next_step_pct": 0,
+            "stop_loss_pct": stop_loss_pct
+        }
+    
+    base_pct = pos_config["base_position_pct"] / 100
+    max_pos_pct = pos_config["max_position_pct"] / 100
+    max_step = gradual_config.get("max_step", 3)
+    step_increment = gradual_config.get("step_increment_pct", 4.5) / 100
+    
+    # 计算当前步的仓位
+    # Step 1: base_pct
+    # Step 2: base_pct + step_increment
+    # Step 3: min(base_pct + 2*step_increment, max_pos_pct)
+    current_step = max(1, min(current_step, max_step))
+    
+    if current_step == 1:
+        target_pct = base_pct
+    elif current_step >= max_step:
+        target_pct = max_pos_pct
+    else:
+        # 中间步：逐步增加
+        target_pct = min(base_pct + (current_step - 1) * step_increment, max_pos_pct)
+    
+    # 计算基于风险的仓位
+    risk_amount = account_balance * max_loss_pct
+    risk_per_dollar = leverage * stop_loss_pct
+    if risk_per_dollar > 0:
+        risk_based_position = risk_amount / risk_per_dollar
+    else:
+        risk_based_position = account_balance * target_pct
+    
+    # 取风险仓位和目标仓位的较小值
+    target_position = account_balance * target_pct
+    position = min(risk_based_position, target_position)
+    
+    # 限制最大仓位
+    max_position = account_balance * max_pos_pct
+    position = min(position, max_position)
+    
+    # 计算下一步仓位
+    if current_step < max_step:
+        next_target_pct = min(base_pct + current_step * step_increment, max_pos_pct)
+        next_step_pct = (next_target_pct - target_pct) * 100  # 转换为百分比
+    else:
+        next_step_pct = 0
+    
+    contracts = position / entry_price if entry_price > 0 else 0
+    
+    return {
+        "position_size": position,
+        "contracts": contracts,
+        "position_pct": position / account_balance * 100,
+        "step": current_step,
+        "is_final_step": current_step >= max_step,
+        "next_step_pct": next_step_pct,
+        "stop_loss_pct": stop_loss_pct
+    }
+
 # ===== 止损百分比计算 =====
 
 def calc_stop_loss_pct(entry_price: float, atr: float, account_balance: float,
@@ -869,7 +977,7 @@ def check_stops(position: Dict, current_price: float,
     
     Returns:
         (should_exit, reason)
-        reason: "none" | "sl" | "tp" | "time" | "atr" | "daily_loss"
+        reason: "none" | "sl" | "tp" | "structure" | "atr"
     """
     direction = position["direction"]
     entry_price = position["entry_price"]
@@ -899,11 +1007,30 @@ def check_stops(position: Dict, current_price: float,
         elif direction == "short" and current_price >= atr_stop:
             return True, "atr"
     
-    # 时间止损
-    max_hours = risk_config["max_hold_hours"]
+    # 动态结构止损: 当持仓超过4h后，使用ATR动态跟踪止损替代时间止损
+    # 结构止损原则：不在突破点反向，而是在趋势破坏点退出
     entry_dt = datetime.fromisoformat(entry_time)
-    if datetime.now() - entry_dt > timedelta(hours=max_hours):
-        return True, "time"
+    hold_hours = (datetime.now() - entry_dt).total_seconds() / 3600
+    if hold_hours >= 4:  # 前4小时用固定SL
+        # ATR动态止损：使用1.5倍ATR作为结构止损距离
+        if atr is None or atr <= 0:
+            # 如果没有ATR，使用价格波动率估算
+            price_range = abs(take_profit - entry_price) if take_profit and entry_price else entry_price * 0.02
+            atr_stop_distance = price_range * 0.5  # 50%价格范围作为动态止损
+        else:
+            atr_stop_distance = atr * 1.5
+        
+        if direction == "long":
+            # 多头：结构止损 = 当前价 - 1.5*ATR（追踪高点，只跟踪不回头）
+            struct_stop = current_price - atr_stop_distance
+            if struct_stop > stop_loss:  # 只跟踪不回头
+                if current_price <= struct_stop:
+                    return True, "structure"
+        else:  # short
+            struct_stop = current_price + atr_stop_distance
+            if struct_stop < stop_loss:  # 只跟踪不回头
+                if current_price >= struct_stop:
+                    return True, "structure"
     
     return False, "none"
 

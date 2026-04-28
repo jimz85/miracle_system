@@ -34,13 +34,13 @@ class PositionMonitor:
         self.config = config
         self.positions: Dict[str, Dict] = {}
 
-    def monitor(self, trade: Dict, current_price: float) -> Tuple[bool, str]:
+    def monitor(self, trade: Dict, current_price: float, atr: float = None) -> Tuple[bool, str]:
         """
         监控持仓
 
         Returns:
             (should_exit, reason)
-            reason: "none" | "sl" | "tp" | "time" | "atr"
+            reason: "none" | "sl" | "tp" | "structure" | "atr"
         """
         symbol = trade.get("symbol")
         side = trade.get("side")
@@ -61,12 +61,31 @@ class PositionMonitor:
             if current_price <= take_profit:
                 return True, "tp"
 
-        # 时间止损
+        # 动态结构止损: 当持仓超过4h后，使用ATR动态跟踪止损替代时间止损
+        # 结构止损原则：不在突破点反向，而是在趋势破坏点退出
         if entry_time_str:
             entry_time = datetime.fromisoformat(entry_time_str)
             hold_hours = (datetime.now() - entry_time).total_seconds() / 3600
-            if hold_hours >= self.config.max_hold_hours:
-                return True, "time"
+            if hold_hours >= 4:  # 前4小时用固定SL
+                # ATR动态止损：使用1.5倍ATR作为结构止损距离
+                if atr is None:
+                    # 如果没有ATR，使用价格波动率估算
+                    price_range = abs(take_profit - entry_price) if take_profit and entry_price else entry_price * 0.02
+                    atr_stop_distance = price_range * 0.5  # 50%价格范围作为动态止损
+                else:
+                    atr_stop_distance = atr * 1.5
+                
+                if side == "long":
+                    # 多头：结构止损 = 最高价 - 1.5*ATR（追踪高点）
+                    struct_stop = current_price - atr_stop_distance
+                    if struct_stop > stop_loss:  # 只跟踪不回头
+                        if current_price <= struct_stop:
+                            return True, "structure"
+                else:  # short
+                    struct_stop = current_price + atr_stop_distance
+                    if struct_stop < stop_loss:  # 只跟踪不回头
+                        if current_price >= struct_stop:
+                            return True, "structure"
 
         return False, "none"
 
