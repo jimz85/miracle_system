@@ -45,6 +45,7 @@ from agents.agent_learner import AgentLearner
 
 # ===== Memory模块 =====
 from core.memory import get_structured_memory
+from core.market_intel_base import get_fomc_confidence_multiplier
 
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
@@ -1165,6 +1166,14 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     else:
         logger.debug("Memory置信度乘数:1.0(无调整)")
 
+    # FOMC宏观事件置信度乘数 (窗口期降低50%)
+    fomc_multiplier = get_fomc_confidence_multiplier(1.0)  # 1.0基准，返回实际乘数
+    if fomc_multiplier < 1.0:
+        for c in candidates:
+            c['score'] = c['score'] * fomc_multiplier
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+        logger.warning(f"FOMC窗口期! 置信度降{fomc_multiplier:.0%}, 候选重排后top={candidates[0]['symbol'] if candidates else 'none'}")
+
     # 加载本地OPEN交易 (必须在select_best前)
     local_trades = get_open_trades()
 
@@ -1254,6 +1263,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'phantom_warnings': phantom_warnings,
             'vetoed_pattern_keys': vetoed_pattern_keys,
             'memory_multiplier': memory_multiplier,
+            'fomc_multiplier': fomc_multiplier,
         }
     
     if best and best['score'] > 0.5:
@@ -1364,6 +1374,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'phantom_warnings': phantom_warnings,
             'vetoed_pattern_keys': vetoed_pattern_keys,
             'memory_multiplier': memory_multiplier,
+            'fomc_multiplier': fomc_multiplier,
         }
     
     return {
@@ -1376,6 +1387,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'phantom_warnings': phantom_warnings,
         'vetoed_pattern_keys': vetoed_pattern_keys,
         'memory_multiplier': memory_multiplier,
+        'fomc_multiplier': fomc_multiplier,
     }
 
 # ===== 入口 =====

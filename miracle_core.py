@@ -733,14 +733,14 @@ def calc_trend_strength(factors: Dict[str, Any]) -> Tuple[int, str]:
 
 # ===== 杠杆计算 =====
 
-def calc_leverage(trend_strength: int, confidence: float) -> Tuple[float, float]:
+def calc_leverage(trend_strength: int, confidence: int) -> Tuple[int, float]:
     """
-    根据趋势强度和置信度计算杠杆
+    计算杠杆和仓位乘数
     
     Args:
         trend_strength: 趋势强度 0-100
         confidence: 因子置信度 0-100
-    
+        
     Returns:
         (leverage, position_multiplier)
     """
@@ -759,6 +759,11 @@ def calc_leverage(trend_strength: int, confidence: float) -> Tuple[float, float]
     
     # 置信度调整
     confidence_factor = confidence / 100  # 0-1
+    
+    # FOMC窗口期置信度降低50%
+    from core.market_intel_base import get_fomc_confidence_multiplier
+    confidence_factor = get_fomc_confidence_multiplier(confidence_factor * 100) / 100
+    
     adjusted_multiplier = base_multiplier * (0.5 + confidence_factor * 0.5)
     
     return base_leverage, adjusted_multiplier

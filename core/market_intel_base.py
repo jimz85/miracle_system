@@ -171,6 +171,114 @@ class CacheData:
 
 
 # ============================================================
+# FOMC事件检测
+# ============================================================
+
+# FOMC会议日期（2026年 - 约每6-8周一次）
+# 格式：(year, month, day)
+KNOWN_FOMC_DATES_2026 = [
+    # 2026年FOMC会议日期（通常在周二或周三）
+    # 这些是估计日期，实际日期以美联储官方发布为准
+    (2026, 1, 27),   # 1月会议
+    (2026, 3, 17),   # 3月会议
+    (2026, 5, 4),    # 5月会议
+    (2026, 6, 15),   # 6月会议
+    (2026, 7, 27),   # 7月会议
+    (2026, 9, 15),   # 9月会议
+    (2026, 11, 2),   # 11月会议
+    (2026, 12, 14),  # 12月会议
+]
+
+# FOMC窗口期（天）- 会议前后各2天为高波动期
+FOMC_WINDOW_DAYS = 2
+
+
+def is_fomc_window(dt: datetime = None) -> bool:
+    """
+    检测当前是否处于FOMC窗口期
+    
+    FOMC窗口期定义：会议日前后各2天（共5天窗口）
+    在此期间市场波动性增加，置信度应降低50%
+    
+    Args:
+        dt: 要检查的时间，默认为当前时间
+        
+    Returns:
+        bool: 是否处于FOMC窗口期
+    """
+    from datetime import timedelta
+    
+    if dt is None:
+        dt = datetime.now()
+    
+    # 检查是否在已知FOMC日期的窗口内
+    for fomc_date in KNOWN_FOMC_DATES_2026:
+        meeting = datetime(fomc_date[0], fomc_date[1], fomc_date[2])
+        window_start = meeting - timedelta(days=FOMC_WINDOW_DAYS)
+        window_end = meeting + timedelta(days=FOMC_WINDOW_DAYS + 1)  # +1因为end是不包含的
+        
+        if window_start <= dt < window_end:
+            return True
+    
+    return False
+
+
+def get_fomc_confidence_multiplier(confidence: float, dt: datetime = None) -> float:
+    """
+    根据FOMC窗口期调整置信度
+    
+    在FOMC窗口期内，置信度降低50%（乘以0.5）
+    
+    Args:
+        confidence: 原始置信度 (0-100)
+        dt: 要检查的时间，默认为当前时间
+        
+    Returns:
+        float: 调整后的置信度
+    """
+    if is_fomc_window(dt):
+        return confidence * 0.5
+    return confidence
+
+
+def get_fomc_status(dt: datetime = None) -> Dict[str, Any]:
+    """
+    获取FOMC状态信息
+    
+    Args:
+        dt: 要检查的时间，默认为当前时间
+        
+    Returns:
+        Dict: 包含FOMC状态的字典
+    """
+    from datetime import timedelta
+    
+    if dt is None:
+        dt = datetime.now()
+    
+    in_window = is_fomc_window(dt)
+    
+    # 找到最近的FOMC会议
+    nearest_meeting = None
+    days_to_meeting = None
+    
+    for fomc_date in KNOWN_FOMC_DATES_2026:
+        meeting = datetime(fomc_date[0], fomc_date[1], fomc_date[2])
+        if meeting >= dt:
+            nearest_meeting = meeting
+            days_to_meeting = (meeting - dt).days
+            break
+    
+    return {
+        "in_fomc_window": in_window,
+        "confidence_multiplier": 0.5 if in_window else 1.0,
+        "nearest_meeting": nearest_meeting.isoformat() if nearest_meeting else None,
+        "days_to_meeting": days_to_meeting,
+        "window_days": FOMC_WINDOW_DAYS,
+    }
+
+
+# ============================================================
 # 工具函数
 # ============================================================
 

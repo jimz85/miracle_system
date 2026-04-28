@@ -35,11 +35,8 @@ anthropic>=0.18.0          # Claude
 openai>=1.12.0             # GPT-4o, DeepSeek (compatible API)
 google-genai>=0.3.0        # Gemini
 
-# Vector Memory (ChromaDB)
-chromadb>=0.4.22
-sentence-transformers>=2.2.0  # Local embeddings
-
-# Structured Memory (SQLite is built-in)
+# SQLite Memory (built-in, no external dependency)
+# Note: ChromaDB removed, using SQLite for simpler deployment
 
 # Async support
 aiohttp>=3.9.0

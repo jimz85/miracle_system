@@ -74,17 +74,33 @@ class EquitySnapshot:
     """权益快照"""
     initial_equity: float = 0.0
     peak_equity: float = 0.0
+    daily_snapshot: float = 0.0  # 日初权益快照
+    daily_snapshot_date: str = ""  # YYYY-MM-DD格式
     snapshots: List[float] = field(default_factory=list)
 
     def update(self, current_equity: float) -> None:
         """更新权益快照"""
+        from datetime import date
+        today = str(date.today())
+        
         if self.initial_equity == 0.0:
             self.initial_equity = current_equity
             self.peak_equity = current_equity
+            self.daily_snapshot = current_equity
+            self.daily_snapshot_date = today
 
         self.snapshots.append(current_equity)
         if current_equity > self.peak_equity:
             self.peak_equity = current_equity
+
+        # 新的一天：重置日初快照
+        if today != self.daily_snapshot_date:
+            self.daily_snapshot = current_equity
+            self.daily_snapshot_date = today
+        else:
+            # 同一天：更新日初快照为当日的最低点（用于恢复检测）
+            if current_equity < self.daily_snapshot:
+                self.daily_snapshot = current_equity
 
         # 保持最近1000个快照
         if len(self.snapshots) > 1000:
@@ -97,6 +113,17 @@ class EquitySnapshot:
     def get_peak(self) -> float:
         """获取历史最高权益"""
         return self.peak_equity
+    
+    def get_daily_snapshot(self) -> float:
+        """获取日初权益快照"""
+        return self.daily_snapshot if self.daily_snapshot > 0 else self.initial_equity
+    
+    def get_recovery_pct(self, current_equity: float) -> float:
+        """获取相对日初快照的恢复百分比"""
+        daily_snap = self.get_daily_snapshot()
+        if daily_snap <= 0:
+            return 0.0
+        return (current_equity - daily_snap) / daily_snap
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -134,6 +161,9 @@ class CircuitBreaker:
         SurvivalTier.CRITICAL: 0.0,   # 保持0%
     }
 
+    # 恢复所需最小涨幅 (相对日初快照)
+    MIN_RECOVERY_PCT = 0.03  # 3%
+
     def __init__(
         self,
         max_daily_loss_pct: float = 0.05,      # 单日最大亏损5%
@@ -150,6 +180,7 @@ class CircuitBreaker:
         self.consecutive_losses = 0
         self.equity_snapshot = EquitySnapshot()
         self.last_trade_time: Optional[float] = None
+        self._last_recovery_check_equity: float = 0.0  # 上次检查时的权益
 
     def check_treasury_limits(
         self,
@@ -191,7 +222,7 @@ class CircuitBreaker:
 
         # 4. 渐进恢复检查
         if new_tier == SurvivalTier.NORMAL and self.current_tier != SurvivalTier.NORMAL:
-            new_tier = self._check_recovery()
+            new_tier = self._check_recovery(current_equity)
 
         self.current_tier = new_tier
 
@@ -254,12 +285,32 @@ class CircuitBreaker:
         else:  # PAUSED
             return 0.0
 
-    def _check_recovery(self) -> SurvivalTier:
-        """检查是否可以从当前层级恢复"""
-        # 只有连亏计数为0才能恢复正常
-        if self.consecutive_losses == 0:
-            return SurvivalTier.NORMAL
-        return self.current_tier
+    def _check_recovery(self, current_equity: float) -> SurvivalTier:
+        """
+        检查是否可以从当前层级恢复
+        
+        恢复条件:
+        1. 连亏计数必须为0
+        2. 净值必须比日初快照回升>=3%
+        
+        Args:
+            current_equity: 当前权益
+            
+        Returns:
+            SurvivalTier: 恢复后的层级
+        """
+        # 条件1: 连亏计数必须为0
+        if self.consecutive_losses != 0:
+            return self.current_tier
+        
+        # 条件2: 净值必须比日初快照回升>=3%
+        recovery_pct = self.equity_snapshot.get_recovery_pct(current_equity)
+        if recovery_pct < self.MIN_RECOVERY_PCT:
+            # 不能恢复，保持当前层级
+            return self.current_tier
+        
+        # 满足所有条件，恢复到NORMAL
+        return SurvivalTier.NORMAL
 
     def _get_tier_reason(self, tier: SurvivalTier, drawdown_pct: float) -> str:
         """获取层级的描述原因"""
