@@ -6,13 +6,39 @@ Miracle-Kronos Unified Trading System
 - Miracle: Multi-agent架构 + 适应性学习 + 白名单模式
 - Kronos: OKX实盘接口 + 全自动cron + IC投票 + 五层熔断
 
+P0+P1修复:
+- 异步并发: ThreadPoolExecutor并发扫描
+- OCO验证: 下单前参数校验
+- Treasury预检查: 交易前熔断检查
+- 集中度检查: 仓位集中度限制
+- 日志幂等: 幂等日志写入
+
 使用方式:
   python miracle_kronos.py --mode audit --equity 100000
   python miracle_kronos.py --mode live
 """
-import os, sys, json, time, argparse
+import os, sys, json, time, argparse, logging
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, Dict, List, Tuple, Any
+
+# ===== 内部模块 =====
+from core.kronos_utils import (
+    atomic_write_json,
+    check_treasury_trade_allowed,
+    check_treasury_tier,
+    check_concentration,
+    validate_oco_order,
+    check_existing_oco_orders,
+    parallel_scan_coins,
+    generate_trade_idempotency_key,
+    check_and_record_idempotent,
+    get_account_balance as _get_balance,
+    okx_req as _okx_req,
+    TREASURY_LIMITS,
+    CONCENTRATION_LIMITS,
+)
 
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
@@ -21,8 +47,12 @@ STATE_DIR.mkdir(exist_ok=True)
 TREASURY_FILE = STATE_DIR / 'miracle_treasury.json'
 TRADES_FILE = STATE_DIR / 'miracle_trades.json'
 IC_WEIGHTS_FILE = STATE_DIR / 'factor_weights.json'
+IDEMPOTENCY_LOG = STATE_DIR / 'trade_idempotency.json'
 
-# ===== OKX API (from kronos_utils) =====
+# 日志配置
+logger = logging.getLogger('miracle_kronos')
+
+# ===== OKX API (兼容旧接口) =====
 def _sign(ts, method, path, body=''):
     import hmac, hashlib, base64
     key = os.environ.get('OKX_API_KEY', '')
@@ -393,8 +423,16 @@ def save_whitelist(wl):
     with open(STATE_DIR / 'whitelist.json', 'w') as f:
         json.dump({'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])}, f)
 
+Gemma4_TIMEOUT = 20  # gemma4超时20秒，超时跳过不否决
+
 def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
-    """调用gemma4获取方向判断，每币独立缓存5分钟"""
+    """调用gemma4获取方向判断，每币独立缓存5分钟
+    返回0-1置信度分数：
+    - 1.0 = 强烈LONG
+    - 0.5 = 中立/WAIT
+    - 0.0 = 强烈SHORT
+    - 负数 = gemma4否决(超时/异常)
+    """
     import time as _time
     cache_file = STATE_DIR / 'gemma_cache.json'
 
@@ -409,29 +447,93 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
         except Exception:
             pass
 
-    # 调用gemma4
-    prompt = (
-        f"你是一个专业的加密货币交易员。当前{symbol}市场数据：\n"
-        f"- RSI(14): {rsi:.1f} (超买>70, 超卖<30)\n"
-        f"- ADX: {adx:.1f} (趋势强度，>25为强趋势)\n"
-        f"- 布林带位置: {bb_pos:.1f}% (<20下轨, >80上轨)\n"
-        f"短期(1-4小时)方向？只输出一个词：LONG 或 SHORT 或 WAIT"
-    )
+    # ========== 职业操盘手prompt格式 (参考gemma4_central_decision) ==========
+    # 判断趋势方向
+    if adx > 25:
+        trend_desc = "强趋势"
+        trend_dir = "上升" if bb_pos < 50 else "下降"
+    elif adx > 15:
+        trend_desc = "弱趋势"
+        trend_dir = "偏多" if bb_pos < 50 else "偏空"
+    else:
+        trend_desc = "震荡"
+        trend_dir = "中性"
+
+    # RSI解读
+    if rsi < 30:
+        rsi_desc = "严重超卖"
+    elif rsi < 40:
+        rsi_desc = "偏超卖"
+    elif rsi > 70:
+        rsi_desc = "严重超买"
+    elif rsi > 60:
+        rsi_desc = "偏超买"
+    else:
+        rsi_desc = "正常"
+
+    # 布林带解读
+    if bb_pos < 20:
+        bb_desc = "价格贴近下轨(支撑位)"
+    elif bb_pos > 80:
+        bb_desc = "价格贴近上轨(压力位)"
+    elif bb_pos < 35:
+        bb_desc = "价格偏向下轨"
+    elif bb_pos > 65:
+        bb_desc = "价格偏向上轨"
+    else:
+        bb_desc = "价格在中部"
+
+    prompt = f"""你是专业加密货币操盘手。分析{symbol}短期走势。
+
+## 市场数据
+- RSI(14): {rsi:.1f} → {rsi_desc}
+- ADX: {adx:.1f} → {trend_desc}
+- 布林带位置: {bb_pos:.1f}% → {bb_desc}
+- 当前价格: ${price:.4f}
+
+## 你的任务
+作为职业操盘手，基于以上数据判断短期(1-4小时)方向和信心程度。
+
+## 输出格式（严格遵守）
+confidence: 0.0-1.0之间的置信度分数
+direction: LONG 或 SHORT
+reason: 一句话分析理由
+
+confidence表示你对方向判断的确信程度：
+- 0.9-1.0 = 强烈信号（多个指标共振）
+- 0.7-0.9 = 较强信号（2个以上指标支持）
+- 0.5-0.7 = 中性信号（指标不一致或不确定）
+- 0.3-0.5 = 弱信号（仅1个指标支持）
+- 0.0-0.3 = 无信号（指标矛盾或不适合交易）
+
+只输出上述格式，不要其他内容。
+"""
 
     try:
         import subprocess
         result = subprocess.run(
             ['ollama', 'run', 'gemma4-2b-heretic:latest', prompt],
-            capture_output=True, text=True, timeout=20
+            capture_output=True, text=True, timeout=Gemma4_TIMEOUT
         )
-        output = result.stdout.strip().upper()
+        output = result.stdout.strip()
 
-        if 'LONG' in output[:10]:
-            vote = 1
-        elif 'SHORT' in output[:10]:
-            vote = -1
-        else:
-            vote = 0
+        # 解析置信度
+        vote = 0.5  # 默认中立
+        try:
+            # 尝试提取 confidence: X.XX 格式
+            import re
+            conf_match = re.search(r'confidence:\s*([\d.]+)', output, re.IGNORECASE)
+            if conf_match:
+                vote = float(conf_match.group(1))
+            else:
+                # 备选：根据direction关键词判断
+                output_upper = output.upper()[:20]
+                if 'LONG' in output_upper[:20] or 'SHORT' in output_upper[:20]:
+                    # SHORT和LONG都给予0.6分，由置信度regex提取值决定
+                    # SHORT不是低分理由，只是方向
+                    vote = 0.6
+        except Exception:
+            vote = 0.5
 
         # 写入每币缓存
         all_cache = {}
@@ -440,13 +542,14 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
                 all_cache = json.load(open(cache_file))
             except Exception:
                 pass
-        all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:30]}
+        all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100]}
         with open(cache_file, 'w') as f:
             json.dump(all_cache, f)
 
         return vote
     except Exception as e:
-        return 0
+        # 超时或其他异常返回-1表示跳过（不否决）
+        return -1
 
 
 def get_pattern_key(rsi, adx, bb_pos, direction):
@@ -527,9 +630,26 @@ def record_trade(trade):
     save_trades(trades)
 
 
-# ===== OCO下单 =====
-def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct):
-    """OCO bracket: 止损+止盈同时挂单"""
+# ===== OCO下单 (带验证) =====
+def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0):
+    """
+    OCO bracket: 止损+止盈同时挂单
+    P1修复: 下单前完整验证
+    """
+    # P1: OCO订单验证
+    valid, reason, details = validate_oco_order(
+        instId, side, sz, entry_price, sl_pct, tp_pct, equity
+    )
+    if not valid:
+        logger.warning(f"OCO验证失败 {instId}: {reason}")
+        return {'code': '99999', 'msg': f'OCO验证失败: {reason}', 'details': details}
+    
+    # P1: 检查已有活跃OCO订单
+    has_active, order_info = check_existing_oco_orders(instId)
+    if has_active:
+        logger.warning(f"发现活跃OCO订单 {instId}: {order_info}")
+        return {'code': '99999', 'msg': f'已有活跃OCO: {order_info}'}
+    
     if side == 'long':
         sl_price = round(entry_price * (1 - sl_pct), 4)
         tp_price = round(entry_price * (1 + tp_pct), 4)
@@ -547,14 +667,12 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct):
         'side': close_side,
         'ordType': 'oco',
         'sz': str(int(sz)),
-        'posSide': pos_side,          # ← 关键：添加 posSide
+        'posSide': pos_side,
         'slTriggerPx': str(sl_price),
-        'slOrdPx': '-1',             # ← 市价触发
+        'slOrdPx': '-1',             # 市价触发
         'tpTriggerPx': str(tp_price),
-        'tpOrdPx': '-1',            # ← 市价触发
-        # 移除 slOrdType / tpOrdType 字段
+        'tpOrdPx': '-1',            # 市价触发
     })
-    # ← 关键修复：使用正确的 /order-algo 端点
     data = okx_req('POST', '/api/v5/trade/order-algo', body)
     return data
 
@@ -693,34 +811,86 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     }
 
 def select_best(candidates, positions, local_trades=None):
-    """选最优候选"""
+    """选最优候选
+    gemma4否决机制: gemma_vote < 0.3 的候选币不参与排名
+    - gemma_vote >= 0.3: 参与排名
+    - gemma_vote < 0.3: 过滤掉不参与排名
+    - gemma_vote = -1: 跳过（gemma超时/异常，不否决）
+    """
     if not candidates:
         return None
     held = {p['instId'].replace('-USDT-SWAP', '') for p in positions}
     if local_trades:
         held.update(t.get('coin', '') for t in local_trades)
     available = [c for c in candidates if c['symbol'] not in held]
-    if not available:
+    
+    # gemma4否决: gemma_vote < 0.3 则不参与排名
+    # gemma_vote存储在 votes['Gemma'] 中
+    # -1 表示跳过(超时/异常)，0.0-0.3表示低置信度否决
+    vetoed = []
+    filtered = []
+    for c in available:
+        gemma_vote = c.get('votes', {}).get('Gemma', 0)
+        if 0 <= gemma_vote < 0.3:
+            vetoed.append(c['symbol'])
+            continue
+        filtered.append(c)
+    
+    if vetoed:
+        print(f"gemma4否决: {vetoed} (gemma_vote<0.3)")
+    
+    if not filtered:
         return None
-    return max(available, key=lambda x: x['score'])
+    return max(filtered, key=lambda x: x['score'])
+
+def _parallel_scan_wrapper(instId_symbol, equity, btc_trend, weights):
+    """并行扫描包装器"""
+    instId, symbol = instId_symbol
+    try:
+        return scan_coin(instId, symbol, equity, btc_trend, weights)
+    except Exception as e:
+        logger.warning(f"扫描失败 {instId}: {e}")
+        return None
 
 def run_scan(equity, btc_trend='neutral', mode='audit'):
-    """主扫描入口"""
-    treasury = load_treasury()
-    tier, can_trade, reason, losses = check_tier(equity, treasury)
+    """
+    主扫描入口
     
+    P0+P1修复:
+    - 异步并发: ThreadPoolExecutor并发扫描
+    - Treasury预检查: 交易前熔断检查
+    - 集中度检查: 仓位集中度限制
+    - 日志幂等: 幂等日志写入
+    """
+    treasury = load_treasury()
+    
+    # P0: Treasury预检查 - 交易前必须验证
+    treasury_allowed, treasury_reason, treasury_details = check_treasury_trade_allowed(
+        equity, treasury
+    )
+    if not treasury_allowed:
+        return {
+            'action': 'blocked', 
+            'tier': treasury_details.get('tier', '?'),
+            'reason': treasury_reason,
+            'treasury_check': treasury_details
+        }
+    
+    # 获取熔断层级
+    tier, can_trade, reason, losses = check_treasury_tier(equity, treasury)
     if not can_trade:
         return {'action': 'blocked', 'tier': tier, 'reason': reason}
     
     weights = load_ic_weights()
     positions = get_positions() if mode == 'live' else []
     
-    # 扫描所有币
-    candidates = []
-    for instId, symbol in SCAN_COINS:
-        result = scan_coin(instId, symbol, equity, btc_trend, weights)
-        if result:
-            candidates.append(result)
+    # P0: 并发扫描所有币 (替代原有串行for循环)
+    candidates = parallel_scan_coins(
+        scan_func=_parallel_scan_wrapper,
+        coins=SCAN_COINS,
+        max_workers=5,
+        timeout=30.0
+    )
     
     candidates.sort(key=lambda x: x['score'], reverse=True)
 
@@ -751,7 +921,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         elif pnl_pct >= TP_PCT:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
 
-    # 2. 本地记录持仓追踪 (已在select_best前加载)
+    # 2. 本地记录持仓追踪
     for trade in local_trades:
         sym = trade.get('coin', '')
         inst_id = f'{sym}-USDT-SWAP'
@@ -762,11 +932,9 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         if current == 0:
             continue
 
-        # 更新时间戳 (如果没有current_price)
         if 'current_price' not in trade:
             trade['current_price'] = current
 
-        # 计算浮动盈亏
         if direction == 'long':
             pnl_pct = (current - entry) / entry
         else:
@@ -775,7 +943,6 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         trade['current_pnl_pct'] = pnl_pct
         trade['current_price'] = current
 
-        # 时间止损: 超过24小时强制平仓
         from datetime import datetime as dt
         try:
             open_dt = dt.fromisoformat(open_time)
@@ -786,7 +953,6 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         except Exception:
             trade['age_hours'] = 0
 
-        # 移动止损: 盈利超过3%后，回撤50%触发
         if pnl_pct > 0.03:
             peak_pnl = trade.get('peak_pnl_pct', pnl_pct)
             if pnl_pct > peak_pnl:
@@ -796,13 +962,11 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                 if drawdown > peak_pnl * 0.5:
                     position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(回撤{drawdown:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
 
-        # SL/TP检查
         if pnl_pct <= -SL_PCT:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
         elif pnl_pct >= TP_PCT:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
 
-    # 保存更新后的本地交易记录 (只保留OPEN)
     if local_trades:
         open_only = [t for t in local_trades if t.get('status') == 'OPEN']
         save_trades(open_only)
@@ -820,21 +984,51 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     
     if best and best['score'] > 0.5:
         if tier == 'caution':
-            best['score'] *= 0.5  # caution层降权
+            best['score'] *= 0.5
         
         if mode == 'live':
             # 计算仓位
             sz_dollar = equity * POSITION_SIZE_PCT
             entry = best['entry']
             sl_dollar = entry * SL_PCT
-            sz = int(sz_dollar / (entry * SL_PCT * 100))  # 合约乘数100
+            sz = int(sz_dollar / (entry * SL_PCT * 100))
             
+            # P1: 集中度检查
+            new_trade_pct = POSITION_SIZE_PCT
+            concentration_allowed, conc_reason, conc_details = check_concentration(
+                symbol=best['symbol'],
+                new_trade_pct=new_trade_pct,
+                current_positions=positions,
+                equity=equity
+            )
+            if not concentration_allowed:
+                logger.warning(f"集中度检查失败 {best['symbol']}: {conc_reason}")
+                return {
+                    'action': 'concentration_blocked',
+                    'best': best,
+                    'tier': tier,
+                    'equity': equity,
+                    'reason': conc_reason,
+                    'concentration_details': conc_details
+                }
+            
+            # P1: OCO下单 (带equity参数用于验证)
             result = place_oco(
                 best['instId'], best['direction'], sz,
-                entry, best['sl'], best['tp']
+                entry, best['sl'], best['tp'], equity
             )
             
             if result.get('code') == '0':
+                # P5: 日志幂等 - 生成幂等键
+                open_time_iso = datetime.now().isoformat()
+                idempotency_key = generate_trade_idempotency_key(
+                    symbol=best['symbol'],
+                    direction=best['direction'],
+                    entry_price=entry,
+                    size=float(sz_dollar),
+                    timestamp=open_time_iso
+                )
+                
                 trade = {
                     'id': f"mk_{best['symbol']}_{int(time.time())}",
                     'coin': best['symbol'],
@@ -845,10 +1039,26 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'size_usd': sz_dollar,
                     'score': best['score'],
                     'pattern_key': best['pattern_key'],
-                    'open_time': datetime.now().isoformat(),
+                    'open_time': open_time_iso,
                     'status': 'OPEN',
+                    'idempotency_key': idempotency_key,  # P5: 幂等键
                 }
+                
+                # P5: 幂等检查 - 防止重复记录
+                is_dup, dup_msg = check_and_record_idempotent(
+                    IDEMPOTENCY_LOG, idempotency_key, trade
+                )
+                if is_dup:
+                    logger.warning(f"重复交易检测: {dup_msg}")
+                    return {
+                        'action': 'duplicate_trade',
+                        'best': best,
+                        'idempotency_key': idempotency_key,
+                        'message': dup_msg
+                    }
+                
                 record_trade(trade)
+                logger.info(f"开仓成功: {best['symbol']} {best['direction']} @ {entry}")
             else:
                 return {'action': 'order_failed', 'result': result, 'best': best}
         

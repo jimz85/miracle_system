@@ -12,10 +12,16 @@ Agent-S: Signal Generation Agent for Miracle 1.0.1
 
 import uuid
 import json
+import logging
 import numpy as np
+import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
+
+# Core modules
+from core.regime_classifier import RegimeClassifier, MarketRegime
+from core.ic_weights import get_weights as get_ic_weights
 
 
 # ============================================================================
@@ -888,16 +894,78 @@ class SignalGenerator:
 
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
-        self.weights = self.config.get("weights", {
-            "price_momentum": 0.6,
-            "news_sentiment": 0.2,
-            "onchain": 0.1,
-            "wallet": 0.1
-        })
+        
+        # 加载IC权重，替换硬编码的0.6/0.2/0.1/0.1
+        # IC权重反映各因子历史预测精度
+        self._load_ic_weights()
+        
         self.whitelist = WhitelistFilter()
 
         # 自学习模式数据库
         self.pattern_db: Dict[str, List[Dict]] = defaultdict(list)
+        
+        # RegimeClassifier实例
+        self._regime_classifier = RegimeClassifier()
+
+    def _load_ic_weights(self) -> None:
+        """
+        从IC权重系统加载动态权重，替换硬编码权重
+        
+        IC权重因子: rsi, macd, adx, bollinger, momentum
+        信号因子: price_momentum, news_sentiment, onchain, wallet
+        
+        映射策略:
+        - price_momentum: 基于IC权重最高的三个技术因子(rsi, macd, momentum)的平均
+        - news_sentiment: 基于IC权重中的macd(技术信号)
+        - onchain: 使用固定较低权重(链上数据置信度低)
+        - wallet: 使用固定较低权重(钱包数据置信度低)
+        """
+        try:
+            ic_weights = get_ic_weights()
+            
+            # price_momentum: 综合RSI、MACD、动量的IC权重
+            price_ic = (ic_weights.get('rsi', 0.2) + 
+                        ic_weights.get('macd', 0.2) + 
+                        ic_weights.get('momentum', 0.2)) / 3.0
+            
+            # news_sentiment: 使用ADX的IC权重(趋势确认类似新闻信号)
+            news_ic = ic_weights.get('adx', 0.2)
+            
+            # onchain和wallet使用较低的固定权重(数据质量和覆盖率问题)
+            onchain_ic = 0.1
+            wallet_ic = 0.1
+            
+            # 归一化使总和为1.0
+            total = price_ic + news_ic + onchain_ic + wallet_ic
+            if total > 0:
+                self.weights = {
+                    "price_momentum": price_ic / total,
+                    "news_sentiment": news_ic / total,
+                    "onchain": onchain_ic / total,
+                    "wallet": wallet_ic / total
+                }
+            else:
+                # 回退到默认值
+                self.weights = {
+                    "price_momentum": 0.6,
+                    "news_sentiment": 0.2,
+                    "onchain": 0.1,
+                    "wallet": 0.1
+                }
+                
+            logger = logging.getLogger(__name__)
+            logger.info(f"[SignalGenerator] IC权重已加载: {self.weights}")
+            
+        except Exception as e:
+            # 如果IC加载失败，使用硬编码默认值
+            self.weights = {
+                "price_momentum": 0.6,
+                "news_sentiment": 0.2,
+                "onchain": 0.1,
+                "wallet": 0.1
+            }
+            logger = logging.getLogger(__name__)
+            logger.warning(f"[SignalGenerator] IC权重加载失败，使用默认权重: {e}")
 
     def calc_price_score(self, factors: Dict) -> float:
         """
@@ -1148,6 +1216,34 @@ class SignalGenerator:
         factors["trend"] = trend_info["trend"]
         factors["trend_strength"] = trend_info["strength"]
 
+        # === 2b. 市场状态分类 (Regime Classification) ===
+        # 使用RegimeClassifier进行市场状态分类
+        regime_result = {"regime": "sideways", "confidence": 0.5, "metrics": None}
+        try:
+            if len(prices) >= 50:
+                # 构建DataFrame供RegimeClassifier使用
+                regime_df = pd.DataFrame({
+                    'high': highs[-100:] if len(highs) >= 100 else highs,
+                    'low': lows[-100:] if len(lows) >= 100 else lows,
+                    'close': prices[-100:] if len(prices) >= 100 else prices
+                })
+                regime, regime_confidence, regime_metrics = self._regime_classifier.classify(regime_df)
+                regime_result = {
+                    "regime": regime.value if hasattr(regime, 'value') else str(regime),
+                    "confidence": regime_confidence,
+                    "metrics": {
+                        "adx": regime_metrics.adx if regime_metrics else 0,
+                        "plus_di": regime_metrics.plus_di if regime_metrics else 0,
+                        "minus_di": regime_metrics.minus_di if regime_metrics else 0,
+                        "momentum": regime_metrics.momentum if regime_metrics else 0
+                    }
+                }
+                factors["regime"] = regime_result["regime"]
+                factors["regime_confidence"] = regime_confidence
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"[SignalGenerator] RegimeClassification失败: {e}")
+
         # === 3. 成交量过滤 ===
         volumes = price_data.get("volumes", [])
         volume_filter_result = {"volume_ratio": 1.5, "is_confirmed": True, "confidence_penalty": 0.0}
@@ -1319,6 +1415,11 @@ class SignalGenerator:
                 "ema20": round(trend_info["ema20"], 2),
                 "ema50": round(trend_info["ema50"], 2),
                 "ema200": round(trend_info["ema200"], 2)
+            },
+            "regime_info": {
+                "regime": regime_result["regime"],
+                "confidence": round(regime_result["confidence"], 4),
+                "metrics": regime_result["metrics"]
             },
             "volume_info": {
                 "volume_ratio": round(volume_filter_result["volume_ratio"], 2),
