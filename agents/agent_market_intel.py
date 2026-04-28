@@ -371,7 +371,7 @@ class NewsIntel:
         try:
             from email.utils import parsedate_to_timestamp
             return int(parsedate_to_timestamp(date_str))
-        except:
+        except Exception:
             return int(time.time())
 
     def _generate_sentiment_from_price(self, symbol: str, hours: int) -> List[Dict]:

@@ -31,9 +31,11 @@ import numpy as np
 import pandas as pd
 
 # 配置路径
-WORKSPACE = Path("/Users/jimingzhang")
+_WORKSPACE = os.environ.get("MIRACLE_WORKSPACE", str(Path.home()))
+WORKSPACE = Path(_WORKSPACE)
 KRONOS_AUTORESEARCH_SRC = WORKSPACE / "kronos_autoresearch" / "src"
-sys.path.insert(0, str(KRONOS_AUTORESEARCH_SRC))
+if KRONOS_AUTORESEARCH_SRC.exists():
+    sys.path.insert(0, str(KRONOS_AUTORESEARCH_SRC))
 
 from strategy_config import StrategyConfig, BacktestResult
 from backtest_engine import run_walkforward, run_single_backtest
@@ -538,7 +540,7 @@ class ReflectionImprover:
                 try:
                     shames.append(float(cols[4]))
                     returns.append(float(cols[3]))
-                except:
+                except Exception:
                     continue
 
             if not shames:

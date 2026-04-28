@@ -264,7 +264,7 @@ class StateReconciler:
                     algo_id = a.get('algoId', '')
                     if algo_id:
                         algo_ids.append(algo_id)
-        except:
+        except Exception:
             pass
         return algo_ids
     
