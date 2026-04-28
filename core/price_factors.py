@@ -5,12 +5,24 @@ PriceFactors: 价格技术指标计算器
 从 agents/agent_signal.py 提取
 
 职责：RSI / ADX / MACD / ATR / 布林带 / 动量 / 成交量 核心计算
-依赖：numpy
+依赖：numpy, pandas (optional, for vectorized calculations via pandas.ewm)
 """
 
 from typing import Any, Dict, List
 
 import numpy as np
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
 
 
 class PriceFactors:
@@ -21,11 +33,34 @@ class PriceFactors:
         if len(prices) < period + 1:
             return 50.0
 
-        prices = np.array(prices)
-        deltas = np.diff(prices)
+        # Try talib first (fastest, C-level)
+        if HAS_TALIB:
+            try:
+                result = talib.RSI(np.array(prices, dtype=np.float64), period)
+                return float(result)
+            except Exception:
+                pass
 
-        gains = np.where(deltas > 0, deltas, 0)
-        losses = np.where(deltas < 0, -deltas, 0)
+        # Fallback: pandas ewm vectorized (no Python for-loop)
+        if HAS_PANDAS:
+            prices_arr = np.array(prices)
+            deltas = np.diff(prices_arr)
+            gains = np.where(deltas > 0, deltas, 0.0)
+            losses = np.where(deltas < 0, -deltas, 0.0)
+
+            avg_gains = pd.Series(gains).ewm(span=period, adjust=False).mean().values
+            avg_losses = pd.Series(losses).ewm(span=period, adjust=False).mean().values
+
+            rs = avg_gains[-1] / (avg_losses[-1] + 1e-10)
+            if avg_losses[-1] < 1e-10:
+                return 100.0
+            return float(100 - (100 / (1 + rs)))
+
+        # Pure numpy fallback (no pandas, no for-loop)
+        prices_arr = np.array(prices)
+        deltas = np.diff(prices_arr)
+        gains = np.where(deltas > 0, deltas, 0.0)
+        losses = np.where(deltas < 0, -deltas, 0.0)
 
         alpha = 1.0 / period
         avg_gain = float(np.mean(gains[:period]))
@@ -38,8 +73,7 @@ class PriceFactors:
             return 100.0
 
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return float(rsi)
+        return float(100 - (100 / (1 + rs)))
 
     @staticmethod
     def calc_adx(highs: List[float], lows: List[float], closes: List[float],
@@ -47,77 +81,97 @@ class PriceFactors:
         if len(closes) < 2 * period + 1:
             return {"adx": 25.0, "plus_di": 25.0, "minus_di": 25.0}
 
-        highs = np.array(highs)
-        lows = np.array(lows)
-        closes = np.array(closes)
+        # Try talib first (fastest, C-level)
+        if HAS_TALIB:
+            try:
+                high_arr = np.array(highs, dtype=np.float64)
+                low_arr = np.array(lows, dtype=np.float64)
+                close_arr = np.array(closes, dtype=np.float64)
+                adx_val = talib.ADX(high_arr, low_arr, close_arr, period)
+                plus_di = talib.PLUS_DI(high_arr, low_arr, close_arr, period)
+                minus_di = talib.MINUS_DI(high_arr, low_arr, close_arr, period)
+                return {
+                    "adx": float(adx_val),
+                    "plus_di": float(plus_di),
+                    "minus_di": float(minus_di),
+                }
+            except Exception:
+                pass
 
-        tr1 = highs[1:] - lows[1:]
-        tr2 = np.abs(highs[1:] - closes[:-1])
-        tr3 = np.abs(lows[1:] - closes[:-1])
+        # Vectorized numpy (no Python for-loops for main smoothing)
+        highs_arr = np.array(highs)
+        lows_arr = np.array(lows)
+        closes_arr = np.array(closes)
+
+        tr1 = highs_arr[1:] - lows_arr[1:]
+        tr2 = np.abs(highs_arr[1:] - closes_arr[:-1])
+        tr3 = np.abs(lows_arr[1:] - closes_arr[:-1])
         tr = np.maximum(np.maximum(tr1, tr2), tr3)
 
-        plus_dm = np.zeros(len(closes) - 1)
-        minus_dm = np.zeros(len(closes) - 1)
-
-        for i in range(1, len(closes)):
-            up_move = highs[i] - highs[i - 1]
-            down_move = lows[i - 1] - lows[i]
-
-            if up_move > down_move and up_move > 0:
-                plus_dm[i - 1] = up_move
-            if down_move > up_move and down_move > 0:
-                minus_dm[i - 1] = down_move
+        up_move = highs_arr[1:] - highs_arr[:-1]
+        down_move = lows_arr[:-1] - lows_arr[1:]
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
         n = len(tr)
         period_int = int(period)
+        alpha = 1.0 / period_int
 
         if n < period_int + 1:
             return {"adx": 25.0, "plus_di": 25.0, "minus_di": 25.0}
 
-        alpha = 1.0 / period_int
+        # Use pandas ewm for vectorized smoothing (Wilder's smoothing via span=period, adjust=False)
+        if HAS_PANDAS:
+            tr_series = pd.Series(tr)
+            plus_dm_series = pd.Series(plus_dm)
+            minus_dm_series = pd.Series(minus_dm)
 
-        dx_values = []
-        plus_di_series = []
-        minus_di_series = []
+            atr_smooth = tr_series.ewm(span=period_int, adjust=False).mean()
+            plus_dm_smooth = plus_dm_series.ewm(span=period_int, adjust=False).mean()
+            minus_dm_smooth = minus_dm_series.ewm(span=period_int, adjust=False).mean()
 
+            plus_di_vals = 100.0 * plus_dm_smooth / (atr_smooth + 1e-10)
+            minus_di_vals = 100.0 * minus_dm_smooth / (atr_smooth + 1e-10)
+            dx_vals = 100.0 * np.abs(plus_di_vals - minus_di_vals) / (plus_di_vals + minus_di_vals + 1e-10)
+
+            # ADX is smoothed DX over `period` bars (Wilder's smoothing again)
+            adx_series = dx_vals.ewm(span=period_int, adjust=False).mean()
+            adx_val = float(adx_series.iloc[-1])
+            plus_di_val = float(plus_di_vals.iloc[-1])
+            minus_di_val = float(minus_di_vals.iloc[-1])
+            return {
+                "adx": adx_val,
+                "plus_di": plus_di_val,
+                "minus_di": minus_di_val,
+            }
+
+        # Pure numpy fallback (loop-based Wilder smoothing)
         atr = float(np.mean(tr[:period_int]))
         plus_di_smooth = float(np.mean(plus_dm[:period_int]))
         minus_di_smooth = float(np.mean(minus_dm[:period_int]))
+        dx_vals = np.zeros(n)
 
         for i in range(period_int, n):
             atr = atr * (1 - alpha) + tr[i] * alpha
             plus_di_smooth = plus_di_smooth * (1 - alpha) + plus_dm[i] * alpha
             minus_di_smooth = minus_di_smooth * (1 - alpha) + minus_dm[i] * alpha
-
             di_sum = plus_di_smooth + minus_di_smooth
-            if di_sum == 0 or atr == 0:
-                dx_values.append(0.0)
-                plus_di_series.append(0.0)
-                minus_di_series.append(0.0)
+            if di_sum > 0 and atr > 0:
+                dx_vals[i] = 100.0 * abs(plus_di_smooth - minus_di_smooth) / di_sum
             else:
-                plus_di_pct = 100.0 * plus_di_smooth / atr
-                minus_di_pct = 100.0 * minus_di_smooth / atr
-                dx_i = 100.0 * abs(plus_di_smooth - minus_di_smooth) / (plus_di_smooth + minus_di_smooth)
-                dx_values.append(dx_i)
-                plus_di_series.append(plus_di_pct)
-                minus_di_series.append(minus_di_pct)
+                dx_vals[i] = 0.0
 
-        if len(dx_values) == 0:
-            return {"adx": 0.0, "plus_di": 0.0, "minus_di": 0.0}
-
-        if len(dx_values) >= period_int:
-            adx = float(np.mean(dx_values[:period_int]))
-        else:
-            adx = float(np.mean(dx_values))
-
+        # Smooth DX into ADX
+        adx = float(np.mean(dx_vals[period_int:period_int * 2])) if n >= period_int * 2 else float(np.mean(dx_vals[period_int:]))
         for i in range(period_int):
-            if i < len(dx_values):
-                adx = adx * (1 - alpha) + dx_values[i] * alpha
+            idx = period_int + i
+            if idx < n:
+                adx = adx * (1 - alpha) + dx_vals[idx] * alpha
 
         return {
             "adx": float(adx),
-            "plus_di": float(plus_di_series[-1]) if plus_di_series else 0.0,
-            "minus_di": float(minus_di_series[-1]) if minus_di_series else 0.0
+            "plus_di": float(100.0 * plus_di_smooth / (atr + 1e-10)),
+            "minus_di": float(100.0 * minus_di_smooth / (atr + 1e-10)),
         }
 
     @staticmethod

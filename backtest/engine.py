@@ -58,8 +58,14 @@ class BacktestEngine:
     def __init__(self, config: Dict = None):
         self.config = config or {}
         self.initial_balance = self.config.get("initial_balance", 100000)
-        self.commission_rate = self.config.get("commission_rate", 0.0005)  # 0.05%
+        # 手续费: maker < taker (OKX: maker 0.02%, taker 0.05%)
+        self.taker_commission_rate = self.config.get("taker_commission_rate", 0.0005)  # 0.05%
+        self.maker_commission_rate = self.config.get("maker_commission_rate", 0.0002)  # 0.02%
+        # 兼容旧 config
+        self.commission_rate = self.config.get("commission_rate", self.taker_commission_rate)
         self.slippage_rate = self.config.get("slippage_rate", 0.0002)  # 0.02%
+        # funding rate (每8小时, 从config读取，如 0.0001 = 0.01%)
+        self.funding_rate = self.config.get("funding_rate", 0.0)
 
         self.trades: List[BacktestTrade] = []
         self.equity_curve: List[float] = []
@@ -265,8 +271,25 @@ class BacktestEngine:
         leverage = position["leverage"]
         position_size = position["position_size"]
 
-        # 计算手续费
-        commission = position_size * leverage * self.commission_rate * 2  # 开仓+平仓
+        # 手续费: 开仓(maker) + 平仓(taker)
+        commission = (
+            position_size * leverage * self.maker_commission_rate +  # 开仓 maker
+            position_size * leverage * self.taker_commission_rate    # 平仓 taker
+        )
+
+        # Funding fee: 每日扣除 (按持仓时间计算)
+        entry_time = position["entry_time"]
+        current_time = self.timestamps[current_idx]
+        if isinstance(entry_time, (int, float)):
+            entry_dt = datetime.fromtimestamp(entry_time / 1000)
+            exit_dt = datetime.fromtimestamp(current_time / 1000)
+        else:
+            entry_dt = datetime.fromisoformat(str(entry_time))
+            exit_dt = datetime.fromisoformat(str(current_time))
+        funding_hours = (exit_dt - entry_dt).total_seconds() / 3600.0
+        # OKX funding每8小时结算，取整计算funding次数
+        funding_periods = max(1, round(funding_hours / 8.0))
+        funding_fee = position_size * leverage * self.funding_rate * funding_periods
 
         # 计算盈亏
         if direction == "long":
@@ -275,6 +298,7 @@ class BacktestEngine:
             pnl = (entry_price - exit_price) * position_size * leverage
 
         pnl -= commission
+        pnl -= funding_fee
         self.balance += pnl
 
         # 记录交易
@@ -344,8 +368,11 @@ class WalkForwardEngine:
     def __init__(self, config: Dict = None):
         self.config = config or {}
         self.initial_balance = self.config.get("initial_balance", 100000)
-        self.commission_rate = self.config.get("commission_rate", 0.0005)
+        self.taker_commission_rate = self.config.get("taker_commission_rate", 0.0005)
+        self.maker_commission_rate = self.config.get("maker_commission_rate", 0.0002)
+        self.commission_rate = self.config.get("commission_rate", self.taker_commission_rate)
         self.slippage_rate = self.config.get("slippage_rate", 0.0002)
+        self.funding_rate = self.config.get("funding_rate", 0.0)
         
         # Walk-Forward配置
         self.train_days = self.config.get("wf_train_days", 90)   # 训练窗口
@@ -383,13 +410,15 @@ class WalkForwardEngine:
         score = annual_return * 0.6 - max_dd * 0.4 + sharpe * 5
         return score
     
-    def _backtest_with_params(self, klines: List[Dict], params: Dict, 
-                              train: bool = True) -> Dict | None:
+    def _backtest_with_params(self, klines: List[Dict], params: Dict,
+                              train: bool = True) -> Optional[Dict]:
         """使用指定参数运行回测"""
         engine = BacktestEngine({
             "initial_balance": self.initial_balance,
-            "commission_rate": self.commission_rate,
-            "slippage_rate": self.slippage_rate
+            "taker_commission_rate": self.taker_commission_rate,
+            "maker_commission_rate": self.maker_commission_rate,
+            "slippage_rate": self.slippage_rate,
+            "funding_rate": self.funding_rate,
         })
         
         # 简单信号生成器（基于RSI+ADX）
@@ -659,8 +688,11 @@ class MultiCoinBacktest:
     def __init__(self, config: Dict = None):
         self.config = config or {}
         self.initial_balance = self.config.get("initial_balance", 100000)
-        self.commission_rate = self.config.get("commission_rate", 0.0005)
+        self.taker_commission_rate = self.config.get("taker_commission_rate", 0.0005)
+        self.maker_commission_rate = self.config.get("maker_commission_rate", 0.0002)
+        self.commission_rate = self.config.get("commission_rate", self.taker_commission_rate)
         self.slippage_rate = self.config.get("slippage_rate", 0.0002)
+        self.funding_rate = self.config.get("funding_rate", 0.0)
         
         self.results: Dict[str, Dict] = {}
         
