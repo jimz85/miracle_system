@@ -133,14 +133,14 @@ def load_ic_weights():
             w = d.get('weights', {})
             if w and sum(w.values()) > 0:
                 return w
-        except:
+        except Exception:
             pass
     if IC_WEIGHTS_FILE.exists():
         try:
             with open(IC_WEIGHTS_FILE) as f:
                 d = json.load(f)
                 return d.get('weights', DEFAULT_WEIGHTS)
-        except:
+        except Exception:
             pass
     return DEFAULT_WEIGHTS.copy()
 
@@ -265,7 +265,7 @@ def load_treasury():
     if TREASURY_FILE.exists():
         try:
             return json.load(open(TREASURY_FILE))
-        except:
+        except Exception:
             pass
     return {'equity': 100000, 'hourly_snapshot': 100000, 'daily_snapshot': 100000, 
             'tier': 'normal', 'consecutive_loss_hours': 0}
@@ -333,7 +333,7 @@ def get_klines(instId, timeframe='1H', limit=100):
                 'close': float(c[4]),
                 'vol': float(c[5]),
             })
-        except:
+        except Exception:
             pass
     return parsed if parsed else None
 
@@ -347,7 +347,7 @@ def get_account_balance():
                 if d.get('ccy') == 'USDT':
                     return float(d.get('eq', 0))
             return float(data['data'][0].get('totalEq', 0))
-        except:
+        except Exception:
             pass
     return 0
 
@@ -385,7 +385,7 @@ def load_whitelist():
             # 确保blacklist始终为set
             data['blacklist'] = set(data.get('blacklist', []))
             return data
-        except:
+        except Exception:
             pass
     return {'patterns': {}, 'blacklist': set()}
 
@@ -406,7 +406,7 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
             entry = all_cache.get(symbol, {})
             if entry.get('bucket') == now_bucket:
                 return entry.get('vote', 0)
-        except:
+        except Exception:
             pass
 
     # 调用gemma4
@@ -438,7 +438,7 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
         if cache_file.exists():
             try:
                 all_cache = json.load(open(cache_file))
-            except:
+            except Exception:
                 pass
         all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:30]}
         with open(cache_file, 'w') as f:
@@ -489,7 +489,7 @@ def get_open_trades():
         try:
             all_trades = json.load(open(TRADES_FILE))
             return [t for t in all_trades if t.get('status') == 'OPEN']
-        except:
+        except Exception:
             pass
     return []
 
@@ -511,7 +511,7 @@ def load_trades():
     if TRADES_FILE.exists():
         try:
             return json.load(open(TRADES_FILE))
-        except:
+        except Exception:
             pass
     return []
 
@@ -783,7 +783,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             trade['age_hours'] = round(age_hours, 1)
             if age_hours > 24:
                 position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
-        except:
+        except Exception:
             trade['age_hours'] = 0
 
         # 移动止损: 盈利超过3%后，回撤50%触发
@@ -920,7 +920,7 @@ def main():
             # 新的一天: 重置日快照
             if now.date() != last_dt.date():
                 treasury['daily_snapshot'] = equity
-        except:
+        except Exception:
             treasury['hourly_snapshot'] = equity
             treasury['daily_snapshot'] = equity
     else:
