@@ -254,19 +254,19 @@ class StateReconciler:
     def _get_algo_ids_for_position(self, inst_id: str) -> List[str]:
         """获取某持仓关联的SL/TP条件单"""
         algo_ids = []
-        try:
-            # 查询该inst的待触发条件单
-            algo_data = self.client._make_request("GET",
-                f"/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco,conditional,stop",
-                signed=True)
-            
-            if algo_data.get('code') == '0':
-                for a in algo_data.get('data', []):
-                    algo_id = a.get('algoId', '')
-                    if algo_id:
-                        algo_ids.append(algo_id)
-        except Exception:
-            pass
+        # OKX orders-algo-pending只接受单一ordType，不能逗号分隔
+        for ord_type in ['oco', 'conditional']:
+            try:
+                algo_data = self.client._make_request("GET",
+                    f"/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType={ord_type}&limit=100",
+                    signed=True)
+                if algo_data.get('code') == '0':
+                    for a in algo_data.get('data', []):
+                        algo_id = a.get('algoId', '')
+                        if algo_id:
+                            algo_ids.append(algo_id)
+            except Exception:
+                pass
         return algo_ids
     
     def fetch_exchange_orders(self) -> Tuple[Dict[str, OrderInfo], Dict[str, OrderInfo]]:
@@ -300,15 +300,18 @@ class StateReconciler:
             logger.error(f"获取普通订单失败: {e}")
         
         try:
-            # 条件单（OCO/STOP）
-            algo_data = self.client._make_request("GET",
-                "/api/v5/trade/orders-algo-pending?instType=SWAP", signed=True)
-            
-            if algo_data.get('code') == '0':
-                for a in algo_data.get('data', []):
-                    aid = a.get('algoId', '')
-                    if not aid:
-                        continue
+            # 条件单（OCO/STOP）- OKX要求ordType单一值，分两次查询
+            algo_orders = {}
+            for ord_type in ['oco', 'conditional']:
+                algo_data = self.client._make_request("GET",
+                    f"/api/v5/trade/orders-algo-pending?instType=SWAP&ordType={ord_type}",
+                    signed=True)
+
+                if algo_data.get('code') == '0':
+                    for a in algo_data.get('data', []):
+                        aid = a.get('algoId', '')
+                        if not aid:
+                            continue
                     algo_orders[aid] = OrderInfo(
                         order_id=aid,
                         inst_id=a.get('instId', ''),

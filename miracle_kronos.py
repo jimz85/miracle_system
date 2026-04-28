@@ -1019,7 +1019,34 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         return {'action': 'blocked', 'tier': tier, 'reason': reason}
     
     weights = load_ic_weights()
+    # P1: 幽灵仓位检测 - 每次live扫描前检查OKX状态一致性
+    # 检测: 无OCO保护的持仓 / 孤立订单 / 本地与交易所状态不匹配
+    phantom_warnings = []
+    if mode == 'live':
+        try:
+            from core.state_reconciler import StateReconciler
+            reconciler = StateReconciler()
+            result_reconcile = reconciler.reconcile(auto_fix=False)
+            if result_reconcile.phantom_positions:
+                for phantom in result_reconcile.phantom_positions:
+                    # PhantomPosition字段: inst_id, direction, entry_price, contracts
+                    contracts_info = f"contracts={phantom.contracts}"
+                    msg = f"幽灵仓位: {phantom.inst_id} {phantom.direction} {contracts_info} 无OCO保护"
+                    logger.warning(msg)
+                    phantom_warnings.append(msg)
+            if result_reconcile.orphan_orders:
+                for order in result_reconcile.orphan_orders:
+                    msg = f"孤立订单: {order.inst_id} algoId={order.algo_id[:12]}"
+                    logger.warning(msg)
+                    phantom_warnings.append(msg)
+            if phantom_warnings:
+                logger.warning(f"幽灵仓位警告共{len(phantom_warnings)}项")
+        except Exception as e:
+            logger.warning(f"状态协调器检查失败: {e}")
+
     positions = get_positions() if mode == 'live' else []
+    if phantom_warnings and mode == 'live':
+        positions = get_positions()  # 重新获取最新状态
     
     # P0: 并发扫描所有币 (替代原有串行for循环)
     candidates = parallel_scan_coins(
@@ -1117,6 +1144,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'candidates': candidates[:5],
             'decisions': position_decisions,
             'reason': reason,
+            'phantom_warnings': phantom_warnings,
             'vetoed_pattern_keys': vetoed_pattern_keys,
         }
     
@@ -1215,7 +1243,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     trade['trade_id'] = None
                 logger.info(f"开仓成功: {best['symbol']} {best['direction']} @ {entry}")
             else:
-                return {'action': 'order_failed', 'result': result, 'best': best, 'vetoed_pattern_keys': vetoed_pattern_keys}
+                return {'action': 'order_failed', 'result': result, 'best': best, 'vetoed_pattern_keys': vetoed_pattern_keys, 'phantom_warnings': phantom_warnings}
         
         return {
             'action': 'open',
@@ -1225,6 +1253,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'equity': equity,
             'positions': len(positions),
             'reason': reason,
+            'phantom_warnings': phantom_warnings,
             'vetoed_pattern_keys': vetoed_pattern_keys,
         }
     
@@ -1235,7 +1264,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'positions': len(positions),
         'candidates': candidates[:5],
         'reason': reason,
-        'losses': losses,
+        'phantom_warnings': phantom_warnings,
         'vetoed_pattern_keys': vetoed_pattern_keys,
     }
 

@@ -69,7 +69,15 @@ class SecureKeyManager:
             return self._keys_cache[cache_key]
 
         # 1. 尝试环境变量
-        env_key = f"{exchange.upper()}_{key_type.upper()}"
+        exchange_upper = exchange.upper()
+        key_type_upper = key_type.upper()
+        # OKX的特殊映射：secret_key → OKX_SECRET（不是OKX_SECRET_KEY）
+        env_key_map = {
+            ('OKX', 'SECRET_KEY'): 'OKX_SECRET',
+            ('OKX', 'PASSPHRASE'): 'OKX_PASSPHRASE',
+        }
+        env_key = env_key_map.get((exchange_upper, key_type_upper),
+                                  f"{exchange_upper}_{key_type_upper}")
         value = os.getenv(env_key)
         if value:
             self._keys_cache[cache_key] = value

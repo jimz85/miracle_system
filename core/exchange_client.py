@@ -13,6 +13,7 @@ Exchange Client - 统一交易所接口
 """
 
 import base64
+import os
 import json
 import logging
 import time
@@ -111,7 +112,8 @@ class ExchangeClient:
             "Content-Type": "application/json",
         }
         # OKX模拟盘用 x-simulated-trading: 1 头切换（非改变URL）
-        if self.config.okx_testnet:
+        # 读环境变量OKX_FLAG，与okx_req()保持一致
+        if os.environ.get('OKX_FLAG', '0') == '1':
             headers["x-simulated-trading"] = "1"
 
         return headers
@@ -130,8 +132,14 @@ class ExchangeClient:
             })
 
         try:
+            # 重要: OKX签名必须包含完整的path+query_string
+            # 如果endpoint已包含?（query string），则不再用params=传递参数
+            # 否则requests将query从path移到params，导致签名路径与实际URL不匹配→401
             if method == "GET":
-                response = requests.get(url, headers=headers, params=params, timeout=self.config.order_timeout)
+                if params and '?' not in endpoint:
+                    response = requests.get(url, headers=headers, params=params, timeout=self.config.order_timeout)
+                else:
+                    response = requests.get(url, headers=headers, timeout=self.config.order_timeout)
             elif method == "POST":
                 response = requests.post(url, headers=headers, json=data, timeout=self.config.order_timeout)
             elif method == "DELETE":
@@ -390,16 +398,17 @@ class ExchangeClient:
         用于检查某持仓是否已有SL/TP保护。
         """
         try:
+            # OKX orders-algo-pending: instId参数，ordType必须单一值不能逗号分隔
             result = self._make_request(
                 "GET",
-                f"{self.endpoints['algo_pending']}?instType={inst_type}&ordType=oco&limit=100",
+                f"{self.endpoints['algo_pending']}?instId={inst_type}&ordType=oco&limit=100",
                 signed=True
             )
             oco_orders = result.get("data", [])
 
             result2 = self._make_request(
                 "GET",
-                f"{self.endpoints['algo_pending']}?instType={inst_type}&ordType=conditional&limit=100",
+                f"{self.endpoints['algo_pending']}?instId={inst_type}&ordType=conditional&limit=100",
                 signed=True
             )
             cond_orders = result2.get("data", [])

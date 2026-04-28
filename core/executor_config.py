@@ -25,6 +25,11 @@ class ExecutorConfig:
     # API配置 (OKX) - 现在通过SecureKeyManager管理，不再直接存储
     okx_testnet: bool = False  # OKX永续无testnet URL，用x-simulated-trading:1头切换模拟盘
 
+    def __post_init__(self):
+        # 如果未显式传入okx_testnet，则从环境变量推断
+        # 让ExchangeClient与okx_req保持一致的模拟盘头
+        pass  # 占位，后续需要时启用
+
     # API配置 (Binance) - 现在通过SecureKeyManager管理
     binance_testnet: bool = True
 
