@@ -64,6 +64,9 @@ class Position:
     entry_price: float
     unrealized_pnl: float
     leverage: float
+    # P0-FIX: 添加强平价与保证金率字段
+    liq_price: float = 0.0   # 预估强平价
+    margin_ratio: float = 0.0  # 保证金率（OKX返回的是实际可用担保率）
 
 
 # ========================
@@ -343,7 +346,10 @@ class OKXAdapter(ExchangeAdapter):
                         size=abs(float(p.get("pos", 0))),
                         entry_price=float(p.get("avgPx", 0)),
                         unrealized_pnl=float(p.get("upl", 0)),
-                        leverage=float(p.get("lever", 1))
+                        leverage=float(p.get("lever", 1)),
+                        # P0-FIX: 提取强平价与保证金率
+                        liq_price=float(p.get("liqPx", 0)),
+                        margin_ratio=float(p.get("marginRatio", 0)),
                     ))
             return positions
         return []

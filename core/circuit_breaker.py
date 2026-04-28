@@ -62,6 +62,9 @@ class Position:
     entry_price: float
     current_price: float
     unrealized_pnl: float = 0.0
+    # P0-FIX: 添加强平价与保证金率字段
+    liq_price: float = 0.0
+    margin_ratio: float = 0.0
 
 
 @dataclass

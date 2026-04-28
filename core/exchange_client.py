@@ -183,8 +183,10 @@ class ExchangeClient:
                     "currency": "USDT"
                 }
         except Exception as e:
-            logging.warning(f"获取余额失败: {e}，使用模拟余额")
-            return {"total": 100000.0, "available": 100000.0, "currency": "USDT", "simulated": True}
+            # P0-FIX: API失败时不能返回模拟余额，否则熔断器以为有资金继续开仓
+            # 正确做法：向上抛出异常，由上游熔断器决策是否暂停交易
+            logging.error(f"获取余额失败: {e}，拒绝返回模拟数据")
+            raise ConnectionError(f"获取余额API失败: {e}") from None
 
     def get_ticker(self, symbol: str) -> float | None:
         """获取当前价格（API失败时尝试从其他渠道获取）"""
@@ -445,11 +447,12 @@ class ExchangeClient:
 
     def _place_order_binance(self, symbol: str, side: str, order_type: str,
                               price: float | None, size: float, leverage: int) -> Dict:
-        """Binance下单"""
+        """Binance USDT-M永续合约下单"""
         binance_symbol = symbol.replace("-", "").replace("SWAP", "")
 
-        # 设置杠杆
-        self._make_request("POST", "/api/v5/margin/leverage", data={
+        # 设置杠杆（USDT-M永续合约使用fapi端点）
+        # 修复: 原代码误用OKX端点 /api/v5/margin/leverage
+        self._make_request("POST", "/fapi/v1/leverage", data={
             "symbol": binance_symbol,
             "leverage": str(leverage)
         }, signed=True)

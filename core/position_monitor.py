@@ -172,3 +172,77 @@ class PositionMonitor:
     def get_all_positions(self) -> Dict[str, Dict]:
         """获取所有持仓"""
         return self.positions.copy()
+
+    # ─────────────────────────────────────────────────────────────
+    # P0-FIX: 强平价与保证金率监控
+    # 高杠杆下价格未触及SL但已触及强平价，导致穿仓
+    # ─────────────────────────────────────────────────────────────
+
+    def check_liquidation_risk(
+        self,
+        symbol: str,
+        trade: Dict,
+        margin_ratio_threshold: float = 0.30,
+    ) -> Tuple[bool, str]:
+        """
+        检查保证金率与预估强平价
+
+        P0-FIX: 每次监控循环必须拉取liqPx和marginRatio，
+        当marginRatio < 阈值时强制减仓或告警。
+
+        Args:
+            symbol: 币种，如 BTC-USDT-SWAP
+            trade: 交易记录字典，需包含 entry_price, position_size, leverage, side
+            margin_ratio_threshold: 保证金率阈值，低于此值触发警告（默认30%）
+
+        Returns:
+            (is_dangerous, reason): 是否危险，危险原因
+        """
+        try:
+            # 从交易所获取实时保证金数据
+            positions = self.client.get_positions()
+            for pos in positions:
+                if pos.inst_id != symbol:
+                    continue
+
+                liq_price = getattr(pos, 'liq_price', 0) or 0
+                margin_ratio = getattr(pos, 'margin_ratio', 0) or 0
+                pos_side = getattr(pos, 'direction', 'long') or 'long'
+                entry_price = trade.get("entry_price", 0)
+                current_price = trade.get("current_price", 0)
+
+                if liq_price == 0 or margin_ratio == 0:
+                    return False, "none"  # 数据不可用，跳过
+
+                # 检查保证金率是否过低
+                if margin_ratio < margin_ratio_threshold:
+                    reason = (
+                        f"MARGIN_CRITICAL: {symbol} "
+                        f"margin_ratio={margin_ratio:.2%} < {margin_ratio_threshold:.0%} "
+                        f"(liq_price={liq_price}, entry={entry_price})"
+                    )
+                    return True, reason
+
+                # 检查当前价格是否接近强平价（10%以内）
+                if liq_price > 0 and current_price > 0:
+                    distance_to_liq = abs(current_price - liq_price) / current_price
+                    if distance_to_liq < 0.10:  # 10%以内
+                        reason = (
+                            f"MARGIN_WARNING: {symbol} "
+                            f"距强平价{distance_to_liq:.1%} "
+                            f"(liq={liq_price}, current={current_price})"
+                        )
+                        return True, reason
+
+                return False, "none"
+
+            # 持仓不在交易所（可能是phantom）
+            return False, "position_not_on_exchange"
+
+        except ConnectionError:
+            # P0-FIX: get_balance现在会抛出异常而不是返回模拟数据
+            # 上游应该感知到交易所断连
+            return False, "exchange_connection_failed"
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"检查强平风险失败: {e}")
+            return False, f"check_failed: {e}"

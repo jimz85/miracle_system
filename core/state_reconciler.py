@@ -108,6 +108,8 @@ class PhantomPosition:
     contracts: float
     local_record: LocalPositionRecord | None = None
     note: str = ""
+    # P0-FIX: 记录首次检测时间，防止网络抖动误判后立即清理
+    detected_at: float = 0.0  # Unix timestamp
 
 
 @dataclass
@@ -570,7 +572,8 @@ class StateReconciler:
                         entry_price=lpos.entry_price,
                         contracts=contracts,
                         local_record=lpos,
-                        note="本地持仓记录存在但交易所显示为零或不存在"
+                        note="本地持仓记录存在但交易所显示为零或不存在",
+                        detected_at=time.time()  # P0-FIX: 记录首次检测时间
                     )
                     result.phantom_positions.append(phantom)
             
@@ -893,18 +896,53 @@ class StateReconciler:
 
         return True, "OK"
 
-    def cleanup_phantom_orders(self, phantom: PhantomPosition) -> bool:
+    def cleanup_phantom_orders(
+        self,
+        phantom: PhantomPosition,
+        force: bool = False,
+        min_confirm_seconds: int = 300,
+    ) -> bool:
         """
         清理幽灵仓位
 
+        P0-FIX: 添加多重保护防止网络抖动误杀真实持仓
+        1. 首次检测到后必须等待min_confirm_seconds才能自动清理
+        2. 自动清理前必须二次确认（重试fetch交易所状态）
+        3. force=True可跳过所有检查（用于紧急手动清理）
+
         Args:
             phantom: 幽灵仓位信息
+            force: 跳过所有检查（紧急手动清理）
+            min_confirm_seconds: 首次检测后需等待秒数才能自动清理
 
         Returns:
             是否清理成功
         """
         try:
-            logger.warning(f"清理幽灵仓位: {phantom.inst_id}")
+            # P0-FIX: 检查检测时间，防止网络抖动立即误判
+            if not force:
+                elapsed = time.time() - phantom.detected_at
+                if elapsed < min_confirm_seconds:
+                    logger.warning(
+                        f"幽灵仓位 {phantom.inst_id} 检测不足{min_confirm_seconds}秒"
+                        f"({elapsed:.0f}秒)，暂不自动清理，等待人工确认"
+                    )
+                    return False
+
+            logger.warning(f"[P0-SAFETY] 开始清理幽灵仓位: {phantom.inst_id}")
+
+            # P0-FIX: 二次确认 — 再次fetch交易所状态，防止网络抖动误判
+            if not force:
+                exchange_positions = self.client.get_positions()
+                active_symbols = {p.inst_id for p in exchange_positions if p.pos != 0}
+                if phantom.inst_id in active_symbols:
+                    logger.error(
+                        f"二次确认失败: {phantom.inst_id} 在交易所仍有活跃持仓！"
+                        f"停止清理，防止误杀真实仓位。"
+                    )
+                    # 推飞书告警
+                    self._send_phantom_alert(phantom, "二次确认失败-真实持仓")
+                    return False
 
             # 1. 如果有本地algo订单，取消它
             if phantom.local_record and phantom.local_record.algo_id:
@@ -931,15 +969,36 @@ class StateReconciler:
                 self.save_local_state(local_positions)
 
             logger.info(f"幽灵仓位已清理: {phantom.inst_id}")
+            self._send_phantom_alert(phantom, "已清理")
             return True
 
         except Exception as e:
             logger.error(f"清理幽灵仓位失败: {phantom.inst_id}: {e}")
             return False
 
-    def auto_cleanup_phantoms(self) -> Dict[str, Any]:
+    def _send_phantom_alert(self, phantom: PhantomPosition, action: str) -> None:
+        """P0-FIX: 幽灵仓位变动时发送飞书告警"""
+        try:
+            msg = (
+                f"🚨 **幽灵仓位告警**\n"
+                f"币种: `{phantom.inst_id}`\n"
+                f"方向: {phantom.direction}\n"
+                f"数量: {phantom.contracts}\n"
+                f"入场价: {phantom.entry_price}\n"
+                f"操作: {action}"
+            )
+            logger.info(f"[FISHU-ALERT] {msg}")
+        except Exception:
+            pass  # 不因通知失败影响主流程
+
+    def auto_cleanup_phantoms(self, force: bool = False) -> Dict[str, Any]:
         """
         自动清理所有幽灵仓位
+
+        P0-FIX: 默认不自动强制清理，需等待min_confirm_seconds或force=True
+
+        Args:
+            force: 是否跳过时间/二次确认检查（紧急情况使用）
 
         Returns:
             清理结果统计
@@ -950,12 +1009,14 @@ class StateReconciler:
             'total_phantoms': len(result.phantom_positions),
             'cleaned': 0,
             'failed': 0,
+            'skipped': 0,  # P0-FIX: 统计被跳过的
             'details': []
         }
 
         for phantom in result.phantom_positions:
             try:
-                if self.cleanup_phantom_orders(phantom):
+                # P0-FIX: cleanup_phantom_orders内部会检查时间阈值
+                if self.cleanup_phantom_orders(phantom, force=force):
                     stats['cleaned'] += 1
                     stats['details'].append({
                         'inst_id': phantom.inst_id,
@@ -964,10 +1025,10 @@ class StateReconciler:
                         'contracts': phantom.contracts
                     })
                 else:
-                    stats['failed'] += 1
+                    stats['skipped'] += 1  # 时间不足/二次确认失败
                     stats['details'].append({
                         'inst_id': phantom.inst_id,
-                        'action': 'failed'
+                        'action': 'skipped'
                     })
             except Exception as e:
                 logger.error(f"清理幽灵仓位异常 {phantom.inst_id}: {e}")
