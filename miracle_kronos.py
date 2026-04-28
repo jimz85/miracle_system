@@ -649,10 +649,25 @@ def record_trade(trade):
 
 
 # ===== OCO下单 (带验证) =====
-def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0):
+def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, leverage: int = 3):
     """
-    OCO bracket: 止损+止盈同时挂单
-    P1修复: 下单前完整验证
+    开仓 + OCO bracket保护（两步分离，正确架构）
+
+    步骤1: 市价开仓（设置杠杆 + 下市价单）
+    步骤2: 挂OCO Bracket（止损+止盈合并单，只平仓不开新仓）
+
+    OKX每持仓只能有1个条件单，必须用ordType='oco'合并SL+TP
+    reduceOnly=True确保OCO只平仓、不开新仓
+
+    Args:
+        instId: 合约ID，如 'DOGE-USDT-SWAP'
+        side: 'long' 或 'short'
+        sz: 合约张数
+        entry_price: 入场价格（用于计算SL/TP价格）
+        sl_pct: 止损百分比，如 0.05（5%）
+        tp_pct: 止盈百分比，如 0.10（10%）
+        equity: 账户权益（用于验证）
+        leverage: 杠杆倍数，默认3x
     """
     # P1: OCO订单验证
     valid, reason, details = validate_oco_order(
@@ -661,38 +676,85 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0):
     if not valid:
         logger.warning(f"OCO验证失败 {instId}: {reason}")
         return {'code': '99999', 'msg': f'OCO验证失败: {reason}', 'details': details}
-    
-    # P1: 检查已有活跃OCO订单
+
+    # P1: 检查已有活跃OCO订单（幂等）
     has_active, order_info = check_existing_oco_orders(instId)
     if has_active:
         logger.warning(f"发现活跃OCO订单 {instId}: {order_info}")
         return {'code': '99999', 'msg': f'已有活跃OCO: {order_info}'}
-    
+
     if side == 'long':
+        open_side = 'buy'
+        close_side = 'sell'
         sl_price = round(entry_price * (1 - sl_pct), 4)
         tp_price = round(entry_price * (1 + tp_pct), 4)
-        close_side = 'sell'
         pos_side = 'long'
     else:  # short
+        open_side = 'sell'
+        close_side = 'buy'
         sl_price = round(entry_price * (1 + sl_pct), 4)
         tp_price = round(entry_price * (1 - tp_pct), 4)
-        close_side = 'buy'
         pos_side = 'short'
-    
-    body = json.dumps({
+
+    # ── Step 1: 设置杠杆 ──
+    leverage_body = json.dumps({
+        'instId': instId,
+        'lever': str(leverage),
+        'mgnMode': 'isolated',
+    })
+    lev_result = okx_req('POST', '/api/v5/account/set-leverage', leverage_body)
+    if lev_result.get('code') != '0':
+        logger.warning(f"设置杠杆失败 {instId} {leverage}x: {lev_result.get('msg')}")
+
+    # ── Step 2: 市价开仓 ──
+    open_body = json.dumps({
+        'instId': instId,
+        'tdMode': 'isolated',
+        'side': open_side,
+        'ordType': 'market',
+        'sz': str(int(sz)),
+        'posSide': pos_side,
+    })
+    open_result = okx_req('POST', '/api/v5/trade/order', open_body)
+    if open_result.get('code') != '0':
+        logger.error(f"开仓失败 {instId}: {open_result.get('msg')}")
+        return {'code': open_result.get('code', '99999'),
+                'msg': f'开仓失败: {open_result.get("msg")}'}
+
+    # ── Step 3: 挂OCO Bracket（止损+止盈，保护已有仓位） ──
+    # reduceOnly=True确保只平仓不开新仓
+    oco_body = json.dumps({
         'instId': instId,
         'tdMode': 'isolated',
         'side': close_side,
         'ordType': 'oco',
         'sz': str(int(sz)),
         'posSide': pos_side,
+        'reduceOnly': True,       # P0 Fix: 只平仓不开新仓
         'slTriggerPx': str(sl_price),
         'slOrdPx': '-1',             # 市价触发
         'tpTriggerPx': str(tp_price),
         'tpOrdPx': '-1',            # 市价触发
     })
-    data = okx_req('POST', '/api/v5/trade/order-algo', body)
-    return data
+    oco_result = okx_req('POST', '/api/v5/trade/order-algo', oco_body)
+
+    # 汇总结果
+    if oco_result.get('code') == '0':
+        logger.info(f"开仓+OCO成功 {instId} {side} {sz}张 @ {entry_price}, SL={sl_price}, TP={tp_price}")
+        return {
+            'code': '0',
+            'open': open_result,
+            'oco': oco_result,
+        }
+    else:
+        # OCO失败，但仓位已开！记录警告
+        logger.error(f"开仓成功但OCO失败 {instId}: {oco_result.get('msg')}")
+        return {
+            'code': oco_result.get('code', '99999'),
+            'msg': f'OCO挂单失败: {oco_result.get("msg")}',
+            'open_success': True,
+            'open': open_result,
+        }
 
 def close_position(symbol: str, reason: str = "signal",
                    pos: dict = None) -> Dict:
@@ -1088,10 +1150,11 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'vetoed_pattern_keys': vetoed_pattern_keys,
                 }
             
-            # P1: OCO下单 (带equity参数用于验证)
+            # P1: OCO下单 (带equity参数用于验证, leverage=3x)
+            LEVERAGE = 3
             result = place_oco(
                 best['instId'], best['direction'], sz,
-                entry, best['sl'], best['tp'], equity
+                entry, best['sl'], best['tp'], equity, LEVERAGE
             )
             
             if result.get('code') == '0':
