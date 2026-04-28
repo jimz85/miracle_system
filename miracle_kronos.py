@@ -721,7 +721,7 @@ def close_position(symbol: str, reason: str = "signal",
 
     body = json.dumps({
         'instId': inst_id,
-        'tdMode': 'cross',
+        'tdMode': 'isolated',  # 与place_oco保持一致
         'side': close_side,
         'ordType': 'market',
         'sz': str(sz),
