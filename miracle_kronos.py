@@ -43,6 +43,9 @@ from core.kronos_utils import (
 # ===== Agent学习模块 =====
 from agents.agent_learner import AgentLearner
 
+# ===== Memory模块 =====
+from core.memory import get_structured_memory
+
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
 STATE_DIR = Path(__file__).parent / 'data'
@@ -1041,6 +1044,48 @@ def _parallel_scan_wrapper(instId_symbol, equity, btc_trend, weights):
         logger.warning(f"扫描失败 {instId}: {e}")
         return None
 
+def _get_memory_confidence_multiplier() -> float:
+    """
+    从ChromaDB查询最近10笔交易结果,根据最近交易表现调整置信度.
+    
+    规则:
+    - 最近3笔全部亏损: 置信度×0.90 (降10%)
+    - 最近1笔盈利>5%: 置信度×1.05 (加5%)
+    - 否则: 置信度×1.00
+    
+    Returns:
+        float: 置信度乘数 (0.90, 1.00, 或 1.05)
+    """
+    try:
+        memory = get_structured_memory()
+        recent_trades = memory.get_trades(status='closed', limit=10)
+        
+        if not recent_trades:
+            logger.debug("无历史交易记录,置信度乘数=1.0")
+            return 1.0
+        
+        # 按exit_time倒序取最后3条(最近结束的)
+        # get_trades已按entry_time DESC,所以取前3
+        last_3 = recent_trades[:3]
+        
+        # 检查最近3笔是否全亏
+        all_losing = all(t.pnl < 0 for t in last_3)
+        if all_losing and len(last_3) >= 3:
+            logger.warning(f"最近3笔全亏({[(t.symbol, t.pnl_pct) for t in last_3]}),置信度降10%")
+            return 0.90
+        
+        # 检查最近1笔是否盈利>5%
+        last_trade = recent_trades[0]
+        if last_trade.pnl_pct > 0.05:
+            logger.info(f"最近1笔盈利>{last_trade.pnl_pct:.1%}({last_trade.symbol}),置信度加5%")
+            return 1.05
+        
+        return 1.0
+        
+    except Exception as e:
+        logger.warning(f"查询历史交易失败: {e},置信度乘数=1.0")
+        return 1.0
+
 def run_scan(equity, btc_trend='neutral', mode='audit'):
     """
     主扫描入口
@@ -1109,6 +1154,16 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     )
     
     candidates.sort(key=lambda x: x['score'], reverse=True)
+
+    # Memory置信度调整: 根据最近交易历史调整所有候选评分
+    memory_multiplier = _get_memory_confidence_multiplier()
+    if memory_multiplier != 1.0:
+        for c in candidates:
+            c['score'] = c['score'] * memory_multiplier
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+        logger.info(f"Memory置信度乘数:{memory_multiplier:.2f},候选重排后top={candidates[0]['symbol'] if candidates else 'none'}@{candidates[0]['score']:.3f}")
+    else:
+        logger.debug("Memory置信度乘数:1.0(无调整)")
 
     # 加载本地OPEN交易 (必须在select_best前)
     local_trades = get_open_trades()
@@ -1198,6 +1253,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'reason': reason,
             'phantom_warnings': phantom_warnings,
             'vetoed_pattern_keys': vetoed_pattern_keys,
+            'memory_multiplier': memory_multiplier,
         }
     
     if best and best['score'] > 0.5:
@@ -1307,6 +1363,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'reason': reason,
             'phantom_warnings': phantom_warnings,
             'vetoed_pattern_keys': vetoed_pattern_keys,
+            'memory_multiplier': memory_multiplier,
         }
     
     return {
@@ -1318,6 +1375,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'reason': reason,
         'phantom_warnings': phantom_warnings,
         'vetoed_pattern_keys': vetoed_pattern_keys,
+        'memory_multiplier': memory_multiplier,
     }
 
 # ===== 入口 =====
