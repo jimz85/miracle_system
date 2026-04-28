@@ -19,19 +19,26 @@ graph TB
         O[任务分解<br/>结果聚合<br/>自我反思]
     end
 
-    subgraph Agents["👥 Multi-Agent"]
-        M[Agent-M<br/>市场情报]
-        S[Agent-S<br/>信号生成]
-        R[Agent-R<br/>风险管理]
-        L[Agent-L<br/>学习迭代]
-        E[Agent-E<br/>执行引擎]
+    subgraph Agents["👥 核心Agent"]
+        S[AgentSignal<br/>信号生成]
+        EX[AgentExecutor<br/>执行引擎]
+        L[AgentLearner<br/>学习迭代]
+    end
+
+    subgraph Risk["🛡️ 风控模块"]
+        CB[CircuitBreaker<br/>熔断机制]
+        RM[RiskMetrics<br/>风险指标]
+    end
+
+    subgraph Intel["📊 数据采集"]
+        EC[ExchangeClient<br/>OKX数据获取]
     end
 
     subgraph Memory["🧠 Memory System"]
-        VM[(向量记忆<br/>ChromaDB)]
+        VM[(向量记忆<br/>SQLite)]
         SM[(结构化经验<br/>SQLite)]
-        DB[(示范库<br/>Few-shot)]
-        RB[(规则库<br/>Policy)]
+        IC[(IC权重<br/>追踪器)]
+        BL[(黑名单<br/>模式库)]
     end
 
     subgraph Autoresearch["🔄 Autoresearch Loop"]
@@ -79,14 +86,16 @@ graph TB
 
 ### 多Agent协同
 
-| Agent | 职责 | LLM增强 |
+| Agent | 职责 | 实际模块 |
 |-------|------|---------|
-| **Orchestrator** | 全局规划、决策 | LLM推理 + 反思 |
-| **Agent-M** | 市场情报、情感分析 | LLM深度理解 |
-| **Agent-S** | 信号生成、因子融合 | LLM动态权重 |
-| **Agent-R** | 风险管理、熔断 | LLM风险评估 |
-| **Agent-L** | 学习迭代、策略演化 | LLM自我反思 |
-| **Agent-E** | 交易所执行 | - |
+| **Orchestrator** | 全局规划、决策 | `scripts/miracle_kronos.py::run_scan()` |
+| **ExchangeClient** | 市场数据采集 | `core/exchange_client.py` |
+| **AgentSignal** | 信号生成、因子融合 | `agents/agent_signal.py` |
+| **CircuitBreaker** | 风险管理、熔断 | `core/circuit_breaker.py` |
+| **AgentExecutor** | OKX下单执行 | `agents/agent_executor.py` |
+| **AgentLearner** | 学习迭代、策略演化 | `agents/agent_learner.py` |
+
+> 注：Agent-M（市场情报）和Agent-R（风险管理）已内化为 `ExchangeClient` 和 `CircuitBreaker` 模块，而非独立Agent进程。
 
 ---
 
@@ -236,7 +245,7 @@ export FEISHU_WEBHOOK_URL=https://open.feishu.cn/...
 | **知识积累** | JSON文件 | ChromaDB向量记忆 |
 | **策略演化** | 定期淘汰 | Autoresearch持续进化 |
 | **反思能力** | 有限 | 每笔交易即时反思 |
-| **多Agent** | 5 Agent | Orchestrator + 5 Agent |
+| **多Agent** | 3 Agent | AgentSignal + AgentExecutor + AgentLearner |
 
 ---
 
@@ -244,18 +253,19 @@ export FEISHU_WEBHOOK_URL=https://open.feishu.cn/...
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| Orchestrator | ✅ | LLM大脑+规则降级 |
+| Orchestrator | ✅ | `run_scan()` + LLM降级规则 |
 | LLM Provider | ✅ | Claude/GPT/Gemini/DeepSeek |
-| Memory System | ✅ | ChromaDB + SQLite + 遗忘机制 |
-| Agent-M | ✅ | 市场情报 + LLM增强 |
-| Agent-S | ✅ | 信号生成 |
-| Agent-R | ✅ | 风险管理 + 熔断 |
-| Agent-E | ✅ | OKX/Binance执行 |
-| Agent-L | ✅ | 自主学习 + 策略演化 |
+| Memory System | ✅ | SQLite + IC权重追踪 + 遗忘机制 |
+| ExchangeClient | ✅ | OKX数据获取 |
+| AgentSignal | ✅ | 信号生成 + 多因子融合 |
+| CircuitBreaker | ✅ | 五级熔断机制 |
+| AgentExecutor | ✅ | OKX下单 + 动态止损 |
+| AgentLearner | ✅ | IC权重更新 + 模式黑名单 |
 | Autoresearch Loop | ✅ | Keep/Discard淘汰 |
 | OKX集成 | ✅ | 模拟盘+实盘 |
 | 飞书通知 | ✅ | 分级告警 |
 | 单元测试 | ✅ | 337个测试覆盖核心模块 |
+| ChromaDB向量记忆 | ⚠️ | 已切换为SQLite，Roadmap预留 |
 
 ---
 
