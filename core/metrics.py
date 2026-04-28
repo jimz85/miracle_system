@@ -427,7 +427,120 @@ def create_metrics_app():
         
         @app.route("/health")
         def health():
-            return {"status": "ok", "timestamp": datetime.now().isoformat()}
+            """
+            Enhanced health check with component-level status.
+            
+            Returns:
+                {
+                    "status": "ok" | "degraded" | "error",
+                    "timestamp": ISO datetime,
+                    "components": [
+                        {"name": "exchange", "status": "ok" | "error", "critical": True, "message": "..."},
+                        {"name": "memory", "status": "ok" | "error", "critical": False, "message": "..."},
+                        ...
+                    ]
+                }
+            """
+            from datetime import datetime as dt
+            
+            components = []
+            overall_status = "ok"
+            
+            # Check 1: Exchange connectivity (critical)
+            try:
+                from core.exchange_client import ExchangeClient
+                from core.executor_config import ExecutorConfig
+                config = ExecutorConfig()
+                client = ExchangeClient("okx", config)
+                balance = client.get_balance()
+                components.append({
+                    "name": "exchange_okx",
+                    "status": "ok",
+                    "critical": True,
+                    "message": f"OKX reachable, balance={balance.get('available', 0):.2f} USDT"
+                })
+            except Exception as e:
+                components.append({
+                    "name": "exchange_okx",
+                    "status": "error",
+                    "critical": True,
+                    "message": f"OKX unreachable: {e}"
+                })
+                overall_status = "degraded"
+            
+            # Check 2: Memory/DB (non-critical)
+            try:
+                from core.memory.vector_memory import get_vector_memory
+                vm = get_vector_memory()
+                stats = vm.get_stats()
+                components.append({
+                    "name": "memory",
+                    "status": "ok",
+                    "critical": False,
+                    "message": f"VectorMemory: {stats.get('total', 0)} memories"
+                })
+            except Exception as e:
+                components.append({
+                    "name": "memory",
+                    "status": "error",
+                    "critical": False,
+                    "message": f"Memory error: {e}"
+                })
+            
+            # Check 3: Prometheus metrics collector (non-critical)
+            if trading.enabled:
+                components.append({
+                    "name": "prometheus",
+                    "status": "ok",
+                    "critical": False,
+                    "message": "Metrics collector enabled"
+                })
+            else:
+                components.append({
+                    "name": "prometheus",
+                    "status": "error",
+                    "critical": False,
+                    "message": "Metrics collector disabled"
+                })
+            
+            # Check 4: LLM metrics
+            try:
+                llm = get_llm_metrics()
+                if llm.enabled:
+                    components.append({
+                        "name": "llm_metrics",
+                        "status": "ok",
+                        "critical": False,
+                        "message": "LLM metrics enabled"
+                    })
+                else:
+                    components.append({
+                        "name": "llm_metrics",
+                        "status": "error",
+                        "critical": False,
+                        "message": "LLM metrics disabled"
+                    })
+            except Exception as e:
+                components.append({
+                    "name": "llm_metrics",
+                    "status": "error",
+                    "critical": False,
+                    "message": f"LLM metrics error: {e}"
+                })
+            
+            # Determine overall status
+            for comp in components:
+                if comp.get("critical") and comp.get("status") == "error":
+                    overall_status = "error"
+                    break
+                elif comp.get("status") == "error":
+                    overall_status = "degraded"
+            
+            return {
+                "status": overall_status,
+                "timestamp": dt.now().isoformat(),
+                "components": components
+            }
         
         return app
     except ImportError:

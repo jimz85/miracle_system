@@ -370,6 +370,329 @@ class CachedLLMCaller:
         return self._cache.get_stats()
 
 
+# ============================================================
+# SQLite-based LLM Response Cache (P3-3)
+# ============================================================
+
+import sqlite3
+import threading
+import time
+from pathlib import Path
+
+
+_LLM_CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+class LLMResponseCache:
+    """
+    SQLite-based LLM响应缓存
+    
+    特性:
+    - key = SHA256(prompt + state_json_sorted) 防止状态差异缓存污染
+    - TTL = 1小时（可配置）
+    - JSON Schema校验（可选）
+    - 线程安全
+    
+    用法:
+        cache = LLMResponseCache()
+        cache.set(prompt="Hello", state={"mode":"trade"}, response={"text":"Hi"})
+        result = cache.get(prompt="Hello", state={"mode":"trade"})
+    """
+    
+    def __init__(
+        self,
+        db_path: str | None = None,
+        ttl_seconds: int = _LLM_CACHE_TTL_SECONDS,
+        schema: Dict[str, Any] | None = None,  # JSON Schema for validation
+        verbose: bool = False
+    ):
+        """
+        Args:
+            db_path: SQLite数据库路径，默认 ~/.miracle_memory/llm_cache.db
+            ttl_seconds: 缓存过期时间（秒），默认3600（1小时）
+            schema: JSON Schema dict，用于校验response结构
+            verbose: 打印详细日志
+        """
+        if db_path is None:
+            db_path = os.path.expanduser("~/.miracle_memory/llm_cache.db")
+        
+        self.db_path = db_path
+        self.ttl_seconds = ttl_seconds
+        self.schema = schema
+        self.verbose = verbose
+        
+        # Ensure directory exists
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        
+        self._init_db()
+        self._stats = {"hits": 0, "misses": 0, "errors": 0, "schema_rejects": 0}
+    
+    def _init_db(self):
+        """初始化缓存表"""
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS llm_cache (
+                key TEXT PRIMARY KEY,
+                prompt TEXT NOT NULL,
+                state_json TEXT,  -- JSON serialized state
+                response TEXT NOT NULL,  -- JSON serialized response
+                provider TEXT,
+                model TEXT,
+                created_at REAL NOT NULL,  -- Unix timestamp
+                expires_at REAL NOT NULL   -- Unix timestamp
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_expires ON llm_cache(expires_at)")
+        self._conn.commit()
+    
+    def _make_key(self, prompt: str, state: Dict[str, Any] | None = None) -> str:
+        """生成缓存key: SHA256(prompt + sorted_state_json)"""
+        state_str = json.dumps(state or {}, sort_keys=True, ensure_ascii=False)
+        combined = f"{prompt}|{state_str}"
+        return hashlib.sha256(combined.encode()).hexdigest()
+    
+    def _validate_response(self, response: Any) -> bool:
+        """使用JSON Schema校验response结构"""
+        if self.schema is None:
+            return True
+        
+        try:
+            import jsonschema
+            jsonschema.validate(instance=response, schema=self.schema)
+            return True
+        except ImportError:
+            # Fallback: manual schema check
+            return self._manual_schema_validate(response, self.schema)
+        except Exception as e:
+            self._log(f"Schema validation failed: {e}")
+            return False
+    
+    def _manual_schema_validate(self, instance: Any, schema: Dict[str, Any]) -> bool:
+        """Minimal JSON Schema validation (type + required fields)"""
+        # Only check 'type' and 'required' for simplicity
+        expected_type = schema.get("type")
+        if expected_type == "object" and not isinstance(instance, dict):
+            return False
+        if expected_type == "string" and not isinstance(instance, str):
+            return False
+        if expected_type == "array" and not isinstance(instance, list):
+            return False
+        
+        required = schema.get("required", [])
+        if isinstance(instance, dict):
+            for field in required:
+                if field not in instance:
+                    return False
+        return True
+    
+    def _log(self, msg: str):
+        if self.verbose:
+            logger.info(msg)
+    
+    def get(
+        self,
+        prompt: str,
+        state: Dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None
+    ) -> Optional[Any]:
+        """
+        获取缓存的LLM响应
+        
+        Args:
+            prompt: 输入提示
+            state: 状态字典（key的一部分）
+            provider: LLM提供商
+            model: 模型名称
+        
+        Returns:
+            缓存的响应，或None（未命中/过期/校验失败）
+        """
+        key = self._make_key(prompt, state)
+        
+        with self._lock:
+            cursor = self._conn.cursor()
+            cursor.execute(
+                "SELECT * FROM llm_cache WHERE key = ?",
+                (key,)
+            )
+            row = cursor.fetchone()
+        
+        if row is None:
+            self._stats["misses"] += 1
+            self._log(f"Cache miss: {key[:16]}...")
+            return None
+        
+        # 检查TTL
+        now = time.time()
+        if now > row["expires_at"]:
+            self._delete_key(key)
+            self._stats["misses"] += 1
+            self._log(f"Cache expired: {key[:16]}...")
+            return None
+        
+        # 解析response
+        try:
+            response = json.loads(row["response"])
+        except Exception as e:
+            self._delete_key(key)
+            self._stats["errors"] += 1
+            self._log(f"Cache corrupt (delete): {e}")
+            return None
+        
+        # JSON Schema校验
+        if not self._validate_response(response):
+            self._delete_key(key)
+            self._stats["schema_rejects"] += 1
+            self._log(f"Schema validation failed, deleted: {key[:16]}...")
+            return None
+        
+        self._stats["hits"] += 1
+        self._log(f"Cache hit: {key[:16]}...")
+        return response
+    
+    def set(
+        self,
+        prompt: str,
+        response: Any,
+        state: Dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        ttl: int | None = None
+    ) -> bool:
+        """
+        缓存LLM响应
+        
+        Args:
+            prompt: 输入提示
+            response: LLM响应（会被JSON序列化）
+            state: 状态字典
+            provider: LLM提供商
+            model: 模型名称
+            ttl: 过期秒数（默认1小时）
+        
+        Returns:
+            是否成功
+        """
+        key = self._make_key(prompt, state)
+        ttl = ttl or self.ttl_seconds
+        
+        # JSON Schema校验（存储前）
+        if not self._validate_response(response):
+            self._stats["schema_rejects"] += 1
+            self._log(f"Response failed schema validation, not caching")
+            return False
+        
+        now = time.time()
+        expires_at = now + ttl
+        
+        try:
+            response_json = json.dumps(response, ensure_ascii=False)
+            state_json = json.dumps(state or {}, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            self._stats["errors"] += 1
+            self._log(f"JSON serialization failed: {e}")
+            return False
+        
+        with self._write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO llm_cache 
+                (key, prompt, state_json, response, provider, model, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (key, prompt, state_json, response_json, provider, model, now, expires_at))
+            self._conn.commit()
+        
+        self._log(f"Cache set: {key[:16]}... TTL={ttl}s")
+        return True
+    
+    def _delete_key(self, key: str):
+        """删除指定key"""
+        with self._write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("DELETE FROM llm_cache WHERE key = ?", (key,))
+            self._conn.commit()
+    
+    def delete(
+        self,
+        prompt: str,
+        state: Dict[str, Any] | None = None
+    ) -> bool:
+        """删除缓存"""
+        key = self._make_key(prompt, state)
+        self._delete_key(key)
+        return True
+    
+    def clear_expired(self) -> int:
+        """清理过期缓存，返回删除数量"""
+        now = time.time()
+        with self._write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("DELETE FROM llm_cache WHERE expires_at < ?", (now,))
+            deleted = cursor.rowcount
+            self._conn.commit()
+        if deleted > 0:
+            self._log(f"Cleared {deleted} expired cache entries")
+        return deleted
+    
+    def clear_all(self) -> bool:
+        """清空所有缓存"""
+        with self._write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("DELETE FROM llm_cache")
+            self._conn.commit()
+        self._log("Cleared all cache entries")
+        return True
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取缓存统计"""
+        total = self._stats["hits"] + self._stats["misses"]
+        hit_rate = self._stats["hits"] / total if total > 0 else 0.0
+        return {
+            **self._stats,
+            "total_queries": total,
+            "hit_rate": hit_rate,
+            "ttl_seconds": self.ttl_seconds,
+            "db_path": self.db_path
+        }
+    
+    def reset_stats(self):
+        """重置统计"""
+        self._stats = {"hits": 0, "misses": 0, "errors": 0, "schema_rejects": 0}
+    
+    def close(self):
+        """关闭数据库连接"""
+        self._conn.close()
+
+
+# ============================================================
+# 全局单例
+# ============================================================
+
+_llm_response_cache: LLMResponseCache | None = None
+
+
+def get_llm_response_cache(
+    db_path: str | None = None,
+    ttl_seconds: int = _LLM_CACHE_TTL_SECONDS,
+    schema: Dict[str, Any] | None = None
+) -> LLMResponseCache:
+    """获取LLMResponseCache全局单例"""
+    global _llm_response_cache
+    if _llm_response_cache is None:
+        _llm_response_cache = LLMResponseCache(
+            db_path=db_path,
+            ttl_seconds=ttl_seconds,
+            schema=schema
+        )
+    return _llm_response_cache
+
+
 if __name__ == "__main__":
     # 测试
     print("=== LLM Cache Test ===\n")

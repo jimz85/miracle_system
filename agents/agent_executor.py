@@ -61,6 +61,9 @@ from core.secure_key_manager import SecureKeyManager, get_key_manager
 from core.slippage_monitor import SlippageMonitor
 from core.trade_logger import TradeLogger
 
+# 预检查模块
+from core.preflight_check import preflight_check_or_raise, PreflightError
+
 # ============================================================
 # 执行器 (主类)
 # ============================================================
@@ -288,6 +291,20 @@ class Executor:
             position_size = risk_amount / stop_distance
             position_size = min(position_size, balance["available"] * leverage / current_price)
 
+        # Step 2b: 预检查（交易所状态/最小量/精度/持仓上限）
+        try:
+            preflight_check_or_raise(
+                client=self.active_client,
+                symbol=symbol,
+                side=side,
+                size=position_size,
+                price=planned_entry,
+                leverage=leverage
+            )
+        except PreflightError as e:
+            logging.warning(f"🚫 预检查失败，拒绝下单: {e}")
+            return None
+        
         # Step 3: 市价单入场（优先尝试真实下单，失败时模拟）
         planned_entry = approved_signal.get("entry_price", self.active_client.get_ticker(symbol))
         if not planned_entry:

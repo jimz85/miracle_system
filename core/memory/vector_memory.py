@@ -4,7 +4,7 @@ from __future__ import annotations
 Vector Memory using SQLite (Downgraded from ChromaDB)
 ====================================================
 向量记忆模块 - 基于SQLite实现存储和检索
-移除了向量语义搜索，改用关键词匹配+时间衰减排序
+支持语义向量搜索（sentence_transformers）和关键词匹配双模式
 """
 
 import logging
@@ -18,6 +18,48 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# Embedding Support (sentence_transformers with keyword fallback)
+# ============================================================
+_EMBEDDING_MODEL = None
+_EMBEDDING_DIM = 384  # default for all-MiniLM-L6-v2
+_EMBEDDING_AVAILABLE = False
+
+try:
+    from sentence_transformers import SentenceTransformer
+    _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    _EMBEDDING_AVAILABLE = True
+    logger.info("sentence_transformers loaded - semantic search ENABLED")
+except ImportError:
+    logger.warning(
+        "sentence_transformers not available - falling back to keyword matching. "
+        "Install with: pip install sentence-transformers"
+    )
+
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _get_embedding(text: str) -> List[float] | None:
+    """Get embedding vector for text, or None if sentence_transformers unavailable."""
+    if not _EMBEDDING_AVAILABLE or _EMBEDDING_MODEL is None:
+        return None
+    try:
+        # Returns numpy array, convert to list
+        embedding = _EMBEDDING_MODEL.encode(text, convert_to_numpy=True)
+        return embedding.tolist()
+    except Exception as e:
+        logger.warning(f"Embedding computation failed: {e}")
+        return None
 
 # 全局SQLite连接
 _sqlite_conn: sqlite3.Connection | None = None
@@ -69,9 +111,17 @@ def _init_db(conn: sqlite3.Connection) -> None:
             memory_type TEXT DEFAULT 'general',
             created_at TEXT NOT NULL,
             expires_at TEXT,
-            keywords TEXT  -- 逗号分隔的关键词
+            keywords TEXT,  -- 逗号分隔的关键词
+            embedding TEXT   -- JSON序列化的向量 (sentence_transformers)
         )
     """)
+    
+    # Migration: add embedding column if it doesn't exist
+    cursor.execute("PRAGMA table_info(memories)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "embedding" not in columns:
+        cursor.execute("ALTER TABLE memories ADD COLUMN embedding TEXT")
+        logger.info("Added embedding column to memories table")
     
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_memory_type ON memories(memory_type)
@@ -212,16 +262,20 @@ class VectorMemory:
         # 提取关键词
         keywords = _extract_keywords(content)
         
+        # 计算语义向量（sentence_transformers）
+        embedding = _get_embedding(content)
+        embedding_json = json.dumps(embedding) if embedding else None
+        
         with _write_lock:
             cursor = self._conn.cursor()
             cursor.execute("""
-                INSERT INTO memories (id, content, metadata, memory_type, created_at, expires_at, keywords)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO memories (id, content, metadata, memory_type, created_at, expires_at, keywords, embedding)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (entry_id, content, json.dumps(metadata, ensure_ascii=False), memory_type, 
-                  created_at.isoformat(), expires_at_str, keywords))
+                  created_at.isoformat(), expires_at_str, keywords, embedding_json))
             
             self._conn.commit()
-        logger.debug(f"Added memory: {entry_id}, type={memory_type}, expires={expires_at}")
+        logger.debug(f"Added memory: {entry_id}, type={memory_type}, expires={expires_at}, embedding={embedding is not None}")
         return entry_id
     
     def add_batch(self, entries: List[MemoryEntry]) -> List[str]:
@@ -263,14 +317,22 @@ class VectorMemory:
                filter_metadata: Dict[str, Any] | None = None,
                include_embeddings: bool = False) -> List[Dict[str, Any]]:
         """
-        搜索记忆（关键词匹配+时间衰减）
+        搜索记忆（语义向量相似度 + 关键词匹配 + 时间衰减）
+        
+        当sentence_transformers可用时：
+            - 计算查询文本的embedding
+            - 与所有记忆的embedding做余弦相似度
+            - 综合分数 = 向量相似度 * 0.6 + 关键词匹配 * 0.25 + 时间衰减 * 0.15
+        
+        当sentence_transformers不可用时：
+            - 纯关键词匹配 + 时间衰减（原有逻辑）
         
         Args:
             query: 查询文本
             k: 返回数量
             memory_type: 按类型过滤
-            filter_metadata: 按元数据过滤（已弃用，保留接口）
-            include_embeddings: 是否返回嵌入向量（已弃用，始终返回False）
+            filter_metadata: 按元数据过滤
+            include_embeddings: 是否返回嵌入向量
             
         Returns:
             List[Dict]: 检索结果列表
@@ -280,6 +342,15 @@ class VectorMemory:
         
         # 提取查询关键词
         query_keywords = _extract_keywords(query).split(',')
+        
+        # 计算查询文本的语义向量
+        query_embedding = _get_embedding(query)
+        use_vector_search = query_embedding is not None
+        
+        if use_vector_search:
+            logger.debug("Using semantic vector search")
+        else:
+            logger.debug("sentence_transformers unavailable, using keyword search")
         
         cursor = self._conn.cursor()
         
@@ -314,7 +385,7 @@ class VectorMemory:
             # 计算关键词匹配分数
             row_keywords = row['keywords'].split(',') if row['keywords'] else []
             match_count = sum(1 for kw in query_keywords if kw in row_keywords)
-            keyword_score = match_count / max(len(query_keywords), 1)
+            keyword_score = match_count / max(len(query_keywords), 1) if query_keywords else 0
             
             # 时间衰减分数（越新的记忆分数越高）
             try:
@@ -325,13 +396,34 @@ class VectorMemory:
                 logger.debug(f"datetime解析失败: {e}")
                 time_score = 0.5
             
+            # 计算向量相似度（如果可用）
+            vector_score = 0.0
+            if use_vector_search and row['embedding']:
+                try:
+                    stored_embedding = json.loads(row['embedding'])
+                    vector_score = _cosine_similarity(query_embedding, stored_embedding)
+                except Exception as e:
+                    logger.debug(f"向量相似度计算失败: {e}")
+                    vector_score = 0.0
+            
             # 综合分数
-            similarity = keyword_score * 0.7 + time_score * 0.3
+            if use_vector_search and vector_score > 0:
+                # 优先使用向量相似度
+                similarity = vector_score * 0.6 + keyword_score * 0.25 + time_score * 0.15
+            else:
+                # 降级：纯关键词 + 时间
+                similarity = keyword_score * 0.7 + time_score * 0.3
             
             if similarity > 0:
                 memory['similarity'] = similarity
                 memory['distance'] = 1 - similarity
                 memory['match_score'] = match_count
+                memory['vector_score'] = vector_score if use_vector_search else None
+                if include_embeddings and row['embedding']:
+                    try:
+                        memory['embedding'] = json.loads(row['embedding'])
+                    except Exception:
+                        pass
                 results.append(memory)
         
         # 按相似度排序
