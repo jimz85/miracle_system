@@ -1026,10 +1026,11 @@ class MarketIntelAgent:
 
 def main(symbol: str = "BTC"):
     """主入口：生成并打印情报报告"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
-    )
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+        )
 
     agent = MarketIntelAgent(symbol)
     report = agent.generate_intel_report()

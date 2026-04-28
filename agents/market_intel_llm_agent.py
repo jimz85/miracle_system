@@ -447,10 +447,11 @@ class MarketIntelAgentLLM:
 
 async def main_async(symbol: str = "BTC", llm_provider: str = "auto"):
     """异步主入口"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
-    )
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+        )
 
     agent = MarketIntelAgentLLM(symbol, llm_provider)
     report = await agent.generate_intel_report()

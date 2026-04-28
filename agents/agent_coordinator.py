@@ -35,14 +35,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from miracle_core import calc_factors, calc_trend_strength, format_trade_signal, log_trade
 
 # ==================== 日志 ====================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler('logs/coordinator.log'),
-        logging.StreamHandler()
-    ]
-)
+# 只在root logger尚无handler时配置（防止多次调用basicConfig覆盖）
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[
+            logging.FileHandler('logs/coordinator.log'),
+            logging.StreamHandler()
+        ]
+    )
 logger = logging.getLogger(__name__)
 
 # ==================== 配置 ====================
