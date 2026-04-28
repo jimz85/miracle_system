@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
 # OKX API 封装
-from agents.agent_executor import ExchangeClient, ExecutorConfig
+from core.exchange_client import ExchangeClient
+from core.executor_config import ExecutorConfig
 
 logger = logging.getLogger("miracle.state_reconciler")
 
