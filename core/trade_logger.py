@@ -112,9 +112,9 @@ class TradeLogger:
 
                 self._save_trades()
 
+                actual_rr_str = f"{trade['actual_rr']:.2f}" if trade.get("actual_rr") is not None else "N/A"
                 logger.info(
-                    f"出场记录: {trade_id} {exit_reason} "
-                    f"PNL={pnl:.2f} RR={trade['actual_rr']:.2f}"
+                    f"出场记录: {trade_id} {exit_reason} PNL={pnl:.2f} RR={actual_rr_str}"
                 )
                 break
 
