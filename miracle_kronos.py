@@ -445,7 +445,7 @@ def save_whitelist(wl):
     with open(STATE_DIR / 'whitelist.json', 'w') as f:
         json.dump({'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])}, f)
 
-Gemma4_TIMEOUT = 20  # gemma4超时20秒，超时跳过不否决
+Gemma4_TIMEOUT = 30  # gemma4超时30秒，超时跳过不否决
 
 def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
     """调用gemma4获取方向判断，每币独立缓存5分钟
@@ -454,6 +454,11 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
     - 0.5 = 中立/WAIT
     - 0.0 = 强烈SHORT
     - 负数 = gemma4否决(超时/异常)
+
+    Fallback机制:
+    - 超时30秒 → vote=-1 跳过（不否决）
+    - 解析失败 → vote=0.6
+    - 连续3次失败 → circuit breaker升级tier
     """
     import time as _time
     cache_file = STATE_DIR / 'gemma_cache.json'
@@ -531,6 +536,9 @@ confidence表示你对方向判断的确信程度：
 只输出上述格式，不要其他内容。
 """
 
+    vote = 0.5  # 默认中立
+    failure_type = None  # 'timeout' | 'parse' | None
+
     try:
         import subprocess
         result = subprocess.run(
@@ -540,7 +548,6 @@ confidence表示你对方向判断的确信程度：
         output = result.stdout.strip()
 
         # 解析置信度
-        vote = 0.5  # 默认中立
         try:
             # 尝试提取 confidence: X.XX 格式
             import re
@@ -551,27 +558,72 @@ confidence表示你对方向判断的确信程度：
                 # 备选：根据direction关键词判断
                 output_upper = output.upper()[:20]
                 if 'LONG' in output_upper[:20] or 'SHORT' in output_upper[:20]:
-                    # SHORT和LONG都给予0.6分，由置信度regex提取值决定
-                    # SHORT不是低分理由，只是方向
                     vote = 0.6
+                else:
+                    # 解析失败 → vote=0.6
+                    vote = 0.6
+                    failure_type = 'parse'
         except Exception:
-            vote = 0.5
+            # 解析异常 → vote=0.6
+            vote = 0.6
+            failure_type = 'parse'
 
-        # 写入每币缓存
+    except subprocess.TimeoutExpired:
+        # 超时 → vote=-1 跳过（不否决）
+        vote = -1
+        failure_type = 'timeout'
+
+    except Exception as e:
+        # 其他异常 → vote=-1 跳过
+        vote = -1
+        failure_type = 'timeout'
+
+    # ---- 连续失败追踪 + circuit breaker升级 ----
+    treasury = load_treasury()
+    gemma_fail_count = treasury.get('gemma_consecutive_failures', 0)
+
+    if failure_type is not None:
+        gemma_fail_count += 1
+        treasury['gemma_consecutive_failures'] = gemma_fail_count
+
+        # 连续3次失败 → circuit breaker升级tier
+        if gemma_fail_count >= 3:
+            current_tier = treasury.get('tier', 'normal')
+            tier_order = ['normal', 'caution', 'critical', 'suspended']
+            if current_tier in tier_order:
+                idx = tier_order.index(current_tier)
+                if idx < len(tier_order) - 1:
+                    new_tier = tier_order[idx + 1]
+                    treasury['tier'] = new_tier
+                    treasury['gemma_tier_upgraded'] = True
+                    treasury['gemma_tier_reason'] = (
+                        f'gemma连续{gemma_fail_count}次失败({failure_type})，'
+                        f'tier: {current_tier}→{new_tier}'
+                    )
+                    # 保存升级后的tier
+                    save_treasury(treasury)
+
+        save_treasury(treasury)
+    else:
+        # 成功 → 重置连续失败计数
+        if gemma_fail_count > 0:
+            treasury['gemma_consecutive_failures'] = 0
+            treasury['gemma_tier_upgraded'] = False
+            save_treasury(treasury)
+
+    # 写入每币缓存
+    if failure_type is None:
         all_cache = {}
         if cache_file.exists():
             try:
                 all_cache = json.load(open(cache_file))
             except Exception:
                 pass
-        all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100]}
+        all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100] if 'output' in dir() else ''}
         with open(cache_file, 'w') as f:
             json.dump(all_cache, f)
 
-        return vote
-    except Exception as e:
-        # 超时或其他异常返回-1表示跳过（不否决）
-        return -1
+    return vote
 
 
 def get_pattern_key(rsi, adx, bb_pos, direction):
