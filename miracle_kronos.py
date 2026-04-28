@@ -371,9 +371,11 @@ def get_klines(instId, timeframe='1H', limit=100):
     path = f'/api/v5/market/candles?instId={instId}&bar={timeframe}&limit={limit}'
     data = okx_req('GET', path)
     if data.get('code') != '0':
+        logger.warning(f"get_klines: OKX API错误 {instId}: {data.get('msg', data)}")
         return None
     candles = data.get('data', [])
     if not candles:
+        logger.warning(f"get_klines: OKX返回空数据 {instId}")
         return None
     # [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
     parsed = []

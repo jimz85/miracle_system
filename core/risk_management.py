@@ -18,6 +18,8 @@ class ATRCalculator:
     """Average True Range 计算器 - 使用Wilder's平滑方法"""
     
     def __init__(self, period: int = 14):
+        if period <= 0:
+            raise ValueError(f"ATR period must be positive, got {period}")
         self.period = period
         self.tr_list = []
         self.atr = None
