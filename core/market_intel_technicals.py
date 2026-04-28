@@ -1,17 +1,17 @@
 """
-Market Intel OnChain - 链上分析增强模块
+Market Intel Technicals - 技术指标分析模块
 ==========================================
 
-从 agents/agent_market_intel_llm.py 提取
-
 包含:
-- EnhancedOnChainAnalyzer: 链上数据智能分析
+- ExchangeFlowAnalyzer: 交易所流量分析
+- WhaleTracker: 鲸鱼追踪器
+- TechnicalPatternRecognizer: 技术模式识别
 
 依赖:
-- core.market_intel_types
+- core.market_intel_base (基础类型和工具)
 
 用法:
-    from core.market_intel_onchain import EnhancedOnChainAnalyzer
+    from core.market_intel_technicals import ExchangeFlowAnalyzer, WhaleTracker
 """
 
 import logging
@@ -26,12 +26,16 @@ from core.market_intel_base import (
     load_cache,
 )
 
-logger = logging.getLogger("MarketIntelOnChain")
+logger = logging.getLogger("MarketIntelTechnicals")
 
 
-class EnhancedOnChainAnalyzer:
+# ============================================================
+# 交易所流量分析器
+# ============================================================
+
+class ExchangeFlowAnalyzer:
     """
-    增强的链上分析模块
+    交易所流量分析模块
     功能：
     1. 智能模式识别（大户行为、交易所流量模式）
     2. 异常检测
@@ -40,47 +44,37 @@ class EnhancedOnChainAnalyzer:
     """
 
     # 模式识别规则
-    WHALE_PATTERNS = {
-        "accumulation": {
-            "description": "巨鲸积累模式",
-            "indicators": ["流入交易所减少", "持币地址增加", "链上活跃度下降"],
-            "implication": "看涨信号"
-        },
-        "distribution": {
-            "description": "巨鲸分发模式",
-            "indicators": ["流入交易所增加", "持币地址减少", "链上转移频繁"],
+    FLOW_PATTERNS = {
+        "inflow_acceleration": {
+            "description": "流入加速",
+            "indicators": ["流入交易所增加", "净流量为正"],
             "implication": "看跌信号"
         },
-        "panic_selling": {
-            "description": "恐慌抛售模式",
-            "indicators": ["大量小额转账", "交易所流入激增", "价格快速下跌"],
-            "implication": "短期看跌，可能超卖"
-        },
-        "whale_accumulation": {
-            "description": "巨鲸吸筹模式",
-            "indicators": ["大额转账增加", "交易所流出增加", "钱包余额上升"],
+        "outflow_acceleration": {
+            "description": "流出加速",
+            "indicators": ["流出交易所增加", "净流量为负"],
             "implication": "看涨信号"
         },
-        "institutional_flow": {
-            "description": "机构资金流向",
-            "indicators": ["稳定币流入", "合约持仓变化", "ETF净流入"],
-            "implication": "机构动向信号"
+        "neutral": {
+            "description": "中性平衡",
+            "indicators": ["流入流出平衡"],
+            "implication": "中性信号"
+        },
+        "flow_increasing": {
+            "description": "流量增加",
+            "indicators": ["整体流量放大"],
+            "implication": "趋势确认"
         }
     }
 
     def __init__(self):
         self.glassnode_base = API_CONFIG["glassnode"]["base_url"]
         self.glassnode_key = API_CONFIG["glassnode"]["api_key"]
-        self.whale_base = API_CONFIG["whale_alert"]["base_url"]
-        self.whale_key = API_CONFIG["whale_alert"]["api_key"]
-
-        # 历史数据缓存（用于模式识别）
         self._flow_history: Dict[str, List[Dict]] = defaultdict(list)
-        self._transfer_history: Dict[str, List[Dict]] = defaultdict(list)
 
-    async def analyze_exchange_flow(self, symbol: str) -> Dict[str, Any]:
+    async def analyze(self, symbol: str) -> Dict[str, Any]:
         """分析交易所流量"""
-        flow_data = self._get_exchange_flow_data(symbol)
+        flow_data = await self._get_exchange_flow_data(symbol)
 
         if not flow_data:
             return self._default_flow_analysis()
@@ -109,7 +103,7 @@ class EnhancedOnChainAnalyzer:
             "interpretation": self._interpret_flow(flow_data, pattern, trend)
         }
 
-    def _get_exchange_flow_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+    async def _get_exchange_flow_data(self, symbol: str) -> Optional[Dict[str, Any]]:
         """获取交易所流量数据"""
         cached = load_cache(symbol, "exchange_flow")
         if cached and (time.time() - cached.timestamp) < 300:
@@ -252,7 +246,7 @@ class EnhancedOnChainAnalyzer:
         }
 
     def _calculate_flow_signal(self, flow_data: Dict, pattern: Dict,
-                               trend: Dict) -> float:
+                              trend: Dict) -> float:
         """计算综合流量信号"""
         base_flow = flow_data.get("flow", 0)
         inflow = flow_data.get("inflow", 0)
@@ -307,9 +301,57 @@ class EnhancedOnChainAnalyzer:
             "interpretation": "数据获取失败"
         }
 
-    async def analyze_whale_transfers(self, symbol: str, threshold_usd: float = 1000000) -> Dict[str, Any]:
-        """分析大额转账（巨鲸活动）"""
-        transfers = self._get_large_transfers(symbol, threshold_usd)
+
+# ============================================================
+# 鲸鱼追踪器
+# ============================================================
+
+class WhaleTracker:
+    """
+    鲸鱼活动追踪模块
+    功能：
+    1. 大额转账监控
+    2. 鲸鱼行为模式识别
+    3. 异常活动检测
+    4. 鲸鱼信号计算
+    """
+
+    WHALE_PATTERNS = {
+        "accumulation": {
+            "description": "巨鲸积累模式",
+            "indicators": ["流入交易所减少", "持币地址增加", "链上活跃度下降"],
+            "implication": "看涨信号"
+        },
+        "distribution": {
+            "description": "巨鲸分发模式",
+            "indicators": ["流入交易所增加", "持币地址减少", "链上转移频繁"],
+            "implication": "看跌信号"
+        },
+        "panic_selling": {
+            "description": "恐慌抛售模式",
+            "indicators": ["大量小额转账", "交易所流入激增", "价格快速下跌"],
+            "implication": "短期看跌，可能超卖"
+        },
+        "whale_accumulation": {
+            "description": "巨鲸吸筹模式",
+            "indicators": ["大额转账增加", "交易所流出增加", "钱包余额上升"],
+            "implication": "看涨信号"
+        },
+        "institutional_flow": {
+            "description": "机构资金流向",
+            "indicators": ["稳定币流入", "合约持仓变化", "ETF净流入"],
+            "implication": "机构动向信号"
+        }
+    }
+
+    def __init__(self):
+        self.whale_base = API_CONFIG["whale_alert"]["base_url"]
+        self.whale_key = API_CONFIG["whale_alert"]["api_key"]
+        self._transfer_history: Dict[str, List[Dict]] = defaultdict(list)
+
+    async def analyze(self, symbol: str, threshold_usd: float = 1000000) -> Dict[str, Any]:
+        """分析鲸鱼活动"""
+        transfers = await self._get_large_transfers(symbol, threshold_usd)
 
         if not transfers:
             return self._default_whale_analysis()
@@ -332,7 +374,7 @@ class EnhancedOnChainAnalyzer:
             "interpretation": self._interpret_whale_activity(transfers, pattern)
         }
 
-    def _get_large_transfers(self, symbol: str, threshold_usd: float) -> List[Dict]:
+    async def _get_large_transfers(self, symbol: str, threshold_usd: float) -> List[Dict]:
         """获取大额转账数据"""
         cached = load_cache(symbol, "large_transfers")
         if cached and (time.time() - cached.timestamp) < 60:
@@ -344,7 +386,7 @@ class EnhancedOnChainAnalyzer:
         return []
 
     def _identify_whale_pattern(self, transfers: List[Dict], symbol: str) -> Dict[str, Any]:
-        """识别巨鲸模式"""
+        """识别鲸鱼模式"""
         if not transfers:
             return {"type": "low_activity", "confidence": 0}
 
@@ -388,7 +430,7 @@ class EnhancedOnChainAnalyzer:
         }
 
     def _detect_whale_anomalies(self, symbol: str) -> List[Dict[str, Any]]:
-        """检测巨鲸活动异常"""
+        """检测鲸鱼活动异常"""
         history = self._transfer_history.get(symbol, [])
         if len(history) < 5:
             return []
@@ -412,7 +454,7 @@ class EnhancedOnChainAnalyzer:
 
     def _calculate_whale_signal(self, transfers: List[Dict], pattern: Dict,
                                  anomalies: List[Dict]) -> float:
-        """计算巨鲸信号"""
+        """计算鲸鱼信号"""
         if not transfers:
             return 0.0
 
@@ -434,7 +476,7 @@ class EnhancedOnChainAnalyzer:
         return max(-1.0, min(1.0, signal))
 
     def _interpret_whale_activity(self, transfers: List[Dict], pattern: Dict) -> str:
-        """解释巨鲸活动"""
+        """解释鲸鱼活动"""
         interpretations = []
         total_volume = sum(t.get("amount_usd", 0) for t in transfers)
 
@@ -469,7 +511,7 @@ class EnhancedOnChainAnalyzer:
         return transfers
 
     def _default_whale_analysis(self) -> Dict[str, Any]:
-        """默认巨鲸分析"""
+        """默认鲸鱼分析"""
         return {
             "transfers": [],
             "count": 0,
@@ -479,3 +521,69 @@ class EnhancedOnChainAnalyzer:
             "signal": 0.0,
             "interpretation": "数据获取失败"
         }
+
+
+# ============================================================
+# 技术模式识别器
+# ============================================================
+
+class TechnicalPatternRecognizer:
+    """
+    技术模式识别器
+    识别常见的技术分析模式
+    """
+
+    @staticmethod
+    def identify_patterns(
+        sentiment_signal: float,
+        flow_signal: float,
+        whale_signal: float
+    ) -> List[Dict[str, Any]]:
+        """识别市场模式"""
+        patterns = []
+
+        # 巨鲸积累模式
+        if whale_signal > 0.3 and flow_signal > 0.2:
+            patterns.append({
+                "type": "whale_accumulation",
+                "name": "巨鲸积累模式",
+                "confidence": min(0.9, (whale_signal + flow_signal) / 2),
+                "description": "检测到巨鲸吸筹行为",
+                "implication": "短期看涨",
+                "severity": "high"
+            })
+
+        # 巨鲸分发模式
+        if whale_signal < -0.3 and flow_signal < -0.2:
+            patterns.append({
+                "type": "whale_distribution",
+                "name": "巨鲸分发模式",
+                "confidence": min(0.9, abs(whale_signal + flow_signal) / 2),
+                "description": "检测到巨鲸抛售行为",
+                "implication": "短期看跌",
+                "severity": "high"
+            })
+
+        # 多头信号共振
+        if sentiment_signal > 0.2 and flow_signal > 0.2 and whale_signal > 0.2:
+            patterns.append({
+                "type": "bullish_resonance",
+                "name": "多头共振",
+                "confidence": (sentiment_signal + flow_signal + whale_signal) / 3,
+                "description": "多源信号同时看涨",
+                "implication": "强势看涨",
+                "severity": "high"
+            })
+
+        # 空头信号共振
+        if sentiment_signal < -0.2 and flow_signal < -0.2 and whale_signal < -0.2:
+            patterns.append({
+                "type": "bearish_resonance",
+                "name": "空头共振",
+                "confidence": abs(sentiment_signal + flow_signal + whale_signal) / 3,
+                "description": "多源信号同时看跌",
+                "implication": "强势看跌",
+                "severity": "high"
+            })
+
+        return patterns

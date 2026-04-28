@@ -22,7 +22,7 @@ import re
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
-from core.market_intel_types import (
+from core.market_intel_base import (
     API_CONFIG,
     DEFAULT_LLM_PROVIDER,
     LLMSentimentResult,

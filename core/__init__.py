@@ -66,16 +66,54 @@ from core.memory import (
 #     get_orchestrator,
 # )
 
-# Coin Parameter Optimizer (per-coin parameter optimization, inspired by Kronos coin_strategy_map.json)
-from coin_optimizer import (
-    CoinParameterOptimizer,
-    CoinSignalGenerator,
-    CoinParams,
-    OptimizationResult,
-    StrategyType,
-    get_coin_optimizer,
-    get_coin_signal_generator
+# Market Intel Modules
+from core.market_intel_base import (
+    SentimentLabel,
+    SignalStrength,
+    IntelReport,
+    LLMSentimentResult,
+    OnChainPattern,
+    MarketContext,
+    CacheData,
+    get_timestamp,
+    load_cache,
+    save_cache,
+    api_request,
+    ContextBuilder,
+    API_CONFIG,
+    DEFAULT_LLM_PROVIDER,
+    CACHE_DIR,
+    SYMBOL_MAP,
 )
+
+from core.market_intel_llm import LLMSentimentAnalyzer
+from core.market_intel_sentiment import (
+    NewsSentimentAnalyzer,
+    KeywordSentimentAnalyzer,
+    SentimentAggregator,
+)
+from core.market_intel_technicals import (
+    ExchangeFlowAnalyzer,
+    WhaleTracker,
+    TechnicalPatternRecognizer,
+)
+from core.market_intel_onchain import EnhancedOnChainAnalyzer
+from core.market_intel_context import ContextBuilder as MarketContextBuilder
+
+# Coin Parameter Optimizer (per-coin parameter optimization, inspired by Kronos coin_strategy_map.json)
+try:
+    from coin_optimizer import (
+        CoinParameterOptimizer,
+        CoinSignalGenerator,
+        CoinParams,
+        OptimizationResult,
+        StrategyType,
+        get_coin_optimizer,
+        get_coin_signal_generator
+    )
+    HAS_COIN_OPTIMIZER = True
+except ImportError:
+    HAS_COIN_OPTIMIZER = False
 
 __all__ = [
     # Config
@@ -113,6 +151,32 @@ __all__ = [
     'Lesson',
     'MemoryType',
     'MemoryEntry',
+    # Market Intel
+    'SentimentLabel',
+    'SignalStrength',
+    'IntelReport',
+    'LLMSentimentResult',
+    'OnChainPattern',
+    'MarketContext',
+    'CacheData',
+    'get_timestamp',
+    'load_cache',
+    'save_cache',
+    'api_request',
+    'ContextBuilder',
+    'MarketContextBuilder',
+    'API_CONFIG',
+    'DEFAULT_LLM_PROVIDER',
+    'CACHE_DIR',
+    'SYMBOL_MAP',
+    'LLMSentimentAnalyzer',
+    'NewsSentimentAnalyzer',
+    'KeywordSentimentAnalyzer',
+    'SentimentAggregator',
+    'ExchangeFlowAnalyzer',
+    'WhaleTracker',
+    'TechnicalPatternRecognizer',
+    'EnhancedOnChainAnalyzer',
     # Coin Parameter Optimizer
     'CoinParameterOptimizer',
     'CoinSignalGenerator',

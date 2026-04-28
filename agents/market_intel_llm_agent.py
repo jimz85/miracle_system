@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Tuple
 from core.market_intel_context import ContextBuilder
 from core.market_intel_llm import LLMSentimentAnalyzer
 from core.market_intel_onchain import EnhancedOnChainAnalyzer
-from core.market_intel_types import (
+from core.market_intel_base import (
     get_timestamp,
     load_cache,
     save_cache,
