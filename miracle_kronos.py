@@ -405,15 +405,19 @@ def get_positions():
     if data.get('code') != '0':
         return []
     positions = []
-    for pos in data.get('data', []):
-        if float(pos.get('notionalUsd', 0)) > 1:
+    for raw in data.get('data', []):
+        notional = float(raw.get('notionalUsd', 0))
+        if notional > 1:
             positions.append({
-                'instId': pos.get('instId'),
-                'side': pos.get('posSide'),  # long/short
-                'sz': float(pos.get('sz', 0)),
-                'entry': float(pos.get('avgOpenPx', 0)),
-                'unrealized_pnl': float(pos.get('upl', 0)),
-                'notional': float(pos.get('notionalUsd', 0)),
+                'instId': raw.get('instId'),
+                'side': raw.get('posSide'),  # 'long' or 'short'
+                # P0 Fix: OKX字段是 pos/avgPx，不是 sz/avgOpenPx
+                'sz': float(raw.get('pos', 0)),  # 合约张数
+                'entry': float(raw.get('avgPx', 0)),  # 入场价
+                'unrealized_pnl': float(raw.get('upl', 0)),
+                'notional': notional,
+                'liqPx': float(raw.get('liqPx', 0)),  # 强平价
+                'leverage': float(raw.get('lever', 3)),
             })
     return positions
 
