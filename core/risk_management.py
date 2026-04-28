@@ -28,7 +28,7 @@ class ATRCalculator:
     def update(self, high: float, low: float, close: float) -> float:
         """更新ATR值"""
         if len(self.tr_list) > 0:
-            prev_close = self.tr_list[-1][3]  # 上个周期的close
+            prev_close = self.tr_list[-1][2]  # 上个周期的close
             tr = max(
                 high - low,
                 abs(high - prev_close),
@@ -115,7 +115,10 @@ class DynamicPositionSizer:
         if atr > 0:
             raw_position = risk_amount / (atr * self.stop_multiplier)
         else:
-            raw_position = risk_amount / (entry_price * 0.02)  # 默认2%止损
+            if entry_price > 0:
+                raw_position = risk_amount / (entry_price * 0.02)  # 默认2%止损
+            else:
+                raw_position = 0  # entry_price=0 无法计算仓位
 
         # 转换为实际金额
         raw_position_value = raw_position * entry_price

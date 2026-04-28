@@ -298,3 +298,103 @@ class TestPositionManagement:
         assert all_pos is not monitor.positions
         # 但嵌套的字典是同一个引用（浅拷贝）
         assert all_pos["DOGE-USDT-SWAP"] is monitor.positions["DOGE-USDT-SWAP"]
+
+
+class TestPositionMonitorCalculatePnl:
+    """calculate_pnl 盈亏计算测试"""
+
+    def test_calculate_pnl_long_profit(self, monitor):
+        """做多盈利：current > entry → 正 PNL"""
+        trade = {
+            "symbol": "DOGE-USDT-SWAP",
+            "side": "long",
+            "entry_price": 0.100,
+            "position_size": 1000,
+        }
+        pnl = monitor.calculate_pnl(trade, current_price=0.120)
+        assert pnl > 0
+
+    def test_calculate_pnl_long_loss(self, monitor):
+        """做多亏损：current < entry → 负 PNL"""
+        trade = {
+            "symbol": "DOGE-USDT-SWAP",
+            "side": "long",
+            "entry_price": 0.100,
+            "position_size": 1000,
+        }
+        pnl = monitor.calculate_pnl(trade, current_price=0.080)
+        assert pnl < 0
+
+    def test_calculate_pnl_short_profit(self, monitor):
+        """做空盈利：current < entry → 正 PNL"""
+        trade = {
+            "symbol": "DOGE-USDT-SWAP",
+            "side": "short",
+            "entry_price": 0.100,
+            "position_size": 1000,
+        }
+        pnl = monitor.calculate_pnl(trade, current_price=0.080)
+        assert pnl > 0
+
+    def test_calculate_pnl_missing_fields(self, monitor):
+        """缺少字段时返回 0 不崩溃"""
+        trade = {"symbol": "DOGE-USDT-SWAP"}  # 无 side/entry_price
+        pnl = monitor.calculate_pnl(trade, current_price=0.10)
+        assert pnl == 0
+
+
+class TestPositionMonitorRemovePosition:
+    """remove_position 测试"""
+
+    def test_remove_existing_position(self, monitor):
+        """移除存在的持仓"""
+        monitor.update_position("DOGE-USDT-SWAP", {"size": 100, "side": "long"})
+        assert monitor.get_position("DOGE-USDT-SWAP") is not None
+        monitor.remove_position("DOGE-USDT-SWAP")
+        assert monitor.get_position("DOGE-USDT-SWAP") is None
+
+    def test_remove_nonexistent_no_crash(self, monitor):
+        """移除不存在持仓不崩溃"""
+        result = monitor.remove_position("NONEXISTENT-USDT")
+        assert result is None
+
+
+class TestPositionMonitorGetPosition:
+    """get_position 测试"""
+
+    def test_get_position_existing(self, monitor):
+        """获取存在的持仓"""
+        monitor.update_position("DOGE-USDT-SWAP", {"size": 500, "side": "long"})
+        pos = monitor.get_position("DOGE-USDT-SWAP")
+        assert pos is not None
+        assert pos["size"] == 500
+
+    def test_get_position_missing(self, monitor):
+        """获取不存在的持仓返回 None"""
+        assert monitor.get_position("UNKNOWN-USDT-SWAP") is None
+
+
+class TestPositionMonitorCheckTakeProfit:
+    """check_take_profit 边界条件"""
+
+    def test_take_profit_long(self, monitor):
+        """做多：价格 ≥ TP 触发"""
+        trade = {
+            "symbol": "DOGE-USDT-SWAP",
+            "side": "long",
+            "take_profit": 0.12,
+        }
+        assert monitor.check_take_profit(trade, current_price=0.12) is True
+        assert monitor.check_take_profit(trade, current_price=0.13) is True
+        assert monitor.check_take_profit(trade, current_price=0.11) is False
+
+    def test_take_profit_short(self, monitor):
+        """做空：价格 ≤ TP 触发"""
+        trade = {
+            "symbol": "DOGE-USDT-SWAP",
+            "side": "short",
+            "take_profit": 0.08,
+        }
+        assert monitor.check_take_profit(trade, current_price=0.08) is True
+        assert monitor.check_take_profit(trade, current_price=0.07) is True
+        assert monitor.check_take_profit(trade, current_price=0.09) is False

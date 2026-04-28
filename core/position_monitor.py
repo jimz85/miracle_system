@@ -120,6 +120,9 @@ class PositionMonitor:
         position_size = trade.get("position_size", 0)
         leverage = trade.get("leverage", 1)
 
+        if not entry_price or not side:
+            return 0.0
+
         if side == "long":
             pnl = (current_price - entry_price) * position_size * leverage
         else:

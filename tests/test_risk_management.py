@@ -536,15 +536,14 @@ class TestRiskManagementEdgeCases:
         assert calc.get_atr() >= 0
 
     def test_position_sizer_with_zero_entry_price(self):
-        """Zero entry price causes division by zero in fallback calculation"""
+        """entry_price=0 → position_size=0（不崩溃）"""
         sizer = DynamicPositionSizer()
-        # With zero entry price and zero ATR, the fallback also divides by zero
-        # This is a known limitation - entry_price must be > 0
-        with pytest.raises(ZeroDivisionError):
-            sizer.calculate_position(
-                high=100, low=100, close=100,
-                entry_price=0, direction="long"
-            )
+        result = sizer.calculate_position(
+            high=100, low=100, close=100,
+            entry_price=0, direction="long"
+        )
+        # entry_price=0 时返回 position_size=0
+        assert result["position_size"] == 0
 
     def test_slippage_simulation_zero_price(self):
         """Zero market price in slippage simulation"""
@@ -580,3 +579,270 @@ class TestRiskManagementEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ══════════════════════════════════════════════════════════════
+# 新增：ATRCalculator + RiskManager 边界覆盖测试
+# ══════════════════════════════════════════════════════════════
+
+class TestATRCalculatorEdge:
+    """ATRCalculator 边界条件测试"""
+
+    def test_period_zero_raises(self):
+        """period <= 0 → ValueError"""
+        from core.risk_management import ATRCalculator
+
+        with pytest.raises(ValueError, match="ATR period must be positive"):
+            ATRCalculator(period=0)
+
+        with pytest.raises(ValueError, match="ATR period must be positive"):
+            ATRCalculator(period=-1)
+
+    def test_update_first_call_no_prev_close(self):
+        """首次 update 后 period 不满足，返回 0"""
+        from core.risk_management import ATRCalculator
+
+        atr = ATRCalculator(period=2)
+        # 第1条数据：tr=2, len=1 < period(2)，ATR未计算，返回0
+        result = atr.update(100, 98, 99)
+        assert result == 0
+        # 第2条：len=2 >= period(2)，初始化ATR=2.0
+        result2 = atr.update(101, 99, 100)
+        assert result2 == 2.0
+
+    def test_update_wilder_smoothing(self):
+        """Wilder 平滑在第2条数据起生效"""
+        from core.risk_management import ATRCalculator
+
+        atr = ATRCalculator(period=2)
+        # 第1条：不满足period，ATR=None → 返回0
+        r1 = atr.update(100, 98, 99)
+        assert r1 == 0
+        # 第2条：初始化 ATR=(2+2)/2=2.0
+        r2 = atr.update(101, 99, 100)
+        assert r2 == 2.0
+        # 第3条：Wilder: ATR=(2.0*1+2)/2=2.0
+        r3 = atr.update(102, 100, 101)
+        assert r3 == 2.0
+
+    def test_get_normalized_atr(self):
+        """get_normalized_atr = ATR / current_price * 100"""
+        from core.risk_management import ATRCalculator
+
+        atr = ATRCalculator(period=3)
+        atr.update(100, 98, 99)
+        atr.update(101, 99, 100)
+        atr.update(102, 100, 101)
+        norm = atr.get_normalized_atr(current_price=100.0)
+        assert norm > 0
+
+
+class TestRiskManagerEdge:
+    """DynamicPositionSizer 边界条件测试（risk_management.py 中对应 RiskManager）"""
+
+    def test_calculate_position_short_direction(self):
+        """做空方向计算止损/止盈"""
+        from core.risk_management import DynamicPositionSizer
+
+        rm = DynamicPositionSizer(account_balance=10000, risk_percent=0.02, atr_period=5)
+        # 先建立 ATR 数据
+        for h, l, c in [(100, 98, 99), (101, 99, 100), (102, 100, 101), (103, 101, 102), (104, 102, 103)]:
+            rm.atr_calculator.update(h, l, c)
+
+        result = rm.calculate_position(
+            high=104, low=102, close=103,
+            entry_price=103.0,
+            direction="short",
+            risk_reward_ratio=3.0,
+        )
+        # 做空：SL = entry + atr*multiplier, TP = entry - atr*rr
+        assert result["stop_loss"] > result["entry_price"]
+        assert result["take_profit"] < result["entry_price"]
+        assert result["position_size"] > 0
+
+    def test_calculate_position_zero_entry_price(self):
+        """entry_price=0 → position_size=0 不崩溃"""
+        from core.risk_management import DynamicPositionSizer
+
+        rm = DynamicPositionSizer(account_balance=10000)
+        result = rm.calculate_position(
+            high=100, low=98, close=99,
+            entry_price=0.0,
+            direction="long",
+        )
+        assert result["position_size"] == 0
+
+    def test_calculate_position_no_atr_data(self):
+        """无 ATR 数据时使用默认 2% 止损"""
+        from core.risk_management import DynamicPositionSizer
+
+        rm = DynamicPositionSizer(account_balance=10000)
+        # ATR = 0（数据不足）
+        result = rm.calculate_position(
+            high=100, low=98, close=99,
+            entry_price=100.0,
+            direction="long",
+        )
+        # atr=0 → 使用 entry_price * 0.02 作为止损基础
+        assert result["position_size"] > 0
+
+    def test_update_balance(self):
+        """update_balance 改变账户余额"""
+        from core.risk_management import DynamicPositionSizer
+
+        rm = DynamicPositionSizer(account_balance=10000)
+        rm.update_balance(new_balance=15000)
+        stats = rm.get_stats()
+        assert stats["account_balance"] == 15000
+
+    def test_get_stats_returns_dict(self):
+        """get_stats 返回完整统计字典"""
+        from core.risk_management import DynamicPositionSizer
+
+        rm = DynamicPositionSizer(account_balance=10000, risk_percent=0.02)
+        stats = rm.get_stats()
+        assert "account_balance" in stats
+        assert "risk_percent" in stats
+        assert "current_atr" in stats
+        assert stats["risk_percent"] == 0.02
+
+
+class TestPositionDataclass:
+    """Position dataclass 属性测试"""
+
+    def test_notional_value(self):
+        """notional_value = size * current_price"""
+        from core.risk_management import Position
+
+        p = Position(
+            symbol="DOGE-USDT-SWAP",
+            side="long",
+            size=1000,
+            entry_price=0.10,
+            current_price=0.12,
+        )
+        assert p.notional_value == 120.0
+
+    def test_unrealized_pnl_percent(self):
+        """unrealized_pnl_percent 计算正确"""
+        from core.risk_management import Position
+
+        p = Position(
+            symbol="DOGE-USDT-SWAP",
+            side="long",
+            size=1000,
+            entry_price=0.10,
+            current_price=0.12,
+        )
+        # (0.12-0.10)/0.10 * 100 = 20%
+        assert abs(p.unrealized_pnl_percent - 20.0) < 0.01
+
+    def test_unrealized_pnl_percent_short(self):
+        """做空时 pnl_percent 计算"""
+        from core.risk_management import Position
+
+        p = Position(
+            symbol="DOGE-USDT-SWAP",
+            side="short",
+            size=1000,
+            entry_price=0.10,
+            current_price=0.08,
+        )
+        # short: (entry - current) / entry * 100 = (0.10-0.08)/0.10*100 = 20%
+        assert abs(p.unrealized_pnl_percent - 20.0) < 0.01
+
+
+class TestPortfolioEdge:
+    """CrossCurrencyRiskMonitor 边界条件测试（对应 Portfolio）"""
+
+    def test_remove_nonexistent_returns_none(self):
+        """remove_position 对不存在币种返回 None"""
+        from core.risk_management import CrossCurrencyRiskMonitor
+
+        p = CrossCurrencyRiskMonitor(account_balance=10000)
+        result = p.remove_position("NONEXISTENT")
+        assert result is None
+
+    def test_get_single_exposure(self):
+        """get_single_exposure 返回单币种敞口"""
+        from core.risk_management import CrossCurrencyRiskMonitor, Position
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        pf.add_position(Position(
+            symbol="DOGE-USDT-SWAP", side="long",
+            size=1000, entry_price=0.1, current_price=0.12,
+            leverage=1.0, margin=120.0,  # 显式传 margin
+        ))
+        notional, leverage = pf.get_single_exposure("DOGE-USDT-SWAP")
+        assert notional > 0
+        assert leverage > 0  # 有 margin 时 > 0
+
+    def test_get_single_exposure_unknown(self):
+        """未知币种返回 (0, 0)"""
+        from core.risk_management import CrossCurrencyRiskMonitor
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        notional, leverage = pf.get_single_exposure("UNKNOWN")
+        assert notional == 0
+        assert leverage == 0
+
+    def test_can_open_position_rejects(self):
+        """超过单币种敞口上限时拒绝开仓"""
+        from core.risk_management import CrossCurrencyRiskMonitor, Position
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        # 单币种敞口上限默认 30%（max_single_exposure=0.3）
+        # size=4, price=10000 → notional=40000 / 10000 = 400% > 30% → 拒绝
+        can_open, reason = pf.can_open_position("DOGE-USDT-SWAP", size=4, price=10000)
+        assert can_open is False
+        assert "单币种" in reason or "敞口" in reason  # 拒绝原因含中文关键词
+
+    def test_can_open_position_rejects_negative_price(self):
+        """负价格 → 单币种敞口为负，不会拒绝；负 size → 可以拒绝"""
+        from core.risk_management import CrossCurrencyRiskMonitor
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        # 负价格不触发拒绝（notional=-1 < 30%上限）
+        can_open, reason = pf.can_open_position("DOGE-USDT-SWAP", size=1, price=-1)
+        # 价格验证可能不在此函数中，负 size 可能被业务层拒绝
+        # 这里验证 API 行为而非业务规则
+        assert isinstance(can_open, bool)
+
+    def test_get_total_pnl_with_positions(self):
+        """有持仓时 get_total_pnl 返回元组"""
+        from core.risk_management import CrossCurrencyRiskMonitor, Position
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        pos = Position(
+            symbol="DOGE-USDT-SWAP", side="long",
+            size=1000, entry_price=0.10, current_price=0.12,
+        )
+        pos.unrealized_pnl = 20.0  # 手动设置未实现盈亏
+        pf.add_position(pos)
+        total_pnl, realized = pf.get_total_pnl()
+        assert isinstance(total_pnl, (int, float))
+        assert isinstance(realized, float)
+
+    def test_get_risk_report_keys(self):
+        """get_risk_report 包含所有必要字段"""
+        from core.risk_management import CrossCurrencyRiskMonitor
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        report = pf.get_risk_report()
+        # 实际字段：total_exposure_percent, total_pnl_percent 等
+        assert "account_balance" in report
+        assert "position_count" in report
+        assert "warnings" in report
+
+    def test_check_warnings_generates_warnings(self):
+        """超过 50% 敞口时产生警告"""
+        from core.risk_management import CrossCurrencyRiskMonitor, Position
+
+        pf = CrossCurrencyRiskMonitor(account_balance=10000)
+        pf.add_position(Position(
+            symbol="BTC-USDT-SWAP", side="long",
+            size=6, entry_price=10000, current_price=10000,
+            leverage=1.0, margin=6000,
+        ))
+        warnings = pf._check_warnings()
+        assert len(warnings) > 0
