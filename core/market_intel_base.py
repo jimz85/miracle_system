@@ -553,3 +553,62 @@ class ContextBuilder:
             "negative_signals": negative,
             "strength": abs(sum(signals)) / 3
         }
+
+
+# =============================================================================
+# 市场状态检测 (Regime Classifier)
+# =============================================================================
+
+def get_market_regime(btc_adx: float, btc_rsi: float = None) -> str:
+    """
+    基于BTC指标判断市场状态
+
+    Args:
+        btc_adx: BTC当前ADX (>25=趋势市场, <20=震荡市场)
+        btc_rsi: BTC当前RSI (辅助判断)
+
+    Returns:
+        'trend': 趋势市场 - 趋势跟踪策略有效，ADX/MACD权重×1.2
+        'range': 震荡市场 - 均值回归策略有效，RSI/布林权重×1.2
+        'neutral': 中性市场 - 无明显方向
+    """
+    if btc_adx >= 25:
+        return "trend"
+    elif btc_adx < 20:
+        return "range"
+    else:
+        return "neutral"
+
+
+def get_regime_confidence_multiplier(
+    confidence: float,
+    regime: str,
+    factor_name: str
+) -> float:
+    """
+    根据市场状态调整因子置信度
+
+    Args:
+        confidence: 原始置信度 (0-100)
+        regime: 市场状态 ('trend' / 'range' / 'neutral')
+        factor_name: 因子名 ('adx', 'macd', 'rsi', 'bollinger', 'momentum', 'gemma')
+
+    Returns:
+        调整后的置信度
+    """
+    if regime == "trend":
+        # 趋势市场: ADX/MACD更可靠，RSI/布林容易失效
+        trend_factors = {"adx", "macd", "momentum"}
+        if factor_name in trend_factors:
+            return confidence * 1.1  # +10%
+        else:
+            return confidence * 0.85  # -15%
+    elif regime == "range":
+        # 震荡市场: RSI/布林更可靠，趋势因子容易假信号
+        range_factors = {"rsi", "bollinger"}
+        if factor_name in range_factors:
+            return confidence * 1.1  # +10%
+        else:
+            return confidence * 0.85  # -15%
+    return confidence  # neutral: 无调整
+

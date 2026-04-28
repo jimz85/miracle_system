@@ -45,7 +45,7 @@ from agents.agent_learner import AgentLearner
 
 # ===== Memory模块 =====
 from core.memory import get_structured_memory
-from core.market_intel_base import get_fomc_confidence_multiplier
+from core.market_intel_base import get_fomc_confidence_multiplier, get_market_regime, get_regime_confidence_multiplier
 
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
@@ -1174,6 +1174,28 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         candidates.sort(key=lambda x: x['score'], reverse=True)
         logger.warning(f"FOMC窗口期! 置信度降{fomc_multiplier:.0%}, 候选重排后top={candidates[0]['symbol'] if candidates else 'none'}")
 
+    # 市场状态检测 (Regime Classification)
+    # 根据BTC 4H ADX判断当前市场状态，趋势市场/震荡市场采用不同因子权重
+    regime = "neutral"
+    if candidates:
+        btc_cand = next((c for c in candidates if c['symbol'] == 'BTC'), None)
+        if btc_cand and btc_cand.get('adx_4h'):
+            regime = get_market_regime(btc_cand['adx_4h'], btc_cand.get('rsi'))
+            weights = load_ic_weights()
+            # 重新计算每个候选的分数：基于regime调整后的因子vote
+            for c in candidates:
+                if c.get('votes'):
+                    regime_score = 0.0
+                    for fname, fvote in c['votes'].items():
+                        adj = get_regime_confidence_multiplier(1.0, regime, fname.lower())
+                        regime_score += weights.get(fname, 0) * fvote * adj
+                    c['score'] = regime_score
+                    c['regime'] = regime
+            # 按调整后分数重新排序
+            if regime != "neutral":
+                candidates.sort(key=lambda x: x['score'], reverse=True)
+                logger.info(f"市场状态={regime} | top={candidates[0]['symbol']}@{candidates[0]['score']:.3f}")
+
     # 加载本地OPEN交易 (必须在select_best前)
     local_trades = get_open_trades()
 
@@ -1264,6 +1286,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'vetoed_pattern_keys': vetoed_pattern_keys,
             'memory_multiplier': memory_multiplier,
             'fomc_multiplier': fomc_multiplier,
+            'regime': regime,
         }
     
     if best and best['score'] > 0.5:
@@ -1375,6 +1398,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'vetoed_pattern_keys': vetoed_pattern_keys,
             'memory_multiplier': memory_multiplier,
             'fomc_multiplier': fomc_multiplier,
+            'regime': regime,
         }
     
     return {
@@ -1388,6 +1412,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'vetoed_pattern_keys': vetoed_pattern_keys,
         'memory_multiplier': memory_multiplier,
         'fomc_multiplier': fomc_multiplier,
+        'regime': regime,
     }
 
 # ===== 入口 =====
