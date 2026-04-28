@@ -1,3 +1,8 @@
+> ⚠️ **风险提示 / Risk Disclaimer**
+> 本系统为**学习与仿真用途**，任何实盘使用需自行承担风险。
+> 本仓库不构成投资建议，作者不对使用本代码造成的任何损失负责。
+> Trading involves risk. Use only for educational/simulation purposes.
+
 # Miracle 2.0 — 自主学习量化交易系统
 
 **版本**: 2.0

@@ -1,3 +1,6 @@
+# Runtime dependencies only
+# For development dependencies, see requirements-dev.txt
+
 # Miracle 1.0.1 Dependencies
 # ============================
 
