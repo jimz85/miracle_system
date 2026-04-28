@@ -32,6 +32,9 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      - name: Create logs directory
+        run: mkdir -p logs
+
       - name: Run tests
         run: pytest tests/ -v --tb=short --disable-warnings -x
 
@@ -61,7 +64,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run ruff
-        run: ruff check . --output-format=text
+        run: ruff check .
 
       - name: Run black
         run: black --check . --diff
