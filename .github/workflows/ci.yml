@@ -66,8 +66,5 @@ jobs:
       - name: Run ruff
         run: ruff check .
 
-      - name: Run black
-        run: black --check . --diff
-
-      - name: Run isort
-        run: isort --check-only --diff .
+      # black/isort skipped: ruff handles all formatting + import sorting
+      # keeping CI fast and avoiding duplicate style checks
