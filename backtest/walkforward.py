@@ -727,23 +727,33 @@ class WalkForwardValidator:
         highs: List[float],
         lows: List[float]
     ) -> Tuple[bool, str]:
-        """检查是否应该退出"""
+        """检查是否应该退出
+        
+        P0 Fix: 使用日内高低点而非收盘价检查SL/TP
+        - Long SL: 检查日内低点是否触发了止损（价格可能低开）
+        - Long TP: 检查日内高点是否触发了止盈
+        - Short SL: 检查日内高点是否触发了止损（价格可能高开）
+        - Short TP: 检查日内低点是否触发了止盈
+        """
         direction = position["direction"]
         entry_price = position["entry_price"]
         stop_loss = position["stop_loss"]
         take_profit = position["take_profit"]
-        current_price = closes[idx]
         
-        # 止损检查
-        if direction == "long" and current_price <= stop_loss:
+        # 使用日内高低点进行检查（而非收盘价）
+        current_low = lows[idx]
+        current_high = highs[idx]
+        
+        # 止损检查 - 使用日内价格
+        if direction == "long" and current_low <= stop_loss:
             return True, "sl"
-        if direction == "short" and current_price >= stop_loss:
+        if direction == "short" and current_high >= stop_loss:
             return True, "sl"
         
-        # 止盈检查
-        if direction == "long" and current_price >= take_profit:
+        # 止盈检查 - 使用日内价格
+        if direction == "long" and current_high >= take_profit:
             return True, "tp"
-        if direction == "short" and current_price <= take_profit:
+        if direction == "short" and current_low <= take_profit:
             return True, "tp"
         
         return False, ""
