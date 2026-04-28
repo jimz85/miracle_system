@@ -2,6 +2,22 @@
 集成测试 - 核心模块协同工作
 """
 import pytest
+import socket
+
+def _is_network_available():
+    """检查是否能连接OKX API（DNS解析 + TCP连接探测）"""
+    try:
+        # 先DNS解析
+        ip = socket.gethostbyname("www.okx.com")
+        # 再探测80/443端口可达性（1秒超时）
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        sock.connect((ip, 443))
+        sock.close()
+        return False  # 连接成功 → 不跳过
+    except Exception:
+        return True   # 解析或连接失败 → 跳过
+
 from core.risk_management import (
     DynamicPositionSizer, CrossCurrencyRiskMonitor,
     SlippageFeeSimulator, Position
@@ -77,7 +93,11 @@ class TestRiskManagementIntegration:
 
 class TestExchangeAdapterIntegration:
     """交易所适配器集成测试"""
-    
+
+    @pytest.mark.skipif(
+        _is_network_available(),
+        reason="Requires live OKX API connectivity"
+    )
     def test_okx_public_api(self):
         """测试OKX公开API"""
         okx = create_exchange_adapter(ExchangeType.OKX)

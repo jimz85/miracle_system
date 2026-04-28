@@ -6,11 +6,13 @@ OKX API封装、Treasury检查、OCO验证、集中度检查、日志幂等
 
 版本: 1.0.0
 """
-import os, json, hmac, base64, hashlib, time, requests
+import logging, os, json, hmac, base64, hashlib, time, requests
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict, List, Tuple, Any
+
+_logger = logging.getLogger(__name__)
 
 # OKX API 配置
 BASE_URL = 'https://www.okx.com'
@@ -449,8 +451,8 @@ def load_idempotent_log(log_file: Path) -> dict:
         try:
             with open(log_file) as f:
                 return json.load(f)
-        except:
-            pass
+        except Exception as e:
+            _logger.debug(f"load_idempotent_log: 读取日志文件失败 {log_file}: {e}")
     return {'processed_keys': [], 'trades': []}
 
 
@@ -519,6 +521,6 @@ def get_account_balance() -> dict:
     try:
         if data.get('code') == '0' and data.get('data'):
             return {'totalEq': float(data['data'][0].get('totalEq', 0))}
-    except:
-        pass
+    except Exception as e:
+        _logger.debug(f"get_account_balance: 解析余额失败: {e}")
     return {'totalEq': 0}

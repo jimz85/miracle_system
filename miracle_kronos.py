@@ -161,7 +161,9 @@ def calc_bollinger(prices, period=20, mult=2):
     return upper, lower, pos
 
 # ===== IC权重投票系统 (from Kronos voting_system.py) =====
-KRONOS_IC_FILE = Path('/Users/jimingzhang/.hermes/cron/output/ic_weights.json')
+# 从环境变量读取Kronos IC文件路径，默认 ~/.hermes/cron/output/ic_weights.json
+_KRONOS_IC_DEFAULT = Path.home() / '.hermes' / 'cron' / 'output' / 'ic_weights.json'
+KRONOS_IC_FILE = Path(os.environ.get('KRONOS_IC_FILE', str(_KRONOS_IC_DEFAULT)))
 
 def load_ic_weights():
     if KRONOS_IC_FILE.exists():

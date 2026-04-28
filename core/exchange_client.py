@@ -209,8 +209,8 @@ class ExchangeClient:
                 resp = requests.get(url, timeout=5)
                 if resp.status_code == 200:
                     return float(resp.json().get("price", 0))
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug(f"Ticker Binance备选请求失败: {e}")
             return None
 
     def place_order(self, symbol: str, side: str, order_type: str,

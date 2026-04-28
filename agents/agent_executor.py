@@ -185,7 +185,7 @@ class Executor:
                         logging.critical(f"🚨 远程紧急停止: {state.get('reason', 'Unknown')}")
                         return True
             except Exception:
-                pass  # API不可用，不阻止交易
+                pass  # API不可用，不阻止交易（fail-open设计）
         
         return False
     

@@ -233,7 +233,7 @@ class WalkForwardValidator:
                     # 尝试解析ISO格式
                     dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
                     return int(dt.timestamp() * 1000)
-                except:
+                except Exception as e:
                     return 0
             
             # 修复: 直接使用时间戳比较，避免//3600000小时桶化导致边界错误

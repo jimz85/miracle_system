@@ -163,8 +163,8 @@ class VectorMemory:
         if row['metadata']:
             try:
                 metadata = json.loads(row['metadata'])
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"JSON解析metadata失败: {e}")
         
         return {
             "id": row['id'],
@@ -312,7 +312,8 @@ class VectorMemory:
                 created = dt.fromisoformat(row['created_at'])
                 hours_age = (dt.now() - created).total_seconds() / 3600
                 time_score = max(0, 1 - hours_age / (24 * 30))  # 30天后衰减为0
-            except:
+            except Exception as e:
+                logger.debug(f"datetime解析失败: {e}")
                 time_score = 0.5
             
             # 综合分数
