@@ -89,7 +89,6 @@ class ExchangeClient:
         """签名请求 (OKX HMAC SHA256)"""
         import hashlib
         import hmac
-        from urllib.parse import urlencode
 
         # OKX签名格式: ISO8601带毫秒 (e.g. "2023-12-01T08:01:01.123Z")
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + \
@@ -199,8 +198,7 @@ class ExchangeClient:
             try:
                 binance_symbol = symbol.replace("-USDT-SWAP", "USDT").replace("-USDT", "USDT").replace("-SWAP", "")
                 url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
-                import requests as _req
-                resp = _req.get(url, timeout=5)
+                resp = requests.get(url, timeout=5)
                 if resp.status_code == 200:
                     return float(resp.json().get("price", 0))
             except Exception:

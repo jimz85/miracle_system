@@ -109,18 +109,21 @@ class Executor:
         self._setup_logging()
 
     def _setup_logging(self):
-        """设置日志"""
+        """设置日志（仅在未配置时）"""
         import os
         os.makedirs(self.config.log_dir, exist_ok=True)
 
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(message)s",
-            handlers=[
-                logging.FileHandler(f"{self.config.log_dir}/executor.log"),
-                logging.StreamHandler()
-            ]
-        )
+        # 只在root logger尚无handler时配置（防止多次调用basicConfig覆盖）
+        root = logging.getLogger()
+        if not root.handlers:
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s [%(levelname)s] %(message)s",
+                handlers=[
+                    logging.FileHandler(f"{self.config.log_dir}/executor.log"),
+                    logging.StreamHandler()
+                ]
+            )
 
     def set_exchange(self, exchange: str):
         """设置活跃交易所"""
