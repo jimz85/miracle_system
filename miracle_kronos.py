@@ -747,6 +747,15 @@ SCAN_COINS = [
     ('DOT-USDT-SWAP', 'DOT'),
 ]
 
+# OKX USDT永续合约乘数（每张合约对应的币数量）
+# 用于计算合约张数: sz = sz_dollar / (entry × multiplier)
+# BTC: 0.01 BTC/张, ETH: 0.1 ETH/张, DOGE: 1000 DOGE/张, SOL: 1 SOL/张, ADA: 100 ADA/张
+CONTRACT_MULTIPLIER = {
+    'BTC': 0.01, 'ETH': 0.1, 'SOL': 1, 'DOGE': 1000,
+    'ADA': 100, 'XRP': 1, 'BNB': 10, 'AVAX': 1,
+    'LINK': 1, 'DOT': 1,
+}
+
 MAX_POSITIONS = 3
 SL_PCT = 0.05  # 5%止损
 TP_PCT = 0.10  # 10%止盈
@@ -1050,10 +1059,14 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         
         if mode == 'live':
             # 计算仓位
+            # P1 Fix: 使用OKX合约真实乘数计算张数
+            # sz = 仓位USD / (入场价 × 每张合约的币数量)
+            # 之前硬编码100导致DOGE张数偏大10倍(DOGE乘数=1000不是100)
+            multiplier = CONTRACT_MULTIPLIER.get(best['symbol'], 1)
             sz_dollar = equity * POSITION_SIZE_PCT
             entry = best['entry']
-            sl_dollar = entry * SL_PCT
-            sz = int(sz_dollar / (entry * SL_PCT * 100))
+            contract_value_usd = entry * multiplier  # 每张合约的USD价值
+            sz = max(1, int(sz_dollar / contract_value_usd))
             
             # P1: 集中度检查
             new_trade_pct = POSITION_SIZE_PCT
