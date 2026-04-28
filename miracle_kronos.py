@@ -300,10 +300,25 @@ def load_treasury():
             return json.load(open(TREASURY_FILE))
         except Exception:
             pass
-    return {'equity': 100000, 'hourly_snapshot': 100000, 'daily_snapshot': 100000, 
-            'tier': 'normal', 'consecutive_loss_hours': 0}
+    from datetime import date, datetime
+    now = datetime.now().isoformat()
+    return {
+        'equity': 100000, 'hourly_snapshot': 100000, 'hourly_snapshot_time': now[:10],
+        'daily_snapshot': 100000, 'daily_snapshot_time': now[:10],
+        'tier': 'normal', 'consecutive_loss_hours': 0, 'last_update': now
+    }
 
 def save_treasury(state):
+    # P0 Fix: 确保 daily_snapshot 在新的一天被重置
+    # 即使 last_update 是今天（如15:25运行），也要检查 daily_snapshot_time
+    # 如果 daily_snapshot_time 不是今天，重置 daily_snapshot
+    from datetime import date as date_cls
+    today = str(date_cls.today())
+    ds_time = state.get('daily_snapshot_time', '')
+    if ds_time and not ds_time.startswith(today):
+        # 新的一天：用当前权益初始化日快照
+        state['daily_snapshot'] = state.get('equity', state.get('daily_snapshot'))
+        state['daily_snapshot_time'] = state.get('last_update', '')[:10]  # YYYY-MM-DD
     with open(TREASURY_FILE, 'w') as f:
         json.dump(state, f, indent=2)
 
@@ -1213,11 +1228,15 @@ def main():
             last_dt = dt.fromisoformat(last_update)
             if now.hour != last_dt.hour:
                 treasury['hourly_snapshot'] = equity
+                treasury['hourly_snapshot_time'] = treasury.get('last_update', '')[:10]
             if now.date() != last_dt.date():
                 treasury['daily_snapshot'] = equity
+                treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
         except Exception:
             treasury['hourly_snapshot'] = equity
             treasury['daily_snapshot'] = equity
+            treasury['hourly_snapshot_time'] = treasury.get('last_update', '')[:10]
+            treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
     else:
         treasury['hourly_snapshot'] = equity
         treasury['daily_snapshot'] = equity
