@@ -31,7 +31,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
+from scipy.stats import spearmanr, pearsonr
 
 # 确保项目根目录在path中 (用于直接运行此脚本时)
 # Python会自动将脚本所在目录加入sys.path[0],这会遮挡真正的memory/目录
@@ -207,6 +208,228 @@ class ICWeightManager:
         logger.debug(f"[IC] {factor_name}: IC={ic:.3f} (n={total})")
         return ic
 
+    def direction_accuracy(self, factor_name: str, entries: list = None) -> float:
+        """
+        计算因子方向正确率 (向后兼容)
+
+        与calculate_ic()相同逻辑，仅作为显式命名保留
+
+        Args:
+            factor_name: 因子名称
+            entries: 可选，指定决策条目列表
+
+        Returns:
+            float: 方向正确率 0-1
+        """
+        return self.calculate_ic(factor_name, entries)
+
+    def _get_ic_pairs(self, factor_name: str, entries: list = None) -> Tuple[List[float], List[int]]:
+        """
+        提取因子预测信号强度与实际结果的配对数据
+
+        用于计算真IC（Pearson/Spearman相关系数）
+
+        预测信号:
+        - rsi: (rsi - 50) / 50 → 归一化到 [-1, 1]，0=中性
+        - macd: sign(macd) → -1/0/1
+        - adx: adx / 100 → [0, 1]
+        - bollinger: 2*position - 1 → 归一化到 [-1, 1]
+        - momentum: sign(momentum) → -1/0/1
+
+        实际结果: WIN=+1, LOSS=-1
+
+        Returns:
+            (signals, outcomes): 两个等长列表
+        """
+        if entries is None:
+            entries = get_all_entries(limit=1000)
+
+        valid_entries = [e for e in entries if e.get('outcome') in ('WIN', 'LOSS')]
+        if len(valid_entries) < MIN_SAMPLES:
+            return [], []
+
+        signals = []
+        outcomes = []
+
+        for entry in valid_entries:
+            factors = entry.get('factors', {})
+            factor_val = factors.get(factor_name)
+            if factor_val is None:
+                continue
+
+            verdict = entry.get('verdict', '')
+            outcome = entry.get('outcome', '')
+
+            if verdict in ('HOLD', 'WAIT', ''):
+                continue
+
+            signal = self._factor_to_signal(factor_name, factor_val)
+            if signal == 0:
+                continue
+
+            # 实际结果需要按verdict方向对齐
+            # BUY(做多): WIN=+1, LOSS=-1
+            # SELL(做空): WIN=-1 (价格下跌=盈利), LOSS=+1 (价格上涨=亏损)
+            if verdict == 'BUY':
+                outcome_val = 1 if outcome == 'WIN' else -1
+            elif verdict == 'SELL':
+                outcome_val = -1 if outcome == 'WIN' else 1
+            else:
+                continue
+
+            signals.append(signal)
+            outcomes.append(outcome_val)
+
+        return signals, outcomes
+
+    def _factor_to_signal(self, factor_name: str, factor_val) -> float:
+        """
+        将因子值转换为信号强度 [-1, 1]
+
+        用于真IC计算
+        """
+        try:
+            val = float(factor_val)
+        except (TypeError, ValueError):
+            val_str = str(factor_val).lower()
+            if 'bull' in val_str or 'long' in val_str:
+                return 1.0
+            elif 'bear' in val_str or 'short' in val_str:
+                return -1.0
+            return 0.0
+
+        if factor_name == 'rsi':
+            # (rsi - 50) / 50 → [-1, 1], 50=neutral
+            return (val - 50) / 50.0
+
+        elif factor_name == 'macd':
+            # sign(macd) → -1/1, 0→0
+            if val > 0:
+                return 1.0
+            elif val < 0:
+                return -1.0
+            return 0.0
+
+        elif factor_name == 'adx':
+            # ADX already [0, 100] → normalize to [0, 1]
+            return val / 100.0
+
+        elif factor_name == 'bollinger':
+            # position [0, 1] → [-1, 1]
+            return 2.0 * val - 1.0
+
+        elif factor_name == 'momentum':
+            if val > 0:
+                return 1.0
+            elif val < 0:
+                return -1.0
+            return 0.0
+
+        return 0.0
+
+    def rank_ic(self, factor_name: str, entries: list = None) -> float:
+        """
+        计算Spearman秩相关系数 (Rank IC)
+
+        非线性单调关系，不受异常值影响
+
+        Args:
+            factor_name: 因子名称
+            entries: 可选，指定决策条目列表
+
+        Returns:
+            float: Spearman IC [-1, 1]，样本不足返回0.0
+        """
+        signals, outcomes = self._get_ic_pairs(factor_name, entries)
+
+        if len(signals) < MIN_SAMPLES:
+            logger.debug(f"[IC] {factor_name} rank_ic 样本不足: {len(signals)} < {MIN_SAMPLES}")
+            return 0.0
+
+        # scipy spearmanr returns (correlation, p-value)
+        corr, _ = spearmanr(signals, outcomes)
+        ic = corr if corr is not None else 0.0
+        logger.debug(f"[IC] {factor_name}: rank_ic={ic:.3f} (n={len(signals)})")
+        return ic
+
+    def pearson_ic(self, factor_name: str, entries: list = None) -> float:
+        """
+        计算Pearson线性相关系数 (Pearson IC)
+
+        衡量线性相关性
+
+        Args:
+            factor_name: 因子名称
+            entries: 可选，指定决策条目列表
+
+        Returns:
+            float: Pearson IC [-1, 1]，样本不足返回0.0
+        """
+        signals, outcomes = self._get_ic_pairs(factor_name, entries)
+
+        if len(signals) < MIN_SAMPLES:
+            logger.debug(f"[IC] {factor_name} pearson_ic 样本不足: {len(signals)} < {MIN_SAMPLES}")
+            return 0.0
+
+        corr, _ = pearsonr(signals, outcomes)
+        ic = corr if corr is not None else 0.0
+        logger.debug(f"[IC] {factor_name}: pearson_ic={ic:.3f} (n={len(signals)})")
+        return ic
+
+    def information_ratio(self, factor_name: str, entries: list = None,
+                         ic_type: str = 'rank_ic') -> float:
+        """
+        计算信息比率 IR = IC_mean / IC_std
+
+        衡量IC的稳定性，IR越高说明因子越稳定有效
+
+        Args:
+            factor_name: 因子名称
+            entries: 可选，指定决策条目列表
+            ic_type: 'rank_ic' (默认) 或 'pearson_ic'
+
+        Returns:
+            float: 信息比率，样本不足或std=0时返回0.0
+        """
+        import statistics
+
+        if entries is None:
+            entries = get_all_entries(limit=1000)
+
+        # 按时间窗口计算rolling IC，取多段样本
+        # 将entries分成多个窗口，计算每个窗口的IC
+        window_size = MIN_SAMPLES
+        valid_entries = [e for e in entries if e.get('outcome') in ('WIN', 'LOSS')]
+
+        if len(valid_entries) < window_size * 2:
+            # 样本不足，无法计算IR
+            logger.debug(f"[IC] {factor_name} IR 样本不足: {len(valid_entries)} < {window_size * 2}")
+            return 0.0
+
+        ic_values = []
+        for i in range(0, len(valid_entries) - window_size + 1, window_size // 2):
+            window = valid_entries[i:i + window_size]
+            if ic_type == 'pearson_ic':
+                ic = self.pearson_ic(factor_name, entries=window)
+            else:
+                ic = self.rank_ic(factor_name, entries=window)
+
+            if ic != 0.0:
+                ic_values.append(ic)
+
+        if len(ic_values) < 2:
+            return 0.0
+
+        ic_mean = statistics.mean(ic_values)
+        ic_std = statistics.stdev(ic_values)
+
+        if ic_std == 0.0:
+            return 0.0
+
+        ir = ic_mean / ic_std
+        logger.debug(f"[IC] {factor_name}: IR={ir:.3f} (mean={ic_mean:.3f}, std={ic_std:.3f}, n_windows={len(ic_values)})")
+        return ir
+
     def _predict_direction(self, factor_name: str, factor_val) -> int:
         """
         根据因子值预测方向
@@ -311,11 +534,13 @@ class ICWeightManager:
         公式: new_weight = decay_factor * old_weight + (1 - decay_factor) * ic_value
 
         逻辑:
-        1. 计算各因子IC
+        1. 计算各因子Rank IC (Spearman相关系数)
         2. 用指数平滑更新权重
-        3. IC为负的因子权重置0
+        3. IC为负的因子权重置MIN_WEIGHT
         4. 归一化使总和=1
         5. 最小样本保护: 样本不足时保持默认权重
+
+        注意: 使用rank_ic()而非direction_accuracy()，因为真IC更准确反映因子预测能力
 
         Returns:
             Dict[str, float]: 更新后的权重
@@ -329,12 +554,12 @@ class ICWeightManager:
 
         total_samples = 0
 
-        # 第一步：计算所有因子的IC和权重
+        # 第一步：计算所有因子的Rank IC和权重
         raw_weights = {}
         negative_ic_factors = []  # 记录IC≤0的因子
 
         for factor in FACTORS:
-            ic = self.calculate_ic(factor)
+            ic = self.rank_ic(factor)  # 使用真IC (Spearman相关系数)
             sample_count = self._count_samples(factor)
 
             new_ic_values[factor] = ic
@@ -479,8 +704,28 @@ def get_ic_values() -> Dict[str, float]:
 
 
 def calculate_ic(factor_name: str) -> float:
-    """计算指定因子的IC"""
+    """计算指定因子的IC (方向正确率，向后兼容)"""
     return get_ic_manager().calculate_ic(factor_name)
+
+
+def direction_accuracy(factor_name: str) -> float:
+    """计算指定因子的方向正确率 (向后兼容)"""
+    return get_ic_manager().direction_accuracy(factor_name)
+
+
+def rank_ic(factor_name: str) -> float:
+    """计算指定因子的Spearman Rank IC (真IC)"""
+    return get_ic_manager().rank_ic(factor_name)
+
+
+def pearson_ic(factor_name: str) -> float:
+    """计算指定因子的Pearson IC (真IC)"""
+    return get_ic_manager().pearson_ic(factor_name)
+
+
+def information_ratio(factor_name: str, ic_type: str = 'rank_ic') -> float:
+    """计算指定因子的信息比率 IR = IC_mean / IC_std"""
+    return get_ic_manager().information_ratio(factor_name, ic_type=ic_type)
 
 
 def reset_weights() -> Dict[str, float]:
