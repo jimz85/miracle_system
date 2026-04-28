@@ -10,6 +10,7 @@ Vector Memory using SQLite (Downgraded from ChromaDB)
 import logging
 import os
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 # 全局SQLite连接
 _sqlite_conn: sqlite3.Connection | None = None
 _sqlite_path: str | None = None
+_write_lock = threading.Lock()  # 保护并发写操作
 
 
 def _get_db_path(persist_directory: str | None = None) -> str:
@@ -44,6 +46,9 @@ def _get_connection(persist_directory: str | None = None) -> sqlite3.Connection:
         _sqlite_conn = sqlite3.connect(db_path, check_same_thread=False)
         _sqlite_conn.row_factory = sqlite3.Row
         _sqlite_path = db_path
+        
+        # 启用WAL模式，提升并发读写性能
+        _sqlite_conn.execute("PRAGMA journal_mode=WAL")
         
         # 初始化表结构
         _init_db(_sqlite_conn)
@@ -207,14 +212,15 @@ class VectorMemory:
         # 提取关键词
         keywords = _extract_keywords(content)
         
-        cursor = self._conn.cursor()
-        cursor.execute("""
-            INSERT INTO memories (id, content, metadata, memory_type, created_at, expires_at, keywords)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (entry_id, content, json.dumps(metadata, ensure_ascii=False), memory_type, 
-              created_at.isoformat(), expires_at_str, keywords))
-        
-        self._conn.commit()
+        with _write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("""
+                INSERT INTO memories (id, content, metadata, memory_type, created_at, expires_at, keywords)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (entry_id, content, json.dumps(metadata, ensure_ascii=False), memory_type, 
+                  created_at.isoformat(), expires_at_str, keywords))
+            
+            self._conn.commit()
         logger.debug(f"Added memory: {entry_id}, type={memory_type}, expires={expires_at}")
         return entry_id
     
@@ -233,21 +239,22 @@ class VectorMemory:
         if not entries:
             return []
         
-        cursor = self._conn.cursor()
-        ids = []
-        
-        for entry in entries:
-            ids.append(entry.id)
-            keywords = _extract_keywords(entry.content)
-            expires_at_str = entry.expires_at.isoformat() if entry.expires_at else None
+        with _write_lock:
+            cursor = self._conn.cursor()
+            ids = []
             
-            cursor.execute("""
-                INSERT INTO memories (id, content, metadata, memory_type, created_at, expires_at, keywords)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (entry.id, entry.content, json.dumps(entry.metadata, ensure_ascii=False),
-                  entry.memory_type, entry.created_at.isoformat(), expires_at_str, keywords))
-        
-        self._conn.commit()
+            for entry in entries:
+                ids.append(entry.id)
+                keywords = _extract_keywords(entry.content)
+                expires_at_str = entry.expires_at.isoformat() if entry.expires_at else None
+                
+                cursor.execute("""
+                    INSERT INTO memories (id, content, metadata, memory_type, created_at, expires_at, keywords)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (entry.id, entry.content, json.dumps(entry.metadata, ensure_ascii=False),
+                      entry.memory_type, entry.created_at.isoformat(), expires_at_str, keywords))
+            
+            self._conn.commit()
         logger.info(f"Added {len(entries)} memories in batch")
         return ids
     
@@ -346,13 +353,14 @@ class VectorMemory:
     
     def delete(self, memory_id: str) -> bool:
         """删除记忆"""
-        cursor = self._conn.cursor()
-        cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
-        self._conn.commit()
-        
-        if cursor.rowcount > 0:
-            logger.debug(f"Deleted memory: {memory_id}")
-            return True
+        with _write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            self._conn.commit()
+            
+            if cursor.rowcount > 0:
+                logger.debug(f"Deleted memory: {memory_id}")
+                return True
         return False
     
     def update(self, memory_id: str, content: str | None = None,
@@ -360,37 +368,38 @@ class VectorMemory:
         """更新记忆"""
         import json
         
-        cursor = self._conn.cursor()
-        
-        # 获取现有记录
-        cursor.execute("SELECT * FROM memories WHERE id = ?", (memory_id,))
-        row = cursor.fetchone()
-        if not row:
-            return False
-        
-        update_fields = []
-        params = []
-        
-        if content:
-            update_fields.append("content = ?")
-            params.append(content)
-            update_fields.append("keywords = ?")
-            params.append(_extract_keywords(content))
-        
-        if metadata:
-            update_fields.append("metadata = ?")
-            params.append(json.dumps(metadata, ensure_ascii=False))
-        
-        if not update_fields:
+        with _write_lock:
+            cursor = self._conn.cursor()
+            
+            # 获取现有记录
+            cursor.execute("SELECT * FROM memories WHERE id = ?", (memory_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            
+            update_fields = []
+            params = []
+            
+            if content:
+                update_fields.append("content = ?")
+                params.append(content)
+                update_fields.append("keywords = ?")
+                params.append(_extract_keywords(content))
+            
+            if metadata:
+                update_fields.append("metadata = ?")
+                params.append(json.dumps(metadata, ensure_ascii=False))
+            
+            if not update_fields:
+                return True
+            
+            params.append(memory_id)
+            sql = f"UPDATE memories SET {', '.join(update_fields)} WHERE id = ?"
+            cursor.execute(sql, params)
+            self._conn.commit()
+            
+            logger.debug(f"Updated memory: {memory_id}")
             return True
-        
-        params.append(memory_id)
-        sql = f"UPDATE memories SET {', '.join(update_fields)} WHERE id = ?"
-        cursor.execute(sql, params)
-        self._conn.commit()
-        
-        logger.debug(f"Updated memory: {memory_id}")
-        return True
     
     def get_by_type(self, memory_type: str, limit: int = 100) -> List[Dict[str, Any]]:
         """获取指定类型的所有记忆"""
@@ -429,9 +438,10 @@ class VectorMemory:
     
     def reset(self):
         """清空所有记忆（危险操作）"""
-        cursor = self._conn.cursor()
-        cursor.execute("DELETE FROM memories")
-        self._conn.commit()
+        with _write_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("DELETE FROM memories")
+            self._conn.commit()
         logger.warning("Vector memory reset - all memories deleted")
     
     def get_stats(self) -> Dict[str, Any]:
@@ -532,9 +542,10 @@ class VectorMemory:
             by_type[mem_type] = by_type.get(mem_type, 0) + 1
         
         if not dry_run and expired_ids:
-            placeholders = ','.join('?' * len(expired_ids))
-            cursor.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", expired_ids)
-            self._conn.commit()
+            with _write_lock:
+                placeholders = ','.join('?' * len(expired_ids))
+                cursor.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", expired_ids)
+                self._conn.commit()
             logger.info(f"VectorMemory: Cleaned up {len(expired_ids)} expired memories")
         
         return {
@@ -584,9 +595,10 @@ class VectorMemory:
             by_type[mem_type] = by_type.get(mem_type, 0) + 1
         
         if not dry_run and old_ids:
-            placeholders = ','.join('?' * len(old_ids))
-            cursor.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", old_ids)
-            self._conn.commit()
+            with _write_lock:
+                placeholders = ','.join('?' * len(old_ids))
+                cursor.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", old_ids)
+                self._conn.commit()
             logger.info(f"VectorMemory: Cleaned up {len(old_ids)} old memories (>{max_age_days} days)")
         
         return {
