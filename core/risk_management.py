@@ -179,6 +179,173 @@ class DynamicPositionSizer:
 
 
 # ========================
+# 波动率目标杠杆
+# ========================
+
+class TargetVolatilitySizing:
+    """
+    波动率目标杠杆计算器
+
+    公式: leverage = target_daily_vol / ATR(20)
+
+    特点:
+    - 高波动市场 → 自动降低杠杆
+    - 低波动市场 → 可以适当提高杠杆
+    - 最大杠杆限制防止过度杠杆
+    """
+
+    def __init__(
+        self,
+        target_daily_vol: float = 0.02,    # 目标日波动率2%
+        atr_period: int = 20,              # ATR周期
+        max_leverage: float = 5.0,         # 最大杠杆限制
+        min_leverage: float = 1.0,         # 最小杠杆限制
+        account_balance: float = 10000
+    ):
+        """
+        Args:
+            target_daily_vol: 目标日波动率（如0.02表示2%）
+            atr_period: ATR计算周期
+            max_leverage: 最大杠杆倍数
+            min_leverage: 最小杠杆倍数
+            account_balance: 账户余额
+        """
+        if target_daily_vol <= 0:
+            raise ValueError(f"target_daily_vol must be positive, got {target_daily_vol}")
+        if max_leverage < min_leverage:
+            raise ValueError(f"max_leverage ({max_leverage}) must be >= min_leverage ({min_leverage})")
+
+        self.target_daily_vol = target_daily_vol
+        self.atr_period = atr_period
+        self.max_leverage = max_leverage
+        self.min_leverage = min_leverage
+        self.account_balance = account_balance
+        self.atr_calculator = ATRCalculator(period=atr_period)
+
+    def calculate_leverage(
+        self,
+        high: float,
+        low: float,
+        close: float,
+        current_price: float
+    ) -> float:
+        """
+        基于波动率计算推荐杠杆
+
+        Args:
+            high: 最高价
+            low: 最低价
+            close: 收盘价
+            current_price: 当前价格
+
+        Returns:
+            推荐的杠杆倍数
+        """
+        atr = self.atr_calculator.update(high, low, close)
+
+        if atr <= 0 or current_price <= 0:
+            return self.min_leverage
+
+        # ATR作为日波动率的代理
+        # leverage = target_daily_vol / atr_percent
+        atr_percent = atr / current_price
+
+        if atr_percent <= 0:
+            return self.max_leverage
+
+        # 计算理论杠杆
+        calculated_leverage = self.target_daily_vol / atr_percent
+
+        # 限制在 [min_leverage, max_leverage] 范围内
+        bounded_leverage = max(self.min_leverage, min(self.max_leverage, calculated_leverage))
+
+        return bounded_leverage
+
+    def calculate_position_size(
+        self,
+        high: float,
+        low: float,
+        close: float,
+        entry_price: float,
+        direction: str = "long",
+        risk_percent: float = 0.02
+    ) -> Dict[str, Any]:
+        """
+        计算基于波动率的仓位大小
+
+        Args:
+            high: 最高价
+            low: 最低价
+            close: 收盘价
+            entry_price: 入场价格
+            direction: "long" or "short"
+            risk_percent: 账户风险百分比
+
+        Returns:
+            dict with leverage, position_size, stop_loss, risk_amount等
+        """
+        current_price = close
+
+        # 计算波动率杠杆
+        leverage = self.calculate_leverage(high, low, close, current_price)
+
+        # 计算风险金额（使用波动率调整后的杠杆）
+        risk_amount = self.account_balance * risk_percent
+
+        # 计算理论仓位
+        # 仓位价值 = 风险金额 / (ATR * stop_multiplier)
+        # ATR止损 = ATR * 2
+        atr = self.atr_calculator.get_atr()
+        stop_distance = atr * 2 if atr > 0 else entry_price * 0.02
+
+        if stop_distance > 0:
+            raw_position_size = risk_amount / stop_distance
+        else:
+            raw_position_size = 0
+
+        # 转换为实际数量（考虑杠杆）
+        position_size = raw_position_size
+
+        # 计算止损价格
+        if direction == "long":
+            stop_loss = entry_price - stop_distance
+        else:
+            stop_loss = entry_price + stop_distance
+
+        # 实际风险
+        actual_risk = abs(entry_price - stop_loss) * position_size
+
+        return {
+            "leverage": leverage,
+            "position_size": position_size,
+            "position_value": position_size * entry_price,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "atr": atr,
+            "atr_percent": (atr / current_price * 100) if current_price > 0 else 0,
+            "target_daily_vol": self.target_daily_vol * 100,
+            "actual_risk": actual_risk,
+            "risk_percent": (actual_risk / self.account_balance * 100) if self.account_balance > 0 else 0,
+            "volatility_adjustment": "high" if leverage <= 2 else "normal" if leverage <= 4 else "low"
+        }
+
+    def update_balance(self, new_balance: float):
+        """更新账户余额"""
+        self.account_balance = new_balance
+
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        return {
+            "account_balance": self.account_balance,
+            "target_daily_vol": self.target_daily_vol * 100,
+            "atr_period": self.atr_period,
+            "max_leverage": self.max_leverage,
+            "min_leverage": self.min_leverage,
+            "current_atr": self.atr_calculator.get_atr()
+        }
+
+
+# ========================
 # 跨币种风险监控
 # ========================
 

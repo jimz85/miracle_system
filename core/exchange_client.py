@@ -427,6 +427,245 @@ class ExchangeClient:
             "exchange": "okx"
         }
 
+    def place_conditional_tp(self, symbol: str, side: str, size: float,
+                             tp_price: float, leverage: int = 1) -> Dict | None:
+        """
+        下条件单止盈（conditional TP order）
+
+        Args:
+            symbol: 币种符号
+            side: "buy"(做多) / "sell"(做空)
+            size: 合约数量
+            tp_price: 止盈触发价格
+            leverage: 杠杆倍数
+
+        Returns:
+            订单结果 dict
+        """
+        retry_count = 0
+        last_error = None
+
+        while retry_count < self.config.max_retry:
+            try:
+                if self.exchange == "okx":
+                    return self._place_conditional_tp_okx(symbol, side, size, tp_price, leverage)
+                elif self.exchange == "binance":
+                    logging.warning("Binance conditional TP暂未实现")
+                    return None
+            except Exception as e:
+                last_error = str(e)
+                logging.warning(f"条件TP下单失败 [重试 {retry_count + 1}/{self.config.max_retry}]: {e}")
+                retry_count += 1
+                if retry_count < self.config.max_retry:
+                    time.sleep(self.config.retry_interval)
+
+        logging.error(f"条件TP下单最终失败: {last_error}")
+        return None
+
+    def _place_conditional_tp_okx(self, symbol: str, side: str, size: float,
+                                    tp_price: float, leverage: int) -> Dict:
+        """OKX条件单止盈"""
+        inst_id = symbol if "-SWAP" in symbol else f"{symbol}-USDT-SWAP"
+
+        # 设置杠杆
+        self._make_request("POST", "/api/v5/account/set-leverage", data={
+            "instId": inst_id,
+            "lever": str(leverage),
+            "mgnMode": "cross"
+        }, signed=True)
+
+        # 止盈条件单
+        # 对于做多仓位，TP触发价应该高于当前价格，止盈时是卖出平仓
+        # 对于做空仓位，TP触发价应该低于当前价格，止盈时是买入平仓
+        tp_trigger_px = str(tp_price)
+
+        cond_data = {
+            "instId": inst_id,
+            "tdMode": "cross",
+            "side": "sell" if side.upper() == "BUY" else "buy",
+            "ordType": "conditional",
+            "sz": str(int(size)),
+            "tpTriggerPx": tp_trigger_px,
+            "tpOrdPx": "-1",  # 市价平仓
+        }
+
+        result = self._make_request("POST", self.endpoints["algo_order"], data=cond_data, signed=True)
+        data_resp = result.get("data", [{}])[0]
+        algo_id = data_resp.get("algoId", "")
+
+        if not algo_id:
+            raise RuntimeError(f"条件TP下单失败: {result}")
+
+        return {
+            "algo_id": algo_id,
+            "symbol": symbol,
+            "side": side,
+            "tp_price": tp_price,
+            "size": size,
+            "leverage": leverage,
+            "status": "tp_conditional",
+            "exchange": "okx"
+        }
+
+    def place_conditional_sl(self, symbol: str, side: str, size: float,
+                              sl_price: float, leverage: int = 1) -> Dict | None:
+        """
+        下条件单止损（conditional SL order）
+
+        Args:
+            symbol: 币种符号
+            side: "buy"(做多) / "sell"(做空)
+            size: 合约数量
+            sl_price: 止损触发价格
+            leverage: 杠杆倍数
+
+        Returns:
+            订单结果 dict
+        """
+        retry_count = 0
+        last_error = None
+
+        while retry_count < self.config.max_retry:
+            try:
+                if self.exchange == "okx":
+                    return self._place_conditional_sl_okx(symbol, side, size, sl_price, leverage)
+                elif self.exchange == "binance":
+                    logging.warning("Binance conditional SL暂未实现")
+                    return None
+            except Exception as e:
+                last_error = str(e)
+                logging.warning(f"条件SL下单失败 [重试 {retry_count + 1}/{self.config.max_retry}]: {e}")
+                retry_count += 1
+                if retry_count < self.config.max_retry:
+                    time.sleep(self.config.retry_interval)
+
+        logging.error(f"条件SL下单最终失败: {last_error}")
+        return None
+
+    def _place_conditional_sl_okx(self, symbol: str, side: str, size: float,
+                                   sl_price: float, leverage: int) -> Dict:
+        """OKX条件单止损"""
+        inst_id = symbol if "-SWAP" in symbol else f"{symbol}-USDT-SWAP"
+
+        # 设置杠杆
+        self._make_request("POST", "/api/v5/account/set-leverage", data={
+            "instId": inst_id,
+            "lever": str(leverage),
+            "mgnMode": "cross"
+        }, signed=True)
+
+        # 止损条件单
+        # 对于做多仓位，SL触发价应该低于当前价格
+        # 对于做空仓位，SL触发价应该高于当前价格
+        sl_trigger_px = str(sl_price)
+
+        cond_data = {
+            "instId": inst_id,
+            "tdMode": "cross",
+            "side": "sell" if side.upper() == "BUY" else "buy",
+            "ordType": "conditional",
+            "sz": str(int(size)),
+            "slTriggerPx": sl_trigger_px,
+            "slOrdPx": "-1",  # 市价平仓
+        }
+
+        result = self._make_request("POST", self.endpoints["algo_order"], data=cond_data, signed=True)
+        data_resp = result.get("data", [{}])[0]
+        algo_id = data_resp.get("algoId", "")
+
+        if not algo_id:
+            raise RuntimeError(f"条件SL下单失败: {result}")
+
+        return {
+            "algo_id": algo_id,
+            "symbol": symbol,
+            "side": side,
+            "sl_price": sl_price,
+            "size": size,
+            "leverage": leverage,
+            "status": "sl_conditional",
+            "exchange": "okx"
+        }
+
+    def place_trailing_stop(self, symbol: str, side: str, size: float,
+                            callback_rate: float = 0.01, leverage: int = 1) -> Dict | None:
+        """
+        下追踪止损单（trailing stop）
+
+        Args:
+            symbol: 币种符号
+            side: "buy"(做多) / "sell"(做空)
+            size: 合约数量
+            callback_rate: 回调率，如0.01表示1%回调触发
+            leverage: 杠杆倍数
+
+        Returns:
+            订单结果 dict
+        """
+        retry_count = 0
+        last_error = None
+
+        while retry_count < self.config.max_retry:
+            try:
+                if self.exchange == "okx":
+                    return self._place_trailing_stop_okx(symbol, side, size, callback_rate, leverage)
+                elif self.exchange == "binance":
+                    logging.warning("Binance trailing stop暂未实现")
+                    return None
+            except Exception as e:
+                last_error = str(e)
+                logging.warning(f"追踪止损下单失败 [重试 {retry_count + 1}/{self.config.max_retry}]: {e}")
+                retry_count += 1
+                if retry_count < self.config.max_retry:
+                    time.sleep(self.config.retry_interval)
+
+        logging.error(f"追踪止损下单最终失败: {last_error}")
+        return None
+
+    def _place_trailing_stop_okx(self, symbol: str, side: str, size: float,
+                                  callback_rate: float, leverage: int) -> Dict:
+        """OKX追踪止损（使用conditional SL + tracking offset模拟）"""
+        inst_id = symbol if "-SWAP" in symbol else f"{symbol}-USDT-SWAP"
+
+        # 设置杠杆
+        self._make_request("POST", "/api/v5/account/set-leverage", data={
+            "instId": inst_id,
+            "lever": str(leverage),
+            "mgnMode": "cross"
+        }, signed=True)
+
+        # OKX追踪止损使用 szAuto = true + callbackRate
+        # 当价格朝有利方向变动后，从最高点回落callback_rate触发
+        trailing_data = {
+            "instId": inst_id,
+            "tdMode": "cross",
+            "side": "sell" if side.upper() == "BUY" else "buy",
+            "ordType": "conditional",
+            "sz": str(int(size)),
+            "slTriggerPx": "0",  # 追踪止损用0触发，配合szAuto
+            "slOrdPx": "-1",
+            "szAuto": "true",
+            "callbackRate": str(callback_rate),
+        }
+
+        result = self._make_request("POST", self.endpoints["algo_order"], data=trailing_data, signed=True)
+        data_resp = result.get("data", [{}])[0]
+        algo_id = data_resp.get("algoId", "")
+
+        if not algo_id:
+            raise RuntimeError(f"追踪止损下单失败: {result}")
+
+        return {
+            "algo_id": algo_id,
+            "symbol": symbol,
+            "side": side,
+            "callback_rate": callback_rate,
+            "size": size,
+            "leverage": leverage,
+            "status": "trailing_stop",
+            "exchange": "okx"
+        }
+
     def get_pending_algo_orders(self, inst_type: str = "SWAP") -> List[Dict]:
         """
         查询所有活跃条件单（OCO + conditional）
