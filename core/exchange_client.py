@@ -39,6 +39,10 @@ class ExchangeClient:
         self.exchange = exchange.lower()
         self.config = config or ExecutorConfig()
 
+        # OKX rate limit: 20 req/2s = 1 req per 0.1s
+        # Token bucket: {"last": timestamp of last request, "interval": minimum interval}
+        self._rate_limiter = {"last": 0.0, "interval": 0.1}
+
         if self.exchange == "okx":
             self._setup_okx()
         elif self.exchange == "binance":
@@ -120,9 +124,22 @@ class ExchangeClient:
 
         return headers
 
+    def _wait_for_rate_limit(self):
+        """Token bucket: wait until minimum interval has passed since last request."""
+        now = time.monotonic()
+        elapsed = now - self._rate_limiter["last"]
+        if elapsed < self._rate_limiter["interval"]:
+            sleep_time = self._rate_limiter["interval"] - elapsed
+            logger.debug(f"Rate limit: sleeping {sleep_time:.3f}s")
+            time.sleep(sleep_time)
+        self._rate_limiter["last"] = time.monotonic()
+
     def _make_request(self, method: str, endpoint: str, params: Dict = None,
                       data: Dict = None, signed: bool = True) -> Dict:
         """发起API请求"""
+        # Rate limit check before request
+        self._wait_for_rate_limit()
+
         url = self.base_url + endpoint
 
         headers = {}
@@ -133,34 +150,48 @@ class ExchangeClient:
                 "_body": json.dumps(data) if data else ""
             })
 
-        try:
-            # 重要: OKX签名必须包含完整的path+query_string
-            # 如果endpoint已包含?（query string），则不再用params=传递参数
-            # 否则requests将query从path移到params，导致签名路径与实际URL不匹配→401
-            if method == "GET":
-                if params and '?' not in endpoint:
-                    response = requests.get(url, headers=headers, params=params, timeout=self.config.order_timeout)
+        retry_count = 0
+        max_retries = 3
+        last_exception = None
+
+        while retry_count <= max_retries:
+            try:
+                # Send request
+                if method == "GET":
+                    if params and '?' not in endpoint:
+                        response = requests.get(url, headers=headers, params=params, timeout=self.config.order_timeout)
+                    else:
+                        response = requests.get(url, headers=headers, timeout=self.config.order_timeout)
+                elif method == "POST":
+                    response = requests.post(url, headers=headers, json=data, timeout=self.config.order_timeout)
+                elif method == "DELETE":
+                    response = requests.delete(url, headers=headers, json=data, timeout=self.config.order_timeout)
                 else:
-                    response = requests.get(url, headers=headers, timeout=self.config.order_timeout)
-            elif method == "POST":
-                response = requests.post(url, headers=headers, json=data, timeout=self.config.order_timeout)
-            elif method == "DELETE":
-                response = requests.delete(url, headers=headers, json=data, timeout=self.config.order_timeout)
-            else:
-                raise ValueError(f"不支持的HTTP方法: {method}")
+                    raise ValueError(f"不支持的HTTP方法: {method}")
 
-            response.raise_for_status()
-            result = response.json()
+                # Handle 429 Rate Limit with exponential backoff
+                if response.status_code == 429:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        raise Exception(f"429 Rate Limit exceeded after {max_retries} retries")
+                    backoff = (2 ** retry_count) * 0.1  # 0.2s, 0.4s, 0.8s
+                    logger.warning(f"429 Rate Limit hit, retry {retry_count}/{max_retries} in {backoff:.1f}s")
+                    time.sleep(backoff)
+                    continue
 
-            if result.get("code") != "0" and self.exchange == "okx":
-                raise Exception(f"OKX API错误: {result.get('msg', 'Unknown error')}")
+                response.raise_for_status()
+                result = response.json()
 
-            return result
+                if result.get("code") != "0" and self.exchange == "okx":
+                    raise Exception(f"OKX API错误: {result.get('msg', 'Unknown error')}")
 
-        except Timeout:
-            raise Exception(f"{self.exchange.upper()} API超时")
-        except RequestException as e:
-            raise Exception(f"{self.exchange.upper()} API请求失败: {str(e)}")
+                return result
+
+            except Timeout:
+                raise Exception(f"{self.exchange.upper()} API超时")
+            except RequestException as e:
+                last_exception = e
+                raise Exception(f"{self.exchange.upper()} API请求失败: {str(e)}")
 
     def get_balance(self) -> Dict[str, float]:
         """获取账户余额（API失败时返回模拟余额）"""
