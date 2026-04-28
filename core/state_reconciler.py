@@ -1038,13 +1038,15 @@ class StateReconciler:
         if result.errors:
             print()
             print("┌─ ❌ ERRORS ──────────────────────────────────────────────────")
-            for e in result.errors: print(f"│  {e}")
+            for e in result.errors:
+                print(f"│  {e}")
             print("└─────────────────────────────────────────────────────────────")
 
         if result.warnings:
             print()
             print("┌─ ⚠️  WARNINGS ───────────────────────────────────────────────")
-            for w in result.warnings: print(f"│  {w}")
+            for w in result.warnings:
+                print(f"│  {w}")
             print("└─────────────────────────────────────────────────────────────")
 
         print()

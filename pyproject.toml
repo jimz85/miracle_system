@@ -44,9 +44,15 @@ select = ["E", "F", "I", "C90", "UP"]
 ignore = [
     "E501",  # line too long (handled by black)
     "UP006",  # X | Y union syntax requires Python 3.10+, project targets 3.9
+    "UP035",  # deprecated typing (Dict/List/etc) - style only, not functional
+    "UP031",  # f-string replacement - style only
+    "UP042",  # dataclass decorators - style only
     "F401",  # unused imports — many are optional dependency checks
     "E402",  # sys.path.insert pattern causes module import order warnings
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 50  # trading orchestration functions inherently complex (e.g. run_scan)
 
 [tool.ruff]
 line-length = 100

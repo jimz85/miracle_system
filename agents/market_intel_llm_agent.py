@@ -438,7 +438,7 @@ class MarketIntelAgentLLM:
             f"🔒 置信度: {report['confidence']:.0%}",
         ]
 
-        return "\n".join([l for l in lines if l])
+        return "\n".join([ln for ln in lines if ln])
 
 
 # ============================================================

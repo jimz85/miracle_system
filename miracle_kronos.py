@@ -125,12 +125,12 @@ def calc_adx(highs, lows, closes, period=14):
     dm_plus = []
     dm_minus = []
     for i in range(1, len(closes)):
-        h, l = highs[i], lows[i]
+        h, lo = highs[i], lows[i]
         prev_c = closes[i-1]
-        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        tr = max(h - lo, abs(h - prev_c), abs(lo - prev_c))
         trs.append(tr)
         dm_p = max(h - highs[i-1], 0) if i > 0 else 0
-        dm_m = max(lows[i-1] - l, 0) if i > 0 else 0
+        dm_m = max(lows[i-1] - lo, 0) if i > 0 else 0
         dm_plus.append(dm_p)
         dm_minus.append(dm_m)
     if len(trs) < period:
