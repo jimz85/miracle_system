@@ -694,18 +694,39 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0):
     data = okx_req('POST', '/api/v5/trade/order-algo', body)
     return data
 
-def close_position(symbol: str, reason: str = "signal") -> Dict:
+def close_position(symbol: str, reason: str = "signal",
+                   pos: dict = None) -> Dict:
     """
     平仓 - 根据symbol执行市价平仓
+    P0修复: 使用 /api/v5/trade/order 而非 /api/v5/trade/close-position
+           OKX close-position端点不支持mgnMode/ccy参数，会导致400错误
+    pos: 可选，传入持仓数据 {sz, side} 以获取正确数量和方向
     Returns: {'code': '0', 'data': [...]} or {'code': '99999', 'msg': ...}
     """
     inst_id = f"{symbol}-USDT-SWAP"
+
+    # 获取持仓信息（如果没有传入）
+    if pos is None:
+        all_pos = get_positions()
+        pos = next((p for p in all_pos if p.get('instId', '').startswith(symbol)), None)
+
+    if not pos:
+        logger.warning(f"[{symbol}] 无持仓，跳过平仓")
+        return {'code': '99999', 'msg': f'无持仓 {symbol}'}
+
+    sz = int(pos['sz'])
+    pos_side = pos.get('side', 'long')  # 'long' or 'short'
+    # 平多: side=sell, 平空: side=buy
+    close_side = 'sell' if pos_side == 'long' else 'buy'
+
     body = json.dumps({
         'instId': inst_id,
-        'mgnMode': 'cross',
-        'ccy': 'USDT',
+        'tdMode': 'cross',
+        'side': close_side,
+        'ordType': 'market',
+        'sz': str(sz),
     })
-    data = okx_req('POST', '/api/v5/trade/close-position', body)
+    data = okx_req('POST', '/api/v5/trade/order', body)
     if data.get('code') == '0':
         logger.info(f"[{symbol}] 平仓成功 ({reason})")
     else:
@@ -1189,7 +1210,7 @@ def main():
             positions = get_positions() if args.mode == 'live' else []
             pos = next((p for p in positions if p.get('instId') == inst_id), None)
             if pos and args.mode == 'live':
-                close_data = close_position(sym, decision['reason'])
+                close_data = close_position(sym, decision['reason'], pos)
                 if close_data.get('code') == '0':
                     # 更新本地交易记录
                     local_trades = get_open_trades()
