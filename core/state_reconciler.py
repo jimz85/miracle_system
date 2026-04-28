@@ -312,17 +312,17 @@ class StateReconciler:
                         aid = a.get('algoId', '')
                         if not aid:
                             continue
-                    algo_orders[aid] = OrderInfo(
-                        order_id=aid,
-                        inst_id=a.get('instId', ''),
-                        side=a.get('side', ''),
-                        sz=float(a.get('sz', 0)),
-                        algo_id=aid,
-                        sl_trigger=float(a.get('slTriggerPx', 0)) if a.get('slTriggerPx') else None,
-                        tp_trigger=float(a.get('tpTriggerPx', 0)) if a.get('tpTriggerPx') else None,
-                        ord_type=a.get('ordType', 'conditional'),
-                        state='pending'
-                    )
+                        algo_orders[aid] = OrderInfo(
+                            order_id=aid,
+                            inst_id=a.get('instId', ''),
+                            side=a.get('side', ''),
+                            sz=float(a.get('sz', 0)),
+                            algo_id=aid,
+                            sl_trigger=float(a.get('slTriggerPx', 0)) if a.get('slTriggerPx') else None,
+                            tp_trigger=float(a.get('tpTriggerPx', 0)) if a.get('tpTriggerPx') else None,
+                            ord_type=a.get('ordType', 'conditional'),
+                            state='pending'
+                        )
         except Exception as e:
             logger.error(f"获取条件单失败: {e}")
         
@@ -442,7 +442,29 @@ class StateReconciler:
                             )
             except Exception as e:
                 logger.warning(f"加载订单记录失败: {e}")
-        
+
+        # 2. 从 local_state.json 补充 OCO algo_id（防止真实OCO被误判为孤立订单）
+        if self.state_file.exists():
+            try:
+                with open(self.state_file) as f:
+                    data = json.load(f)
+                for inst_id, pos_data in data.items():
+                    if isinstance(pos_data, dict) and pos_data.get('algo_id') and inst_id != '_meta':
+                        algo_id = str(pos_data['algo_id'])
+                        if algo_id not in orders:
+                            orders[algo_id] = LocalOrderRecord(
+                                order_id=algo_id,
+                                inst_id=inst_id,
+                                side=pos_data.get('direction', 'long'),
+                                sz=float(pos_data.get('contracts', 0)),
+                                created_at='',
+                                status='attached',
+                                algo_id=algo_id,
+                                algo_type=pos_data.get('algo_type', 'oco')
+                            )
+            except Exception:
+                pass
+
         return orders
     
     # ─────────────────────────────────────────────────────────────
