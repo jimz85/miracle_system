@@ -805,6 +805,18 @@ class PatternLearner:
             for k in self.pattern_db
         }
 
+    def add_to_blacklist(self, pattern_keys: List[str]):
+        """添加模式到黑名单"""
+        blacklist_path = self.pattern_db_path.replace('pattern_db.json', 'pattern_blacklist.json')
+        blacklist = set()
+        if os.path.exists(blacklist_path):
+            with open(blacklist_path, 'r') as f:
+                blacklist = set(json.load(f))
+        blacklist.update(pattern_keys)
+        with open(blacklist_path, 'w') as f:
+            json.dump(list(blacklist), f)
+        logger.info(f"Added patterns to blacklist: {pattern_keys}")
+
 
 # =============================================================================
 # 4. 白名单管理

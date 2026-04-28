@@ -40,6 +40,9 @@ from core.kronos_utils import (
     CONCENTRATION_LIMITS,
 )
 
+# ===== Agent学习模块 =====
+from agents.agent_learner import AgentLearner
+
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
 STATE_DIR = Path(__file__).parent / 'data'
@@ -676,6 +679,24 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0):
     data = okx_req('POST', '/api/v5/trade/order-algo', body)
     return data
 
+def close_position(symbol: str, reason: str = "signal") -> Dict:
+    """
+    平仓 - 根据symbol执行市价平仓
+    Returns: {'code': '0', 'data': [...]} or {'code': '99999', 'msg': ...}
+    """
+    inst_id = f"{symbol}-USDT-SWAP"
+    body = json.dumps({
+        'instId': inst_id,
+        'mgnMode': 'cross',
+        'ccy': 'USDT',
+    })
+    data = okx_req('POST', '/api/v5/trade/close-position', body)
+    if data.get('code') == '0':
+        logger.info(f"[{symbol}] 平仓成功 ({reason})")
+    else:
+        logger.warning(f"[{symbol}] 平仓失败: {data.get('msg', 'unknown')}")
+    return data
+
 # ===== 主扫描逻辑 =====
 SCAN_COINS = [
     ('BTC-USDT-SWAP', 'BTC'),
@@ -816,9 +837,11 @@ def select_best(candidates, positions, local_trades=None):
     - gemma_vote >= 0.3: 参与排名
     - gemma_vote < 0.3: 过滤掉不参与排名
     - gemma_vote = -1: 跳过（gemma超时/异常，不否决）
+    
+    Returns: (best_candidate, vetoed_pattern_keys)
     """
     if not candidates:
-        return None
+        return None, []
     held = {p['instId'].replace('-USDT-SWAP', '') for p in positions}
     if local_trades:
         held.update(t.get('coin', '') for t in local_trades)
@@ -828,11 +851,13 @@ def select_best(candidates, positions, local_trades=None):
     # gemma_vote存储在 votes['Gemma'] 中
     # -1 表示跳过(超时/异常)，0.0-0.3表示低置信度否决
     vetoed = []
+    vetoed_pattern_keys = []
     filtered = []
     for c in available:
         gemma_vote = c.get('votes', {}).get('Gemma', 0)
         if 0 <= gemma_vote < 0.3:
             vetoed.append(c['symbol'])
+            vetoed_pattern_keys.append(c.get('pattern_key', ''))
             continue
         filtered.append(c)
     
@@ -840,8 +865,8 @@ def select_best(candidates, positions, local_trades=None):
         print(f"gemma4否决: {vetoed} (gemma_vote<0.3)")
     
     if not filtered:
-        return None
-    return max(filtered, key=lambda x: x['score'])
+        return None, vetoed_pattern_keys
+    return max(filtered, key=lambda x: x['score']), vetoed_pattern_keys
 
 def _parallel_scan_wrapper(instId_symbol, equity, btc_trend, weights):
     """并行扫描包装器"""
@@ -898,7 +923,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     local_trades = get_open_trades()
 
     # 选最优 (过滤已有持仓)
-    best = select_best(candidates, positions, local_trades)
+    best, vetoed_pattern_keys = select_best(candidates, positions, local_trades)
 
     # 仓位管理 (融合OKX实时+本地记录)
     position_decisions = []
@@ -980,6 +1005,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'candidates': candidates[:5],
             'decisions': position_decisions,
             'reason': reason,
+            'vetoed_pattern_keys': vetoed_pattern_keys,
         }
     
     if best and best['score'] > 0.5:
@@ -1009,7 +1035,8 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'tier': tier,
                     'equity': equity,
                     'reason': conc_reason,
-                    'concentration_details': conc_details
+                    'concentration_details': conc_details,
+                    'vetoed_pattern_keys': vetoed_pattern_keys,
                 }
             
             # P1: OCO下单 (带equity参数用于验证)
@@ -1054,21 +1081,34 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                         'action': 'duplicate_trade',
                         'best': best,
                         'idempotency_key': idempotency_key,
-                        'message': dup_msg
+                        'message': dup_msg,
+                        'vetoed_pattern_keys': vetoed_pattern_keys,
                     }
                 
                 record_trade(trade)
+                # 自适应学习: 入场反馈
+                try:
+                    from agents.agent_learner import AgentLearner
+                    learner = AgentLearner(str(STATE_DIR))
+                    pattern_key, is_allowed, trade_id = learner.on_trade_entry(trade)
+                    trade['trade_id'] = trade_id
+                    logger.info(f"Agent-L入场记录: pattern={pattern_key} trade_id={trade_id} allowed={is_allowed}")
+                except Exception as e:
+                    logger.warning(f"入场学习反馈失败: {e}")
+                    trade['trade_id'] = None
                 logger.info(f"开仓成功: {best['symbol']} {best['direction']} @ {entry}")
             else:
-                return {'action': 'order_failed', 'result': result, 'best': best}
+                return {'action': 'order_failed', 'result': result, 'best': best, 'vetoed_pattern_keys': vetoed_pattern_keys}
         
         return {
             'action': 'open',
             'best': best,
+            'trade': trade,  # 包含 trade_id 供 main() 出场时使用
             'tier': tier,
             'equity': equity,
             'positions': len(positions),
             'reason': reason,
+            'vetoed_pattern_keys': vetoed_pattern_keys,
         }
     
     return {
@@ -1079,6 +1119,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'candidates': candidates[:5],
         'reason': reason,
         'losses': losses,
+        'vetoed_pattern_keys': vetoed_pattern_keys,
     }
 
 # ===== 入口 =====
@@ -1100,7 +1141,6 @@ def main():
         equity = args.equity if args.equity else get_account_balance()
         if equity == 0:
             equity = 100000
-    
     print(f'余额: ${equity:,.2f} | ', end='')
     
     # 获取BTC趋势
@@ -1112,33 +1152,76 @@ def main():
         btc_trend = 'bull' if closes[-1] > ma20 else 'bear'
     
     result = run_scan(equity, btc_trend, args.mode)
+    
+    # === 自适应学习: gemma4否决 → 黑名单 ===
+    vetoed_keys = result.get('vetoed_pattern_keys', [])
+    if vetoed_keys:
+        try:
+            learner = AgentLearner(str(STATE_DIR))
+            for vk in vetoed_keys:
+                if vk:
+                    learner.pattern_learner.add_to_blacklist(vk)
+            logger.info(f"gemma4否决模式加入黑名单: {vetoed_keys}")
+        except Exception as e:
+            logger.warning(f"gemma4黑名单更新失败: {e}")
+
+    # === 执行平仓决策 (urgency >= 6) ===
+    decisions = result.get('decisions', [])
+    for decision in sorted(decisions, key=lambda x: -x.get('urgency', 0)):
+        if decision.get('action') == 'close' and decision.get('urgency', 0) >= 6:
+            sym = decision['symbol']
+            inst_id = f'{sym}-USDT-SWAP'
+            positions = get_positions() if args.mode == 'live' else []
+            pos = next((p for p in positions if p.get('instId') == inst_id), None)
+            if pos and args.mode == 'live':
+                close_data = close_position(sym, decision['reason'])
+                if close_data.get('code') == '0':
+                    # 更新本地交易记录
+                    local_trades = get_open_trades()
+                    for t in local_trades:
+                        if t.get('coin', '').upper() == sym.upper():
+                            t['status'] = 'CLOSED'
+                            t['exit_reason'] = decision['reason']
+                            t['exit_time'] = datetime.now().isoformat()
+                            # 从本次结果的 trade 中获取 learner trade_id
+                            if result.get('trade'):
+                                t['trade_id'] = result['trade'].get('trade_id')
+                    save_trades([t for t in local_trades if t.get('status') == 'OPEN'])
+                    # 自适应学习: 出场反馈
+                    try:
+                        learner = AgentLearner(str(STATE_DIR))
+                        trade_id = result.get('trade', {}).get('trade_id')
+                        if trade_id:
+                            learner.on_trade_exit(trade_id, {
+                                'exit_time': datetime.now().isoformat(),
+                                'exit_price': pos.get('last', 0),
+                                'close_reason': decision['reason'],
+                                'pnl_pct': decision.get('pnl_pct', 0),
+                            })
+                            logger.info(f"Agent-L出场反馈: trade_id={trade_id} reason={decision['reason']}")
+                    except Exception as e:
+                        logger.warning(f"出场学习反馈失败: {e}")
 
     # 更新treasury (快照时间轴管理)
     treasury = load_treasury()
     treasury['equity'] = equity
-
     now = datetime.now()
     last_update = treasury.get('last_update', '')
-
     if last_update:
         try:
             from datetime import datetime as dt
             last_dt = dt.fromisoformat(last_update)
-            # 新小时: 重置小时快照
             if now.hour != last_dt.hour:
                 treasury['hourly_snapshot'] = equity
-            # 新的一天: 重置日快照
             if now.date() != last_dt.date():
                 treasury['daily_snapshot'] = equity
         except Exception:
             treasury['hourly_snapshot'] = equity
             treasury['daily_snapshot'] = equity
     else:
-        # 首次运行，初始化快照
         treasury['hourly_snapshot'] = equity
         treasury['daily_snapshot'] = equity
         treasury['session_start'] = equity
-
     treasury['last_update'] = now.isoformat()
     save_treasury(treasury)
     
@@ -1146,7 +1229,6 @@ def main():
     action = result.get('action', 'unknown')
     tier = result.get('tier', '?')
     reason = result.get('reason', '')
-    
     print(f'熔断: {tier} | {reason}')
     
     if action == 'blocked':
