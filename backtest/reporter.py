@@ -16,7 +16,7 @@ from typing import Dict, List, Callable
 logger = logging.getLogger("miracle.backtest.reporter")
 
 from dataclasses import asdict
-from engine import BacktestEngine
+from .engine import BacktestEngine
 
 
 # ============================================================

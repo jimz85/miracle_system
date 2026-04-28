@@ -17,7 +17,7 @@ Miracle 1.0.1 - 回测引擎 (重构版本)
 """
 
 # 从子模块导入所有公开API，保持向后兼容
-from engine import (
+from .engine import (
     BacktestEngine,
     WalkForwardEngine,
     MultiCoinBacktest,
@@ -26,7 +26,7 @@ from engine import (
     calc_rank_ic,
 )
 
-from stats import (
+from .stats import (
     BacktestTrade,
     BacktestStats,
     ICStats,
@@ -34,7 +34,7 @@ from stats import (
     calc_ic,
 )
 
-from reporter import (
+from .reporter import (
     run_simple_backtest,
     _format_summary,
 )
@@ -61,5 +61,5 @@ __all__ = [
 
 if __name__ == "__main__":
     # 运行reporter中的演示代码
-    from reporter import _format_summary
-    exec(open(__file__.replace('backtest.py', 'reporter.py')).read().split('if __name__ == "__main__":')[1])
+    from .reporter import _format_summary
+    exec(open(__file__.replace('old_backtest.py', 'reporter.py')).read().split('if __name__ == "__main__":')[1])

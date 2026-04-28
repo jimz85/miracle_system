@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from collections import defaultdict
 
-from stats import (
+from .stats import (
     BacktestTrade, BacktestStats, ICStats,
     calc_stats, calc_ic, calc_ic_simple, calc_rank_ic
 )

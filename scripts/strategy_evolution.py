@@ -16,7 +16,7 @@ from dataclasses import asdict
 from datetime import datetime
 from collections import defaultdict
 
-from learner import (
+from backtest.learner import (
     DecisionJournal,
     DecisionJournalEntry,
     WalkForwardValidator,

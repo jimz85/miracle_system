@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from learner import (
+from .learner import (
     WalkForwardValidator,
     calc_information_coefficient,
 )

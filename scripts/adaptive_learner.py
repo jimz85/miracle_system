@@ -26,14 +26,14 @@ import logging
 logger = logging.getLogger("miracle.adaptive_learner")
 
 # 从子模块导入所有公开API，保持向后兼容
-from learner import (
+from backtest.learner import (
     DecisionJournal,
     DecisionJournalEntry,
     WalkForwardValidator,
     calc_information_coefficient,
 )
 
-from evaluator import (
+from backtest.evaluator import (
     FactorEvaluator,
     PatternEvaluator,
     OverfittingDetector,
@@ -41,7 +41,7 @@ from evaluator import (
     AnomalyAlert,
 )
 
-from strategy_evolution import (
+from scripts.strategy_evolution import (
     StrategyEvolution,
     TradeHooks,
 )
