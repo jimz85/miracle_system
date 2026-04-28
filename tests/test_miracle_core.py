@@ -136,39 +136,42 @@ class TestADX:
     def test_adx_basic(self, trending_up_data):
         """ADX should return non-negative values"""
         data = trending_up_data
-        adx, plus_di, minus_di = calc_adx(data["highs"], data["lows"], data["closes"])
-        assert adx >= 0
-        assert plus_di >= 0
-        assert minus_di >= 0
+        result = calc_adx(data["highs"], data["lows"], data["closes"])
+        assert isinstance(result, dict), "calc_adx should return dict (unified with core/price_factors.py)"
+        assert result["adx"] >= 0
+        assert result["plus_di"] >= 0
+        assert result["minus_di"] >= 0
 
     def test_adx_trending_up(self, trending_up_data):
         """In uptrend, +DI should be greater than -DI"""
         data = trending_up_data
-        adx, plus_di, minus_di = calc_adx(data["highs"], data["lows"], data["closes"])
-        assert plus_di > minus_di
+        result = calc_adx(data["highs"], data["lows"], data["closes"])
+        assert result["plus_di"] > result["minus_di"]
 
     def test_adx_trending_down(self, trending_down_data):
         """In downtrend, -DI should be greater than +DI"""
         data = trending_down_data
-        adx, plus_di, minus_di = calc_adx(data["highs"], data["lows"], data["closes"])
-        assert minus_di > plus_di
+        result = calc_adx(data["highs"], data["lows"], data["closes"])
+        assert result["minus_di"] > result["plus_di"]
 
     def test_adx_flat_data(self, flat_data):
         """ADX should be non-negative in ranging market"""
         data = flat_data
-        adx, plus_di, minus_di = calc_adx(data["highs"], data["lows"], data["closes"])
+        result = calc_adx(data["highs"], data["lows"], data["closes"])
+        assert isinstance(result, dict)
         # ADX should be non-negative regardless of market condition
-        assert adx >= 0
+        assert result["adx"] >= 0
 
     def test_adx_insufficient_data(self):
         """ADX should return default values for insufficient data"""
         highs = [100, 101]
         lows = [99, 100]
         closes = [100, 101]
-        adx, plus_di, minus_di = calc_adx(highs, lows, closes)
-        assert adx == 25.0
-        assert plus_di == 25.0
-        assert minus_di == 25.0
+        result = calc_adx(highs, lows, closes)
+        assert isinstance(result, dict)
+        assert result["adx"] == 25.0
+        assert result["plus_di"] == 25.0
+        assert result["minus_di"] == 25.0
 
     def test_adx_calculation_consistency(self):
         """ADX calculation should be consistent for same input"""
@@ -189,34 +192,33 @@ class TestMACD:
     """MACD calculation tests"""
 
     def test_macd_basic(self):
-        """Basic MACD should return three values"""
+        """Basic MACD should return dict with three values"""
         prices = [100 + (i % 10 - 5) for i in range(50)]
-        macd, signal, hist = calc_macd(prices)
-        assert isinstance(macd, float)
-        assert isinstance(signal, float)
-        assert isinstance(hist, float)
+        result = calc_macd(prices)
+        assert isinstance(result, dict), "calc_macd should return dict"
+        assert isinstance(result["macd"], float)
+        assert isinstance(result["signal"], float)
+        assert isinstance(result["histogram"], float)
 
     def test_macd_histogram_sign(self):
         """MACD histogram should be positive when MACD > signal"""
-        # Create uptrend data
         prices = [100 + i * 2 for i in range(50)]
-        macd, signal, hist = calc_macd(prices)
-        assert hist > 0  # In uptrend, MACD should be above signal
+        result = calc_macd(prices)
+        assert result["histogram"] > 0  # In uptrend, MACD should be above signal
 
     def test_macd_insufficient_data(self):
         """MACD should return zeros for insufficient data"""
         prices = [100, 101, 102]
-        macd, signal, hist = calc_macd(prices)
-        assert macd == 0.0
-        assert signal == 0.0
-        assert hist == 0.0
+        result = calc_macd(prices)
+        assert result["macd"] == 0.0
+        assert result["signal"] == 0.0
+        assert result["histogram"] == 0.0
 
     def test_macd_below_signal(self):
         """MACD histogram should be negative when MACD < signal"""
-        # Create downtrend data
         prices = [100 - i * 2 for i in range(50)]
-        macd, signal, hist = calc_macd(prices)
-        assert hist < 0
+        result = calc_macd(prices)
+        assert result["histogram"] < 0
 
 
 # =============================================================================

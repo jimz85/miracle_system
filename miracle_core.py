@@ -13,6 +13,12 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+# 因子计算（从 core.factor_calculations 导入，避免与 core/price_factors.py 重复）
+from core.factor_calculations import (
+    calc_rsi, calc_adx, calc_macd, calc_atr,
+    normalize_macd_histogram, calc_combined_score
+)
+
 # ===== IC动态权重 =====
 
 def get_ic_adjusted_weights() -> Dict[str, float]:
@@ -320,194 +326,15 @@ class Trade:
     factors: Dict[str, float]
     stop_triggered: str  # "none" | "sl" | "tp" | "time" | "daily_loss"
 
-# ===== 因子计算 =====
+# calc_rsi / calc_adx / calc_macd / calc_atr / normalize_macd_histogram / calc_combined_score
+# 已迁移至 core/factor_calculations.py（calc_adx返回dict格式以与core/price_factors.py统一）
+# calc_onchain_metrics / calc_wallet_metrics / calc_news_sentiment 为STUB，保留于本文件
 
-def calc_rsi(prices: List[float], period: int = 14) -> float:
-    """
-    RSI (Relative Strength Index) 计算 — 正确实现Wilder平滑
-    简化均值会导致RSI偏大/偏小，真实策略应使用Wilder递推。
-    """
-    if len(prices) < period + 1:
-        return 50.0
-    deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
-    gains = [d if d > 0 else 0 for d in deltas]
-    losses = [-d if d < 0 else 0 for d in deltas]
-
-    # Wilder平滑 — 递归形式
-    alpha = 1.0 / period
-    avg_gain = float(gains[0])
-    avg_loss = float(losses[0])
-    for i in range(1, len(gains)):
-        avg_gain = avg_gain + alpha * (gains[i] - avg_gain)
-        avg_loss = avg_loss + alpha * (losses[i] - avg_loss)
-
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-def calc_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Tuple[float, float, float]:
-    """
-    计算ADX及+DI/-DI，返回(adx, plus_di, minus_di)
-    
-    正确实现Wilder平滑：
-    1. ATR, +DI, -DI 全部用Wilder平滑（S_t = S_{t-1}*(n-1)/n + v_t/n）
-    2. ADX = Wilder平滑(DX)
-    
-    参考: Wilder, J. Welles. "New Concepts in Technical Trading Systems" (1978)
-    """
-    # 需要至少 2*period 根K线数据才能正确初始化+递推
-    min_required = 2 * period
-    if len(closes) < min_required:
-        return 25.0, 25.0, 25.0
-    
-    n = len(closes)
-    tr_list = []
-    plus_dm_list = []
-    minus_dm_list = []
-    
-    for i in range(1, n):
-        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
-        tr_list.append(tr)
-        up = highs[i] - highs[i-1]
-        dn = lows[i-1] - lows[i]
-        if up > dn and up > 0:
-            plus_dm_list.append(up)
-            minus_dm_list.append(0)
-        elif dn > up and dn > 0:
-            plus_dm_list.append(0)
-            minus_dm_list.append(dn)
-        else:
-            plus_dm_list.append(0)
-            minus_dm_list.append(0)
-    
-    # ── Wilder平滑初始化 ──
-    alpha = 1.0 / period
-    # 第一个period的简单均值作为初始值
-    atr = sum(tr_list[:period]) / period
-    plus_di_smooth = sum(plus_dm_list[:period]) / period
-    minus_di_smooth = sum(minus_dm_list[:period]) / period
-    
-    # ── Wilder递推（从第period个TR开始） ──
-    for i in range(period, len(tr_list)):
-        atr = atr * (1 - alpha) + tr_list[i] * alpha
-        plus_di_smooth = plus_di_smooth * (1 - alpha) + plus_dm_list[i] * alpha
-        minus_di_smooth = minus_di_smooth * (1 - alpha) + minus_dm_list[i] * alpha
-    
-    # 计算每个时间点的DX值并收集
-    dx_values = []
-    plus_di_series = []
-    minus_di_series = []
-
-    # 重新用Wilder平滑计算每个时间点的DX值
-    atr = sum(tr_list[:period]) / period
-    plus_di_smooth = sum(plus_dm_list[:period]) / period
-    minus_di_smooth = sum(minus_dm_list[:period]) / period
-
-    for i in range(period, len(tr_list)):
-        atr = atr * (1 - alpha) + tr_list[i] * alpha
-        plus_di_smooth = plus_di_smooth * (1 - alpha) + plus_dm_list[i] * alpha
-        minus_di_smooth = minus_di_smooth * (1 - alpha) + minus_dm_list[i] * alpha
-
-        di_sum = plus_di_smooth + minus_di_smooth
-        if di_sum == 0 or atr == 0:
-            dx_values.append(0.0)
-            plus_di_series.append(0.0)
-            minus_di_series.append(0.0)
-        else:
-            # +DI = 100 × (+DM_smoothed / ATR)
-            # -DI = 100 × (-DM_smoothed / ATR)
-            # DX = 100 × |+DI - -DI| / (+DI + -DI)
-            # 代入后: DX = 100 × |+DM - -DM| / (+DM + -DM)
-            # 注意：这里直接用smoothed DM值，不需要再÷atr
-            plus_di_pct = 100 * plus_di_smooth / atr
-            minus_di_pct = 100 * minus_di_smooth / atr
-            dx_i = 100 * abs(plus_di_smooth - minus_di_smooth) / (plus_di_smooth + minus_di_smooth)
-            dx_values.append(dx_i)
-            plus_di_series.append(plus_di_pct)
-            minus_di_series.append(minus_di_pct)
-
-    if len(dx_values) == 0:
-        return 0.0, 0.0, 0.0
-
-    # ADX = Wilder平滑(DX) — 只需要period次递推即可收敛
-    # 第一个ADX用DX的简单均值初始化
-    if len(dx_values) >= period:
-        adx = sum(dx_values[:period]) / period
-    else:
-        adx = sum(dx_values) / len(dx_values)
-
-    # 后续ADX用Wilder递推（只进行period次，这是Wilder的标准做法）
-    for i in range(period):
-        if i < len(dx_values):
-            adx = adx * (1 - alpha) + dx_values[i] * alpha
-
-    # 返回最终的ADX和最后一组DI值
-    plus_di_final = plus_di_series[-1] if plus_di_series else 0.0
-    minus_di_final = minus_di_series[-1] if minus_di_series else 0.0
-
-    return adx, plus_di_final, minus_di_final
-
-def calc_macd(prices: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[float, float, float]:
-    """计算MACD，返回(macd, signal, histogram)"""
-    if len(prices) < slow + signal:
-        return 0.0, 0.0, 0.0
-    
-    def ema(data, n):
-        k = 2 / (n + 1)
-        result = [data[0]]
-        for v in data[1:]:
-            result.append(result[-1] * (1 - k) + v * k)
-        return result
-    
-    ema_fast = ema(prices, fast)
-    ema_slow = ema(prices, slow)
-    macd_line = [ema_fast[i] - ema_slow[i] for i in range(len(ema_fast))]
-    signal_line = ema(macd_line, signal)
-    
-    macd = macd_line[-1]
-    sig = signal_line[-1]
-    hist = macd - sig
-    return macd, sig, hist
-
-def calc_atr(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> float:
-    """
-    计算ATR（平均真实波幅）— 正确实现Wilder平滑
-
-    Wilder ATR = ATR_prev * (period-1)/period + TR_current / period
-    不是简单均值（简单均值会使ATR偏小，导致止损设得太紧）
-
-    正确实现：从period开始递推
-    """
-    n = len(closes)
-    if n < period + 1:
-        return (max(highs) - min(lows)) / min(lows) if min(lows) > 0 else 0.01
-
-    trs = []
-    for i in range(1, n):
-        tr = max(highs[i] - lows[i],
-                 abs(highs[i] - closes[i-1]),
-                 abs(lows[i] - closes[i-1]))
-        trs.append(tr)
-
-    # ── Wilder平滑 ──
-    alpha = 1.0 / period
-    # 第一个period用简单均值初始化
-    if len(trs) < period:
-        return sum(trs) / len(trs) if trs else 0.0
-
-    atr = sum(trs[:period]) / period  # 初始值
-
-    # 从第period个元素开始递推（索引period到len(trs)-1，共len(trs)-period个）
-    for i in range(period, len(trs)):
-        atr = atr * (1 - alpha) + trs[i] * alpha
-
-    return atr
 
 def calc_onchain_metrics() -> Dict[str, float]:
     """
     计算链上因子（STUB - 需对接真实API）
-    
+
     WARNING: 此函数为STUB实现，返回全零值。
     当前权重贡献已被静默设为0，避免污染综合得分。
     TODO: 对接链上数据API（OKX/Binance）
@@ -518,80 +345,11 @@ def calc_onchain_metrics() -> Dict[str, float]:
         "large_transfer": 0.0   # 大额转账标记
     }
 
-def normalize_macd_histogram(hist: float, price: float) -> float:
-    """
-    MACD直方图归一化 - 正确的归一化方法
-
-    归一化到 -1~1 范围，表示多空动能强度
-
-    Args:
-        hist: MACD直方图值（MACD线 - Signal线）
-        price: 当前价格
-
-    Returns:
-        normalized: 归一化后的值 (-1~1)
-    """
-    if price <= 0:
-        return 0.0
-
-    # 使用价格的一定比例作为归一化基准
-    # 通常MACD直方图超过价格的0.5%被认为是强信号
-    threshold = price * 0.005  # 0.5%的价格变动作为阈值
-
-    if abs(hist) < threshold:
-        return 0.0  # 低于阈值视为中性
-
-    # 映射到 -1~1
-    normalized = max(-1.0, min(1.0, hist / (threshold * 10)))
-    return normalized
-
-def calc_combined_score(price_score: float, news_score: float,
-                        onchain_score: float, wallet_score: float,
-                        weights: Dict[str, float] = None) -> float:
-    """
-    多因子融合 - 明确定义公式
-
-    融合方法：加权几何平均 + 方向一致性修正
-
-    Args:
-        price_score: 价格因子得分 (-1~1)
-        news_score: 新闻因子得分 (-1~1)
-        onchain_score: 链上因子得分 (-1~1)
-        wallet_score: 钱包因子得分 (-1~1)
-        weights: 因子权重
-
-    Returns:
-        combined_score: 综合得分 (-1~1)
-    """
-    if weights is None:
-        weights = {"price": 0.6, "news": 0.2, "onchain": 0.1, "wallet": 0.1}
-
-    # 1. 加权算术平均（基础得分）
-    weighted_sum = (
-        price_score * weights["price"] +
-        news_score * weights["news"] +
-        onchain_score * weights["onchain"] +
-        wallet_score * weights["wallet"]
-    )
-
-    # 2. 方向一致性修正
-    # 计算方向一致的因子数量
-    scores = [price_score, news_score, onchain_score, wallet_score]
-
-    # 计算方向一致性因子（0.5~1.0）
-    # 如果所有因子同向，一致性=1.0；如果完全矛盾，一致性=0.5
-    sign_consistency = 0.5 + 0.5 * abs(sum(s/abs(s) if s != 0 else 0 for s in scores)) / len(scores)
-
-    # 3. 最终得分 = 加权平均 × 一致性修正
-    # 如果方向矛盾（如价格多头+新闻空头），降低置信度
-    combined = weighted_sum * sign_consistency
-
-    return max(-1.0, min(1.0, combined))
 
 def calc_wallet_metrics() -> Dict[str, float]:
     """
     计算钱包分布因子（STUB - 需对接真实API）
-    
+
     WARNING: 此函数为STUB实现，返回全零值。
     当前权重贡献已被静默设为0，避免污染综合得分。
     TODO: 对接区块链浏览器API
@@ -632,8 +390,14 @@ def calc_factors(price_data: Dict, onchain_data: Optional[Dict] = None,
     
     # 价格动量因子 (60%)
     rsi = calc_rsi(closes)
-    adx, plus_di, minus_di = calc_adx(highs, lows, closes)
-    macd, signal, hist = calc_macd(closes)
+    adx_data = calc_adx(highs, lows, closes)
+    adx = adx_data["adx"]
+    plus_di = adx_data["plus_di"]
+    minus_di = adx_data["minus_di"]
+    macd_data = calc_macd(closes)
+    macd = macd_data["macd"]
+    signal = macd_data["signal"]
+    hist = macd_data["histogram"]
     atr = calc_atr(highs, lows, closes)
     
     # 归一化因子到0-100
