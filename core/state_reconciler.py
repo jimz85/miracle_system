@@ -933,7 +933,7 @@ class StateReconciler:
 
             # P0-FIX: 二次确认 — 再次fetch交易所状态，防止网络抖动误判
             if not force:
-                exchange_positions = self.client.get_positions()
+                exchange_positions = self.client.get_open_positions()
                 active_symbols = {p.inst_id for p in exchange_positions if p.pos != 0}
                 if phantom.inst_id in active_symbols:
                     logger.error(

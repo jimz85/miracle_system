@@ -48,8 +48,8 @@ class PriceFactors:
             gains = np.where(deltas > 0, deltas, 0.0)
             losses = np.where(deltas < 0, -deltas, 0.0)
 
-            avg_gains = pd.Series(gains).ewm(span=period, adjust=False).mean().values
-            avg_losses = pd.Series(losses).ewm(span=period, adjust=False).mean().values
+            avg_gains = pd.Series(gains).ewm(alpha=1.0/period, adjust=False).mean().values
+            avg_losses = pd.Series(losses).ewm(alpha=1.0/period, adjust=False).mean().values
 
             rs = avg_gains[-1] / (avg_losses[-1] + 1e-10)
             if avg_losses[-1] < 1e-10:
@@ -126,16 +126,16 @@ class PriceFactors:
             plus_dm_series = pd.Series(plus_dm)
             minus_dm_series = pd.Series(minus_dm)
 
-            atr_smooth = tr_series.ewm(span=period_int, adjust=False).mean()
-            plus_dm_smooth = plus_dm_series.ewm(span=period_int, adjust=False).mean()
-            minus_dm_smooth = minus_dm_series.ewm(span=period_int, adjust=False).mean()
+            atr_smooth = tr_series.ewm(alpha=1.0/period_int, adjust=False).mean()
+            plus_dm_smooth = plus_dm_series.ewm(alpha=1.0/period_int, adjust=False).mean()
+            minus_dm_smooth = minus_dm_series.ewm(alpha=1.0/period_int, adjust=False).mean()
 
             plus_di_vals = 100.0 * plus_dm_smooth / (atr_smooth + 1e-10)
             minus_di_vals = 100.0 * minus_dm_smooth / (atr_smooth + 1e-10)
             dx_vals = 100.0 * np.abs(plus_di_vals - minus_di_vals) / (plus_di_vals + minus_di_vals + 1e-10)
 
             # ADX is smoothed DX over `period` bars (Wilder's smoothing again)
-            adx_series = dx_vals.ewm(span=period_int, adjust=False).mean()
+            adx_series = dx_vals.ewm(alpha=1.0/period_int, adjust=False).mean()
             adx_val = float(adx_series.iloc[-1])
             plus_di_val = float(plus_di_vals.iloc[-1])
             minus_di_val = float(minus_di_vals.iloc[-1])
