@@ -26,6 +26,7 @@ Miracle Circuit Breaker - 熔断机制封装
 
 from dataclasses import dataclass, field
 from enum import Enum
+import threading
 
 try:
     from enum import StrEnum
@@ -90,33 +91,45 @@ class EquitySnapshot:
     daily_snapshot_date: str = ""  # YYYY-MM-DD格式
     snapshots: List[float] = field(default_factory=list)
 
-    def update(self, current_equity: float) -> None:
-        """更新权益快照"""
+    def update(self, current_equity: float, lock=None) -> None:
+        """更新权益快照
+        
+        Args:
+            current_equity: 当前权益
+            lock: 可选的线程锁，用于保护快照列表的并发访问
+        """
         from datetime import date
         today = str(date.today())
         
-        if self.initial_equity == 0.0:
-            self.initial_equity = current_equity
-            self.peak_equity = current_equity
-            self.daily_snapshot = current_equity
-            self.daily_snapshot_date = today
-
-        self.snapshots.append(current_equity)
-        if current_equity > self.peak_equity:
-            self.peak_equity = current_equity
-
-        # 新的一天：重置日初快照
-        if today != self.daily_snapshot_date:
-            self.daily_snapshot = current_equity
-            self.daily_snapshot_date = today
-        else:
-            # 同一天：更新日初快照为当日的最低点（用于恢复检测）
-            if current_equity < self.daily_snapshot:
+        def _do_update():
+            if self.initial_equity == 0.0:
+                self.initial_equity = current_equity
+                self.peak_equity = current_equity
                 self.daily_snapshot = current_equity
+                self.daily_snapshot_date = today
 
-        # 保持最近1000个快照
-        if len(self.snapshots) > 1000:
-            self.snapshots.pop(0)
+            self.snapshots.append(current_equity)
+            if current_equity > self.peak_equity:
+                self.peak_equity = current_equity
+
+            # 新的一天：重置日初快照
+            if today != self.daily_snapshot_date:
+                self.daily_snapshot = current_equity
+                self.daily_snapshot_date = today
+            else:
+                # 同一天：更新日初快照为当日的最低点（用于恢复检测）
+                if current_equity < self.daily_snapshot:
+                    self.daily_snapshot = current_equity
+
+            # 保持最近1000个快照
+            if len(self.snapshots) > 1000:
+                self.snapshots.pop(0)
+        
+        if lock is not None:
+            with lock:
+                _do_update()
+        else:
+            _do_update()
 
     def get_initial(self) -> float:
         """获取初始权益"""
@@ -194,6 +207,7 @@ class CircuitBreaker:
         self.last_trade_time: float | None = None
         self._last_recovery_check_equity: float = 0.0  # 上次检查时的权益
         self._cooldown_end_time: float = 0.0  # 冷却结束时间戳
+        self._lock = threading.RLock()  # 线程安全锁
 
     def check_treasury_limits(
         self,
@@ -210,63 +224,65 @@ class CircuitBreaker:
         Returns:
             CircuitBreakerResult: 熔断检查结果
         """
-        # 1. 更新权益快照
-        self.equity_snapshot.update(current_equity)
+        import time as _time
+        
+        with self._lock:
+            # 1. 更新权益快照
+            self.equity_snapshot.update(current_equity, lock=self._lock)
 
-        # 2. 计算当前回撤
-        initial_equity = self.equity_snapshot.get_initial()
-        if initial_equity <= 0:
+            # 2. 计算当前回撤
+            initial_equity = self.equity_snapshot.get_initial()
+            if initial_equity <= 0:
+                return CircuitBreakerResult(
+                    allowed=False,
+                    tier=SurvivalTier.PAUSED,
+                    max_position_pct=0.0,
+                    can_open=False,
+                    can_close=True,
+                    consecutive_losses=self.consecutive_losses,
+                    reason="初始权益无效",
+                    equity=current_equity
+                )
+
+            drawdown = (current_equity - initial_equity) / initial_equity
+            drawdown_pct = drawdown * 100
+
+            # 3. 确定生存层级
+            new_tier = self._determine_tier(drawdown)
+
+            # 4. 渐进恢复检查
+            if new_tier == SurvivalTier.NORMAL and self.current_tier != SurvivalTier.NORMAL:
+                new_tier = self._check_recovery(current_equity)
+
+            self.current_tier = new_tier
+
+            # 5. 构建结果
+            can_open = new_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION]
+            # 6. 冷却期检查：即使层级允许开仓，冷却期内也不允许
+            in_cooldown = False
+            if can_open and self._cooldown_end_time > 0 and _time.time() < self._cooldown_end_time:
+                remaining = self._cooldown_end_time - _time.time()
+                can_open = False
+                in_cooldown = True
+                tier_reason_extra = f" (冷却中，剩余{int(remaining//60)+1}分钟)"
+            else:
+                # 冷却已结束，清除冷却时间戳
+                if self._cooldown_end_time > 0 and _time.time() >= self._cooldown_end_time:
+                    self._cooldown_end_time = 0.0
+                tier_reason_extra = ""
+            max_position_pct = self._get_max_position_pct(new_tier)
+
             return CircuitBreakerResult(
-                allowed=False,
-                tier=SurvivalTier.PAUSED,
-                max_position_pct=0.0,
-                can_open=False,
-                can_close=True,
+                allowed=can_open,  # allowed reflects cooldown state
+                tier=new_tier,
+                max_position_pct=max_position_pct,
+                can_open=can_open,
+                can_close=True,  # 任何层级都可以平仓
                 consecutive_losses=self.consecutive_losses,
-                reason="初始权益无效",
+                reason=self._get_tier_reason(new_tier, drawdown_pct) + tier_reason_extra,
+                drawdown_pct=drawdown_pct,
                 equity=current_equity
             )
-
-        drawdown = (current_equity - initial_equity) / initial_equity
-        drawdown_pct = drawdown * 100
-
-        # 3. 确定生存层级
-        new_tier = self._determine_tier(drawdown)
-
-        # 4. 渐进恢复检查
-        if new_tier == SurvivalTier.NORMAL and self.current_tier != SurvivalTier.NORMAL:
-            new_tier = self._check_recovery(current_equity)
-
-        self.current_tier = new_tier
-
-        # 5. 构建结果
-        can_open = new_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION]
-        # 6. 冷却期检查：即使层级允许开仓，冷却期内也不允许
-        import time as _time
-        in_cooldown = False
-        if can_open and self._cooldown_end_time > 0 and _time.time() < self._cooldown_end_time:
-            remaining = self._cooldown_end_time - _time.time()
-            can_open = False
-            in_cooldown = True
-            tier_reason_extra = f" (冷却中，剩余{int(remaining//60)+1}分钟)"
-        else:
-            # 冷却已结束，清除冷却时间戳
-            if self._cooldown_end_time > 0 and _time.time() >= self._cooldown_end_time:
-                self._cooldown_end_time = 0.0
-            tier_reason_extra = ""
-        max_position_pct = self._get_max_position_pct(new_tier)
-
-        return CircuitBreakerResult(
-            allowed=can_open,  # allowed reflects cooldown state
-            tier=new_tier,
-            max_position_pct=max_position_pct,
-            can_open=can_open,
-            can_close=True,  # 任何层级都可以平仓
-            consecutive_losses=self.consecutive_losses,
-            reason=self._get_tier_reason(new_tier, drawdown_pct) + tier_reason_extra,
-            drawdown_pct=drawdown_pct,
-            equity=current_equity
-        )
 
     def record_trade_outcome(self, pnl: float) -> None:
         """
@@ -276,19 +292,21 @@ class CircuitBreaker:
             pnl: 交易盈亏 (正数为盈利，负数为亏损)
         """
         import time
-        self.last_trade_time = time.time()
+        
+        with self._lock:
+            self.last_trade_time = time.time()
 
-        if pnl < 0:
-            self.consecutive_losses += 1
-            # 设置冷却时间
-            if self.consecutive_losses >= 3:
-                self._cooldown_end_time = self.last_trade_time + self.cooldown_hours_after_3_losses * 3600
-            elif self.consecutive_losses == 2:
-                self._cooldown_end_time = self.last_trade_time + self.cooldown_hours_after_2_losses * 3600
-        else:
-            # 盈利后重置连亏计数和冷却
-            self.consecutive_losses = 0
-            self._cooldown_end_time = 0.0
+            if pnl < 0:
+                self.consecutive_losses += 1
+                # 设置冷却时间
+                if self.consecutive_losses >= 3:
+                    self._cooldown_end_time = self.last_trade_time + self.cooldown_hours_after_3_losses * 3600
+                elif self.consecutive_losses == 2:
+                    self._cooldown_end_time = self.last_trade_time + self.cooldown_hours_after_2_losses * 3600
+            else:
+                # 盈利后重置连亏计数和冷却
+                self.consecutive_losses = 0
+                self._cooldown_end_time = 0.0
 
     def _determine_tier(self, drawdown: float) -> SurvivalTier:
         """根据回撤确定生存层"""
@@ -357,13 +375,14 @@ class CircuitBreaker:
 
     def get_status(self) -> dict:
         """获取当前熔断状态"""
-        return {
-            "tier": self.current_tier.value,
-            "consecutive_losses": self.consecutive_losses,
-            "can_open": self.current_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION],
-            "can_close": True,
-            "max_position_pct": self._get_max_position_pct(self.current_tier),
-        }
+        with self._lock:
+            return {
+                "tier": self.current_tier.value,
+                "consecutive_losses": self.consecutive_losses,
+                "can_open": self.current_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION],
+                "can_close": True,
+                "max_position_pct": self._get_max_position_pct(self.current_tier),
+            }
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -423,15 +442,18 @@ class MiracleCircuitBreaker:
 
     def get_tier(self) -> SurvivalTier:
         """获取当前生存层"""
-        return self.cb.current_tier
+        with self.cb._lock:
+            return self.cb.current_tier
 
     def can_open_position(self) -> bool:
         """检查是否可以开仓"""
-        return self.cb.current_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION]
+        with self.cb._lock:
+            return self.cb.current_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION]
 
     def get_max_position_pct(self) -> float:
         """获取最大持仓比例"""
-        return self.cb._get_max_position_pct(self.cb.current_tier)
+        with self.cb._lock:
+            return self.cb._get_max_position_pct(self.cb.current_tier)
 
 
 # ══════════════════════════════════════════════════════════════════════
