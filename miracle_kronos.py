@@ -35,9 +35,9 @@ from agents.agent_learner import AgentLearner
 
 # ===== 内部模块 =====
 from core.kronos_utils import (
+    atomic_write_json,
     CONCENTRATION_LIMITS,
     TREASURY_LIMITS,
-    atomic_write_json,
     check_and_record_idempotent,
     check_concentration,
     check_existing_oco_orders,
@@ -284,8 +284,8 @@ def save_ic_weights(weights):
     atomic_write_json(IC_WEIGHTS_FILE, data)
 
 DEFAULT_WEIGHTS = {
-    'RSI': 0.15, 'ADX': 0.0, 'Bollinger': 0.30,
-    'Vol': 0.0, 'MACD': 0.25, 'BTC': 0.16, 'Gemma': 0.14
+    'RSI': 0.15, 'ADX': 0.15, 'Bollinger': 0.30,
+    'Vol': 0.10, 'MACD': 0.25, 'BTC': 0.16, 'Gemma': 0.14
 }
 
 def voting_vote(factors: dict, weights: dict) -> dict:
@@ -755,8 +755,7 @@ confidence表示你对方向判断的确信程度：
             except Exception:
                 pass
         all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100] if 'output' in dir() else ''}
-        with open(cache_file, 'w') as f:
-            json.dump(all_cache, f)
+        atomic_write_json(cache_file, all_cache)
 
     return vote
 
@@ -828,8 +827,7 @@ def load_trades():
     return []
 
 def save_trades(trades):
-    with open(TRADES_FILE, 'w') as f:
-        json.dump(trades, f, indent=2)
+    atomic_write_json(TRADES_FILE, trades)
 
 def record_trade(trade):
     trades = load_trades()
@@ -1211,13 +1209,16 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     gemma_vote = _gemma_vote_cached(symbol, rsi, adx, bb_pos, current_price)
 
     # ---- DOT极值RSI检测 ----
-    # RSI < 5 = 极端超卖 → 强烈反弹信号
-    # RSI > 95 = 极端超买 → 强烈回调信号
+    # RSI < 5 = 极端超卖 → 强烈反弹信号 (仅在非强趋势时有效)
+    # RSI > 95 = 极端超买 → 强烈回调信号 (仅在非强趋势时有效)
+    # Only apply mean reversion when ADX < 25 (not a strong trend)
     extreme_signal = None
-    if rsi < 5:
-        extreme_signal = 'long'
-    elif rsi > 95:
-        extreme_signal = 'short'
+    if rsi < 5 and adx < 25:
+        extreme_signal = 'long'  # Extreme oversold in non-trending market
+    elif rsi > 95 and adx < 25:
+        extreme_signal = 'short'  # Extreme overbought in non-trending market
+    else:
+        extreme_signal = 'neutral'  # In strong trend (ADX>=25), don't fight the trend
 
     # IC投票
     factors = {
@@ -1645,8 +1646,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
 
     if local_trades:
-        open_only = [t for t in local_trades if t.get('status') == 'OPEN']
-        save_trades(open_only)
+        save_trades(local_trades)  # Full history preserved
     
     if len(positions) >= MAX_POSITIONS:
         return {
@@ -1868,7 +1868,7 @@ def main():
                             # 从本次结果的 trade 中获取 learner trade_id
                             if result.get('trade'):
                                 t['trade_id'] = result['trade'].get('trade_id')
-                    save_trades([t for t in local_trades if t.get('status') == 'OPEN'])
+                    save_trades(local_trades)  # Full history preserved
                     # 自适应学习: 出场反馈
                     try:
                         learner = AgentLearner(str(STATE_DIR))

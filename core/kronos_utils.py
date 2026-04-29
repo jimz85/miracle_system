@@ -28,6 +28,17 @@ _logger = logging.getLogger(__name__)
 BASE_URL = 'https://www.okx.com'
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')
 
+# 合约乘数映射 (OKX永续合约)
+# sz是合约张数，需要乘以每张合约的币数量才能得到实际币数量
+CONTRACT_MULTIPLIER = {
+    'BTC-USDT-SWAP': 0.01,   # 1张 = 0.01 BTC
+    'ETH-USDT-SWAP': 0.1,    # 1张 = 0.1 ETH
+    'DOGE-USDT-SWAP': 1000,  # 1张 = 1000 DOGE
+    'SOL-USDT-SWAP': 1,      # 1张 = 1 SOL
+    'BNB-USDT-SWAP': 10,     # 1张 = 10 BNB
+    'XRP-USDT-SWAP': 10,     # 1张 = 10 XRP
+}
+
 # ===== 基础工具 =====
 
 def _sign(ts: str, method: str, path: str, body: str = '') -> str:
@@ -355,7 +366,9 @@ def validate_oco_order(
         return False, f'SL={sl_pct:.2%}太小,容易被震荡扫出', {'sl_pct': sl_pct}
     
     # 3. 仓位价值检查
-    position_value = sz * entry_price
+    # sz是合约张数，需要乘以合约乘数得到实际币数量
+    multiplier = CONTRACT_MULTIPLIER.get(instId, 1)
+    position_value = sz * entry_price * multiplier
     if position_value < min_size:
         return False, f'仓位价值${position_value:.2f}<最低${min_size}', {
             'position_value': position_value, 'min_size': min_size
@@ -398,7 +411,7 @@ def check_existing_oco_orders(instId: str) -> Tuple[bool, str]:
     
     Returns: (has_active, order_info)
     """
-    data = okx_req('GET', '/api/v5/trade/orders-algo-pending')
+    data = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={instId}&ordType=oco')
     if data.get('code') != '0':
         return False, ''
     
