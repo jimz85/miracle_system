@@ -463,20 +463,34 @@ def load_treasury():
     return {
         'equity': 100000, 'hourly_snapshot': 100000, 'hourly_snapshot_time': now[:10],
         'daily_snapshot': 100000, 'daily_snapshot_time': now[:10],
-        'tier': 'normal', 'consecutive_loss_hours': 0, 'last_update': now
+        'tier': 'normal', 'consecutive_loss_hours': 0,
+        'consecutive_win_hours': 0, 'last_update': now
     }
 
 def save_treasury(state):
     # P0 Fix: 确保 daily_snapshot 在新的一天被重置
-    # 即使 last_update 是今天（如15:25运行），也要检查 daily_snapshot_time
-    # 如果 daily_snapshot_time 不是今天，重置 daily_snapshot
     from datetime import date as date_cls
     today = str(date_cls.today())
     ds_time = state.get('daily_snapshot_time', '')
     if ds_time and not ds_time.startswith(today):
-        # 新的一天：用当前权益初始化日快照
         state['daily_snapshot'] = state.get('equity', state.get('daily_snapshot'))
-        state['daily_snapshot_time'] = state.get('last_update', '')[:10]  # YYYY-MM-DD
+        state['daily_snapshot_time'] = state.get('last_update', '')[:10]
+
+    # V6-3 Fix: Treasury tier 降级机制——连续盈利时逐步降级
+    current_tier = state.get('tier', 'normal')
+    if current_tier != 'normal':
+        # 追踪连续盈利小时数（由调用方在record_trade_outcome中更新）
+        consecutive_win_hours = state.get('consecutive_win_hours', 0)
+        if consecutive_win_hours >= 3:
+            # 连续3小时盈利，降一级
+            tier_order = ['normal', 'caution', 'critical', 'suspended']
+            idx = tier_order.index(current_tier) if current_tier in tier_order else 0
+            if idx > 0:
+                old_tier = state['tier']
+                state['tier'] = tier_order[idx - 1]
+                state['consecutive_win_hours'] = 0  # 重置计数器
+                logger.info(f"Tier降级: {old_tier}→{state['tier']} (连续{consecutive_win_hours}h盈利)")
+
     atomic_write_json(TREASURY_FILE, state)
 
 # ===== 数据获取 =====
@@ -529,7 +543,9 @@ def get_positions():
     positions = []
     for raw in data.get('data', []):
         notional = safe_float(raw.get('notionalUsd'), 0)
-        if notional > 1:
+        # V6-4 Fix: 移除notional>1过滤，改为>0以包含所有有效持仓
+        # 低价币种$1可能对应大量合约，过滤会留下僵尸仓位
+        if notional > 0:
             positions.append({
                 'instId': raw.get('instId'),
                 'side': raw.get('posSide'),  # 'long' or 'short'

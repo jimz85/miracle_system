@@ -562,16 +562,25 @@ class ReflectionImprover:
             if len(lines) < 3:
                 return
 
-            data_lines = lines[-200:]
-            shames = []
-            returns = []
-            for line in data_lines:
+            # 解析TSV，使用header映射列位置，避免硬编码索引
+            header = lines[1] if len(lines) > 1 else ""
+            col_map = {}
+            if header:
+                for idx, col_name in enumerate(header.split('\t')):
+                    col_map[col_name.strip()] = idx
+            # 查找return和sharpe列
+            ret_col = col_map.get('return') or col_map.get('total_return') or col_map.get('avg_return')
+            sh_col = col_map.get('sharpe') or col_map.get('sharpe_ratio')
+            if ret_col is None or sh_col is None:
+                logger.debug(f"TSV header缺少return/sharpe列，跳过IC权重更新")
+                return
+            for line in lines[2:][-200:]:  # skip 2 header rows, use last 200 data rows
                 cols = line.split('\t')
-                if len(cols) < 5:
+                if len(cols) <= max(ret_col, sh_col):
                     continue
                 try:
-                    shames.append(float(cols[4]))
-                    returns.append(float(cols[3]))
+                    shames.append(float(cols[sh_col]))
+                    returns.append(float(cols[ret_col]))
                 except Exception:
                     continue
 
