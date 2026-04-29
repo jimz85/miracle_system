@@ -295,8 +295,9 @@ def save_ic_weights(weights):
     atomic_write_json(IC_WEIGHTS_FILE, data)
 
 DEFAULT_WEIGHTS = {
-    'RSI': 0.15, 'ADX': 0.15, 'Bollinger': 0.30,
-    'Vol': 0.10, 'MACD': 0.25, 'BTC': 0.16, 'Gemma': 0.14
+    # Normalized to sum=1.0: RSI=0.12, ADX=0.12, Bollinger=0.24, Vol=0.08, MACD=0.20, BTC=0.13, Gemma=0.11
+    'RSI': 0.12, 'ADX': 0.12, 'Bollinger': 0.24,
+    'Vol': 0.08, 'MACD': 0.20, 'BTC': 0.13, 'Gemma': 0.11
 }
 
 def voting_vote(factors: dict, weights: dict) -> dict:
