@@ -634,9 +634,13 @@ def _rule_based_vote(rsi, adx, bb_pos):
     elif rsi > 60:
         score -= 0.15
     
-    # ADX打分：趋势强度（不看方向，只看强度）
-    if adx > 25:
-        score += 0.05  # 强趋势确认
+    # ADX打分：趋势强度（P3 Fix: 与voting_vote主路径对齐）
+    # 主路径: ADX>30→adx_vote=1 (贡献0.12), ADX>22→0.5(贡献0.06)
+    # fallback: ADX>30→+0.10, ADX>22→+0.05, ADX<15→-0.05
+    if adx > 30:
+        score += 0.10  # 强趋势确认（与主路径0.12可比）
+    elif adx > 22:
+        score += 0.05  # 中等趋势
     elif adx < 15:
         score -= 0.05  # 震荡市场，谨慎
     
