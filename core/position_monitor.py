@@ -79,12 +79,23 @@ class PositionMonitor:
                 
                 if side == "long":
                     # 多头：结构止损 = 最高价 - 1.5*ATR（追踪高点）
-                    struct_stop = current_price - atr_stop_distance
+                    # 跟踪运行最高价，不回头
+                    highest_price = trade.get('highest_price', entry_price)
+                    if current_price > highest_price:
+                        trade['highest_price'] = current_price
+                        highest_price = current_price
+                    struct_stop = highest_price - atr_stop_distance
                     if struct_stop > stop_loss:  # 只跟踪不回头
                         if current_price <= struct_stop:
                             return True, "structure"
                 else:  # short
-                    struct_stop = current_price + atr_stop_distance
+                    # 空头：结构止损 = 最低价 + 1.5*ATR（追踪低点）
+                    # 跟踪运行最低价，不回头
+                    lowest_price = trade.get('lowest_price', entry_price)
+                    if current_price < lowest_price:
+                        trade['lowest_price'] = current_price
+                        lowest_price = current_price
+                    struct_stop = lowest_price + atr_stop_distance
                     if struct_stop < stop_loss:  # 只跟踪不回头
                         if current_price >= struct_stop:
                             return True, "structure"

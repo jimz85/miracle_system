@@ -362,7 +362,7 @@ def calc_wallet_metrics() -> Dict[str, float]:
     """
     logger.warning("calc_wallet_metrics() called - STUB implementation returning zeros. Weight contribution disabled.")
     return {
-        "holder_concentration": 0.0  # 持币地址集中度
+        "holder_concentration": 0.5  # 持币地址集中度 (0.5 = 50 neutral)
     }
 
 def calc_news_sentiment() -> float:
@@ -401,7 +401,6 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
     plus_di = adx_data["plus_di"]
     minus_di = adx_data["minus_di"]
     macd_data = calc_macd(closes)
-    macd_data["macd"]
     signal = macd_data["signal"]
     hist = macd_data["histogram"]
     atr = calc_atr(highs, lows, closes)
@@ -796,13 +795,22 @@ def check_stops(position: Dict, current_price: float,
             atr_stop_distance = atr * 1.5
         
         if direction == "long":
-            # 多头：结构止损 = 当前价 - 1.5*ATR（追踪高点，只跟踪不回头）
-            struct_stop = current_price - atr_stop_distance
+            # 多头：结构止损 = 最高价 - 1.5*ATR（追踪高点，只跟踪不回头）
+            highest = position.get("highest_price", entry_price)
+            if current_price > highest:
+                position["highest_price"] = current_price
+                highest = current_price
+            struct_stop = highest - atr_stop_distance
             if struct_stop > stop_loss:  # 只跟踪不回头
                 if current_price <= struct_stop:
                     return True, "structure"
         else:  # short
-            struct_stop = current_price + atr_stop_distance
+            # 空头：结构止损 = 最低价 + 1.5*ATR（追踪低点，只跟踪不回头）
+            lowest = position.get("lowest_price", entry_price)
+            if current_price < lowest:
+                position["lowest_price"] = current_price
+                lowest = current_price
+            struct_stop = lowest + atr_stop_distance
             if struct_stop < stop_loss:  # 只跟踪不回头
                 if current_price >= struct_stop:
                     return True, "structure"
@@ -932,12 +940,24 @@ def update_factor_weights(trade_history: List[Trade], use_ic: bool = True) -> Di
         for key in factors:
             if "weight" in factors[key]:
                 factors[key]["weight"] *= 0.5
+        # Normalize weights to sum to 1.0
+        total = sum(f["weight"] for f in factors.values() if "weight" in f)
+        if total > 0:
+            for key in factors:
+                if "weight" in factors[key]:
+                    factors[key]["weight"] /= total
         logger.warning("Factor weights reduced by 50% due to low win rate")
     elif wins == len(recent):
         # 全胜，加权+10%，上限1.0
         for key in factors:
             if "weight" in factors[key]:
                 factors[key]["weight"] = min(factors[key]["weight"] * 1.1, 1.0)
+        # Normalize weights to sum to 1.0
+        total = sum(f["weight"] for f in factors.values() if "weight" in f)
+        if total > 0:
+            for key in factors:
+                if "weight" in factors[key]:
+                    factors[key]["weight"] /= total
         logger.info("Factor weights increased by 10% due to winning streak (capped at 1.0)")
 
     return factors

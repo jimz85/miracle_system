@@ -574,7 +574,7 @@ class TestFactorWeightUpdate:
     """Factor weight update tests"""
 
     def test_update_low_win_rate(self):
-        """Low win rate should reduce weights"""
+        """Low win rate should halve weights then normalize to sum=1.0"""
         from datetime import datetime
         recent_trades = [
             Trade(
@@ -588,13 +588,13 @@ class TestFactorWeightUpdate:
             )
             for i in range(5)
         ]
-        # use_ic=False returns nested dict format: {'price_momentum': {'weight': 0.6}}
         weights = update_factor_weights(recent_trades, use_ic=False)
-        # Weights should be reduced (price_momentum['weight'] < 0.6)
-        assert weights["price_momentum"]["weight"] < 0.6
+        # Weights should be halved then normalized to sum=1.0
+        total = sum(f["weight"] for f in weights.values())
+        assert abs(total - 1.0) < 1e-9, f"Weights should sum to 1.0, got {total}"
 
     def test_update_high_win_rate(self):
-        """High win rate should increase weights"""
+        """High win rate should boost weights then normalize to sum=1.0"""
         from datetime import datetime
         recent_trades = [
             Trade(
@@ -608,10 +608,10 @@ class TestFactorWeightUpdate:
             )
             for i in range(5)
         ]
-        # use_ic=False returns nested dict format: {'price_momentum': {'weight': 0.6}}
         weights = update_factor_weights(recent_trades, use_ic=False)
-        # Weights should be increased (price_momentum['weight'] > 0.6)
-        assert weights["price_momentum"]["weight"] > 0.6
+        # Weights should be boosted by 1.1x then normalized to sum=1.0
+        total = sum(f["weight"] for f in weights.values())
+        assert abs(total - 1.0) < 1e-9, f"Weights should sum to 1.0, got {total}"
 
     def test_update_insufficient_data(self):
         """Should return current weights with insufficient data"""
