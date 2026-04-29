@@ -37,10 +37,10 @@ def _sign(ts: str, method: str, path: str, body: str = '') -> str:
     mac = hmac.new(secret.encode(), msg.encode(), hashlib.sha256)
     return base64.b64encode(mac.digest()).decode()
 
-def okx_req(method: str, path: str, body: str = '', api_key: str = None, 
-            secret: str = None, passphrase: str = None) -> dict:
+def okx_req(method: str, path: str, body: str = '', api_key: str = None,
+            secret: str = None, passphrase: str = None, retries: int = 3) -> dict:
     """
-    通用的 OKX API 请求
+    通用的 OKX API 请求，带重试逻辑
     返回 parsed JSON 或 {'error': ...}
     """
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(time.time() * 1000) % 1000)
@@ -57,11 +57,28 @@ def okx_req(method: str, path: str, body: str = '', api_key: str = None,
         'Content-Type': 'application/json',
         'x-simulated-trading': '1' if flag == '1' else '0',
     }
-    try:
-        r = requests.request(method, BASE_URL + path, headers=headers, data=body, timeout=10)
-        return r.json()
-    except Exception as e:
-        return {'error': str(e)}
+    last_result = None
+    for attempt in range(retries):
+        try:
+            r = requests.request(method, BASE_URL + path, headers=headers, data=body, timeout=10)
+            last_result = r
+            if r.status_code == 429 or r.status_code >= 500:
+                # Rate limited or server error - retry with backoff
+                wait = 2 ** attempt
+                time.sleep(wait)
+                continue
+            return r.json()
+        except requests.exceptions.Timeout:
+            last_result = None
+            wait = 2 ** attempt
+            time.sleep(wait)
+            continue
+        except Exception as e:
+            return {'error': str(e)}
+    # Max retries exceeded
+    if last_result is not None:
+        return last_result.json()
+    return {'code': '99999', 'msg': 'Max retries exceeded'}
 
 
 # ═══════════════════════════════════════════════════════════

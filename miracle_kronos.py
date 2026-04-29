@@ -989,6 +989,24 @@ def close_position(symbol: str, reason: str = "signal",
     data = okx_req('POST', '/api/v5/trade/order', body)
     if data.get('code') == '0':
         logger.info(f"[{symbol}] 平仓成功 ({reason})")
+
+        # P0 Fix: Cancel any active OCO orders for this symbol after closing position
+        try:
+            # Query pending OCO orders
+            oco_query = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
+            algo_list = oco_query.get('data', [])
+            if algo_list:
+                # Cancel each active OCO order
+                cancel_body = json.dumps([{'algoId': o['algoId'], 'instId': inst_id} for o in algo_list])
+                cancel_result = okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
+                if cancel_result.get('code') == '0':
+                    logger.info(f"[{symbol}] 取消OCO订单成功 ({len(algo_list)}个)")
+                else:
+                    logger.warning(f"[{symbol}] 取消OCO订单失败: {cancel_result.get('msg', 'unknown')}")
+            else:
+                logger.info(f"[{symbol}] 无待取消的OCO订单")
+        except Exception as e:
+            logger.warning(f"[{symbol}] 取消OCO订单异常: {e}")
     else:
         logger.warning(f"[{symbol}] 平仓失败: {data.get('msg', 'unknown')}")
     return data
@@ -1505,6 +1523,9 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     # 仓位管理 (融合OKX实时+本地记录)
     position_decisions = []
 
+    # Build lookup from local_trades for dynamic SL/TP
+    local_trade_by_sym = {t.get('coin', ''): t for t in local_trades}
+
     # 1. OKX实时持仓检查
     for pos in positions:
         sym = pos['instId'].replace('-USDT-SWAP', '')
@@ -1513,14 +1534,33 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         if current == 0:
             current = entry
 
-        if pos['side'] == 'long':
+        pos_side = pos.get('side', 'long')
+        if pos_side == 'long':
             pnl_pct = (current - entry) / entry
         else:
             pnl_pct = (entry - current) / entry
 
-        if pnl_pct <= -SL_PCT:
+        # Try to get dynamic SL/TP from local_trade record
+        local_trade = local_trade_by_sym.get(sym, {})
+        trade_sl = local_trade.get('sl_price', 0)
+        trade_tp = local_trade.get('tp_price', 0)
+
+        if trade_sl > 0 and trade_tp > 0:
+            # Use actual SL/TP price for monitoring
+            if pos_side == 'long':
+                sl_triggered = current <= trade_sl
+                tp_triggered = current >= trade_tp
+            else:
+                sl_triggered = current >= trade_sl
+                tp_triggered = current <= trade_tp
+        else:
+            # Fallback to hardcoded percentages
+            sl_triggered = pnl_pct <= -SL_PCT
+            tp_triggered = pnl_pct >= TP_PCT
+
+        if sl_triggered:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
-        elif pnl_pct >= TP_PCT:
+        elif tp_triggered:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
 
     # 2. 本地记录持仓追踪
@@ -1588,9 +1628,20 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     if current >= trailing_sl:
                         position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(价格回撤{(current - peak_price)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
 
-        if pnl_pct <= -SL_PCT:
+        # Get dynamic SL/TP from trade record (ATR-based)
+        trade_sl = trade.get('sl_price', 0)
+        trade_tp = trade.get('tp_price', 0)
+        # Use actual SL/TP price for monitoring instead of hardcoded percentages
+        if direction == 'long':
+            sl_triggered = current <= trade_sl if trade_sl > 0 else (pnl_pct <= -SL_PCT)
+            tp_triggered = current >= trade_tp if trade_tp > 0 else (pnl_pct >= TP_PCT)
+        else:
+            sl_triggered = current >= trade_sl if trade_sl > 0 else (pnl_pct <= -SL_PCT)
+            tp_triggered = current <= trade_tp if trade_tp > 0 else (pnl_pct >= TP_PCT)
+
+        if sl_triggered:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
-        elif pnl_pct >= TP_PCT:
+        elif tp_triggered:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
 
     if local_trades:
@@ -1623,13 +1674,20 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             # sz = 仓位USD / (入场价 × 每张合约的币数量)
             # P1 Fix: 从OKX API获取合约乘数，失败则用硬编码后备
             multiplier = fetch_contract_multiplier(best['symbol'])
-            sz_dollar = equity * POSITION_SIZE_PCT
+            # Dynamic position sizing based on signal strength
+            base_pct = 0.02  # Base 2%
+            score = best.get('score', 0.5)
+            # Score 0.25→1x (2%), Score 0.75→1.5x (3%), Score 1.0→2x (4%)
+            score_multiplier = 1.0 + (score - 0.25) * 2.0  # Normalized
+            score_multiplier = max(1.0, min(2.0, score_multiplier))  # Clamp 1x-2x
+            position_pct = base_pct * score_multiplier
+            sz_dollar = equity * position_pct
             entry = best['entry']
             contract_value_usd = entry * multiplier  # 每张合约的USD价值
             sz = max(1, int(sz_dollar / contract_value_usd))
-            
-            # P1: 集中度检查
-            new_trade_pct = POSITION_SIZE_PCT
+
+            # P1: 集中度检查 (still uses 2% as max)
+            new_trade_pct = min(position_pct, 0.02)  # Cap at 2% maximum
             concentration_allowed, conc_reason, conc_details = check_concentration(
                 symbol=best['symbol'],
                 new_trade_pct=new_trade_pct,
@@ -1648,11 +1706,18 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'vetoed_pattern_keys': vetoed_pattern_keys,
                 }
             
-            # P1: OCO下单 (带equity参数用于验证, leverage=3x)
-            LEVERAGE = 3
+            # P1: OCO下单 (带equity参数用于验证, leverage基于ADX动态)
+            # Dynamic leverage based on trend strength (ADX)
+            adx = best.get('adx', 20)
+            if adx < 20:
+                leverage = 1  # No trend - lowest leverage
+            elif adx < 30:
+                leverage = 2  # Weak trend
+            else:
+                leverage = 3  # Strong trend
             result = place_oco(
                 best['instId'], best['direction'], sz,
-                entry, best['sl'], best['tp'], equity, LEVERAGE
+                entry, best['sl'], best['tp'], equity, leverage
             )
             
             if result.get('code') == '0':
@@ -1671,8 +1736,8 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'coin': best['symbol'],
                     'direction': best['direction'],
                     'entry_price': entry,
-                    'sl_price': entry * (1 - SL_PCT) if best['direction'] == 'long' else entry * (1 + SL_PCT),
-                    'tp_price': entry * (1 + TP_PCT) if best['direction'] == 'long' else entry * (1 - TP_PCT),
+                    'sl_price': entry * (1 - best['sl']) if best['direction'] == 'long' else entry * (1 + best['sl']),
+                    'tp_price': entry * (1 + best['tp']) if best['direction'] == 'long' else entry * (1 - best['tp']),
                     'size_usd': sz_dollar,
                     'score': best['score'],
                     'pattern_key': best['pattern_key'],
