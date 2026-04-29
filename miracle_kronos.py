@@ -336,15 +336,15 @@ def voting_vote(factors: dict, weights: dict) -> dict:
     # 震荡(ADX<20): RSI极端值=均值回归信号
     rsi_vote = 0
     if adx > 25:
-        # 强趋势: RSI在极端区=趋势延续确认
-        if rsi < 25:       # 极度超卖 = 空头力量极强 = 做空确认
-            rsi_vote = -1
-        elif rsi > 75:     # 极度超买 = 多头力量极强 = 做多确认
+        # 强趋势: RSI极端=趋势持续信号(反向回调即是入场机会)
+        if rsi < 25:       # 极度超卖 = 多头机会(回调触底)
             rsi_vote = 1
-        elif rsi < 40:     # 偏超卖 = 空头略强
-            rsi_vote = -0.5
-        elif rsi > 60:     # 偏超买 = 多头略强
+        elif rsi > 75:     # 极度超买 = 空头机会(反弹触顶)
+            rsi_vote = -1
+        elif rsi < 40:     # 偏超卖 = 多头略强
             rsi_vote = 0.5
+        elif rsi > 60:     # 偏超买 = 空头略强
+            rsi_vote = -0.5
         # 中间区域40-60: 等待
     else:
         # 震荡/弱趋势: RSI极端值=均值回归
