@@ -412,11 +412,16 @@ def voting_vote(factors: dict, weights: dict) -> dict:
         rsi_extreme_vote = 1 if extreme == 'long' else -1
         score = weights.get('RSI', 0.15) * rsi_extreme_vote * 7.0  # RSI权重×方向×7倍放大（确保extreme confidence高于普通信号）
         direction = extreme
+        # ADX>30强趋势时，extreme信号也必须与趋势一致
+        if adx > 30:
+            trend_dir = 1 if factors.get('_di_plus', 20) > factors.get('_di_minus', 20) else -1
+            if (direction == 'long' and trend_dir < 0) or (direction == 'short' and trend_dir > 0):
+                direction = 'wait'
+                score = 0
     else:
         # 加权得分
         score = sum(weights.get(k, 0) * v for k, v in votes.items())
         direction = 'long' if score > 0.05 else ('short' if score < -0.05 else 'wait')
-
         # ADX>30强趋势时，方向需与趋势一致
         if adx > 30:
             trend_dir = 1 if factors.get('_di_plus', 20) > factors.get('_di_minus', 20) else -1
@@ -425,8 +430,10 @@ def voting_vote(factors: dict, weights: dict) -> dict:
                 score = 0
 
     # confidence计算：extreme RSI用固定高信心(0.80)，普通信号用score归一化
-    if extreme:
-        conf = 0.80   # RSI<5或>95是最强信号，给最高信心
+    if extreme and direction != 'wait':
+        conf = 0.80   # RSI<5或>95是最强信号，且未被ADX过滤
+    elif direction == 'wait':
+        conf = 0.0    # 被过滤的信号，零信心
     else:
         conf = min(abs(score) / 2.0, 1.0)
     return {'score': score, 'direction': direction, 'votes': votes,
@@ -1029,12 +1036,13 @@ def close_position(symbol: str, reason: str = "signal",
         return {'code': '99999', 'msg': f'无持仓 {symbol}'}
 
     sz = int(pos['sz'])
-    pos_side = pos.get('side', 'long')  # 'long' or 'short'
+    # 兼容OKX API字段('side')和本地历史记录('direction')
+    pos_side = pos.get('side') or pos.get('direction', 'long')
     # 平多: side=sell, 平空: side=buy
     close_side = 'sell' if pos_side == 'long' else 'buy'
 
     # P0 Fix: OKX net mode (default) does NOT accept posSide - causes 400 error
-    # Only include posSide when explicitly in hedge mode
+    # Only include posSide when explicitly in hedge mode (not 'net' or 'long'/'short' from local records)
     body = {
         'instId': inst_id,
         'tdMode': 'isolated',
@@ -1042,8 +1050,8 @@ def close_position(symbol: str, reason: str = "signal",
         'ordType': 'market',
         'sz': str(sz),
     }
-    # Only add posSide if explicitly provided AND not 'net' (hedge mode)
-    if pos_side and pos_side not in ('net', None, ''):
+    # posSide only for hedge mode (not for net mode and not for local record 'long'/'short')
+    if pos_side and pos_side not in ('net', 'long', 'short', None, ''):
         body['posSide'] = pos_side
     body = json.dumps(body)
     data = okx_req('POST', '/api/v5/trade/order', body)
