@@ -268,12 +268,17 @@ class Executor:
 
         logging.info(f"执行信号: {symbol} {side} 杠杆={leverage}x")
 
-        # Step 1: 检查账户余额（API优先，失败时使用模拟）
-        balance = self.active_client.get_balance()
+        # Step 1: 检查账户余额（API失败时禁止交易）
+        try:
+            balance = self.active_client.get_balance()
+        except ConnectionError:
+            logging.error("获取余额失败，禁止交易")
+            self.trigger_emergency_stop("余额API ConnectionError")
+            return None
+        
         if balance["available"] <= 0:
-            # 使用模拟余额
-            logging.warning("无法获取真实余额，使用模拟余额 $100,000")
-            balance = {"available": 100000.0, "total": 100000.0, "currency": "USDT"}
+            logging.error(f"余额不足: {balance['available']}, 禁止交易")
+            return None
 
         # Step 2: 计算合约数量 (如果未指定)
         if position_size <= 0:
@@ -415,6 +420,7 @@ class Executor:
             # 获取当前价格
             current_price = self.active_client.get_ticker(symbol)
             if current_price is None:
+                logging.warning(f"⚠️ 无法获取 {symbol} 价格 ({symbol} 监控跳过)")
                 continue
 
             # 使用PositionMonitor检查是否需要平仓（传入ATR用于结构止损）
@@ -435,7 +441,11 @@ class Executor:
                 logging.info(f"移动保本: {trade['trade_id']} 新止损={new_stop}")
 
     def _close_trade(self, trade: Dict, reason: str, current_price: float, hold_hours: float):
-        """平仓处理"""
+        """平仓处理
+        
+        Race condition fix: 取消OCO订单 -> 等待确认 -> 执行平仓
+        如果平仓时发现仓位已平(可能被OCO触发)，则跳过并记录
+        """
         trade_id = trade["trade_id"]
         symbol = trade["symbol"]
         stop_loss = trade["stop_loss"]
@@ -444,17 +454,32 @@ class Executor:
         # 计算PNL
         pnl = self.position_monitor.calculate_pnl(trade, current_price)
 
-        # 取消OCO条件单（如果存在）
+        # ===== OCO race condition fix: 先取消OCO订单 =====
         if algo_id and self.active_client.exchange == "okx":
             try:
                 inst_id = symbol.replace("-USDT", "-USDT-SWAP") if "-SWAP" not in symbol else symbol
                 self.active_client.cancel_algo_order(inst_id, algo_id)
                 logging.info(f"已取消OCO条件单: {algo_id}")
+                # 等待取消确认，避免race condition
+                time.sleep(0.3)
             except Exception as e:
                 logging.warning(f"取消OCO条件单失败: {e}")
 
+        # ===== 检查是否已被OCO平仓（仓位可能已关闭）=====
         # 执行平仓
         close_result = self.active_client.close_position(symbol)
+        
+        # 如果平仓返回错误，可能是仓位已被OCO关闭
+        if close_result is None or close_result.get("status") == "error":
+            # 检查是否是"仓位已平"的情况（错误信息中通常包含position closed等字样）
+            error_msg = str(close_result.get("message", "")) if close_result else ""
+            if "position" in error_msg.lower() and "empty" in error_msg.lower() or "closed" in error_msg.lower():
+                logging.info(f"仓位已被OCO/条件单关闭，跳过本地平仓: {trade_id}")
+                self.trade_logger.log_exit(trade_id, reason + "_oco_triggered", pnl, hold_hours)
+                return
+            logging.error(f"平仓失败: {trade_id}")
+            self.notifier.send_alert("平仓失败", f"{symbol} 平仓失败，请人工处理", "error")
+            return
 
         if close_result and close_result.get("status") != "error":
             # 记录出场价格和滑点
