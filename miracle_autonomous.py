@@ -136,6 +136,7 @@ class LoopState:
             "kept": self.kept_count,
             "discarded": self.discarded_count,
             "crashed": self.crashed_count,
+            "data_loaded": self.data_loaded,
             "market_regime": self.market_regime,
             "strategy_quality_score": self.strategy_quality_score,
         }
@@ -153,6 +154,7 @@ class LoopState:
         state.kept_count = d.get("kept", 0)
         state.discarded_count = d.get("discarded", 0)
         state.crashed_count = d.get("crashed", 0)
+        state.data_loaded = d.get("data_loaded", False)
         state.market_regime = d.get("market_regime", "unknown")
         state.strategy_quality_score = d.get("strategy_quality_score", 0.5)
         if "best_config" in d and d["best_config"]:
@@ -939,17 +941,19 @@ def main():
         if state_file.exists():
             with open(state_file) as f:
                 saved_state = json.load(f)
-            logger.info(f"[main] 恢复状态: iteration={saved_state.get('iteration')}")
-            # Restore state fields
-            loop.state.iteration = saved_state.get('iteration', 0)
-            loop.state.best_sharpe = saved_state.get('best_sharpe', 0)
-            # Restore best_config if saved
-            best_config_path = RESULTS_DIR / "best_config.json"
-            if best_config_path.exists():
-                with open(best_config_path) as f:
-                    best_data = json.load(f)
-                loop.state.best_config = StrategyConfig.from_dict(best_data)
-                logger.info(f"[main] 恢复best_config: sharpe={loop.state.best_sharpe}")
+            # Use from_dict for complete restoration
+            restored = LoopState.from_dict(saved_state)
+            loop.state.iteration = restored.iteration
+            loop.state.best_sharpe = restored.best_sharpe
+            loop.state.kept_count = restored.kept_count
+            loop.state.discarded_count = restored.discarded_count
+            loop.state.crashed_count = restored.crashed_count
+            loop.state.market_regime = restored.market_regime
+            loop.state.strategy_quality_score = restored.strategy_quality_score
+            loop.state.stage = restored.stage
+            loop.state.data_loaded = restored.data_loaded
+            loop.state.best_config = restored.best_config
+            logger.info(f"[main] 恢复状态: iteration={loop.state.iteration}, best_sharpe={loop.state.best_sharpe}")
 
     best_config = loop.run(
         n_iterations=args.experiments,

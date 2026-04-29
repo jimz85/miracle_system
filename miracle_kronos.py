@@ -23,7 +23,7 @@ import argparse
 import json
 import logging
 import os
-import sys
+import threading
 import time
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -299,15 +299,15 @@ def load_ic_weights():
             w = d.get('weights', {})
             if w and sum(w.values()) > 0:
                 return w
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"get_ic_adjusted_weights: 读取KRONOS_IC_FILE失败: {ex}")
     if IC_WEIGHTS_FILE.exists():
         try:
             with open(IC_WEIGHTS_FILE) as f:
                 d = json.load(f)
                 return d.get('weights', DEFAULT_WEIGHTS)
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"get_ic_adjusted_weights: 读取IC_WEIGHTS_FILE失败: {ex}")
     return DEFAULT_WEIGHTS.copy()
 
 def save_ic_weights(weights):
@@ -432,8 +432,8 @@ def load_treasury():
     if TREASURY_FILE.exists():
         try:
             return json.load(open(TREASURY_FILE))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"load_treasury: 读取失败，使用默认状态: {ex}")
     from datetime import date, datetime
     now = datetime.now().isoformat()
     return {
@@ -479,8 +479,8 @@ def get_klines(instId, timeframe='1H', limit=100):
                 'close': safe_float(c[4]),
                 'vol': safe_float(c[5]),
             })
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"get_klines: 解析K线失败，跳过该K线: {ex}")
     return parsed if parsed else None
 
 def get_account_balance():
@@ -493,8 +493,8 @@ def get_account_balance():
                 if d.get('ccy') == 'USDT':
                     return safe_float(d.get('eq'), 0)
             return safe_float(data['data'][0].get('totalEq'), 0)
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"get_account_balance: 解析余额失败，返回0: {ex}")
     return 0
 
 def get_positions():
@@ -527,33 +527,39 @@ def get_ticker(instId):
     return 0
 
 # ===== 白名单模式学习 (from Miracle agent_signal.py) =====
+_whitelist_lock = threading.Lock()
 _whitelist_cache = {'timestamp': 0, 'data': None, 'ttl': 5}  # 5-second TTL cache
 
 def load_whitelist():
     import time
     now = time.time()
-    if _whitelist_cache['data'] is not None and (now - _whitelist_cache['timestamp']) < _whitelist_cache['ttl']:
-        return _whitelist_cache['data']
+    with _whitelist_lock:
+        if _whitelist_cache['data'] is not None and (now - _whitelist_cache['timestamp']) < _whitelist_cache['ttl']:
+            return _whitelist_cache['data']
     wl_file = STATE_DIR / 'whitelist.json'
     if wl_file.exists():
         try:
             data = json.load(open(wl_file))
             # 确保blacklist始终为set
             data['blacklist'] = set(data.get('blacklist', []))
-            _whitelist_cache['data'] = data
-            _whitelist_cache['timestamp'] = now
+            with _whitelist_lock:
+                _whitelist_cache['data'] = data
+                _whitelist_cache['timestamp'] = now
             return data
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"load_whitelist: 读取白名单失败，使用默认配置: {e}")
     data = {'patterns': {}, 'blacklist': set()}
-    _whitelist_cache['data'] = data
-    _whitelist_cache['timestamp'] = now
+    with _whitelist_lock:
+        _whitelist_cache['data'] = data
+        _whitelist_cache['timestamp'] = now
     return data
 
 def save_whitelist(wl):
-    _whitelist_cache['data'] = None  # invalidate cache
+    with _whitelist_lock:
+        _whitelist_cache['data'] = None  # invalidate cache
     atomic_write_json(STATE_DIR / 'whitelist.json', {'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])})
 
+_gemma_cache_lock = threading.Lock()
 Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
 
 def _rule_based_vote(rsi, adx, bb_pos):
@@ -609,14 +615,15 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, di_plus=None, di_minus=N
 
     # 读取缓存 (每币独立)
     now_bucket = int(_time.time() / cache_ttl)
-    if cache_file.exists():
-        try:
-            all_cache = json.load(open(cache_file))
-            entry = all_cache.get(symbol, {})
-            if entry.get('bucket') == now_bucket:
-                return entry.get('vote', 0)
-        except Exception:
-            pass
+    with _gemma_cache_lock:
+        if cache_file.exists():
+            try:
+                all_cache = json.load(open(cache_file))
+                entry = all_cache.get(symbol, {})
+                if entry.get('bucket') == now_bucket:
+                    return entry.get('vote', 0)
+            except Exception as e:
+                logger.debug(f"gemma_cache_read: 读取缓存失败，跳过缓存: {e}")
 
     # ========== 职业操盘手prompt格式 (参考gemma4_central_decision) ==========
     # 判断趋势方向
@@ -713,8 +720,9 @@ confidence表示你对方向判断的确信程度：
                     # 解析失败 → 使用规则回退
                     vote = _rule_based_vote(rsi, adx, bb_pos)
                     failure_type = 'parse'
-        except Exception:
+        except Exception as ex:
             # 解析异常 → 使用规则回退
+            logger.debug(f" Gemma解析异常，使用规则回退: {ex}")
             vote = _rule_based_vote(rsi, adx, bb_pos)
             failure_type = 'parse'
 
@@ -723,8 +731,9 @@ confidence表示你对方向判断的确信程度：
         vote = _rule_based_vote(rsi, adx, bb_pos)
         failure_type = 'timeout'
 
-    except Exception:
+    except Exception as ex:
         # 其他异常 → 使用规则回退
+        logger.debug(f" Gemma调用异常，使用规则回退: {ex}")
         vote = _rule_based_vote(rsi, adx, bb_pos)
         failure_type = 'error'
 
@@ -763,14 +772,15 @@ confidence表示你对方向判断的确信程度：
 
     # 写入每币缓存
     if failure_type is None:
-        all_cache = {}
-        if cache_file.exists():
-            try:
-                all_cache = json.load(open(cache_file))
-            except Exception:
-                pass
-        all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100] if 'output' in dir() else ''}
-        atomic_write_json(cache_file, all_cache)
+        with _gemma_cache_lock:
+            all_cache = {}
+            if cache_file.exists():
+                try:
+                    all_cache = json.load(open(cache_file))
+                except Exception as e:
+                    logger.debug(f"gemma_cache_write: 读取现缓存失败: {e}")
+            all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100] if 'output' in dir() else ''}
+            atomic_write_json(cache_file, all_cache)
 
     return vote
 
@@ -815,8 +825,8 @@ def get_open_trades():
         try:
             all_trades = json.load(open(TRADES_FILE))
             return [t for t in all_trades if t.get('status') == 'OPEN']
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"get_open_trades: 读取失败，返回空列表: {ex}")
     return []
 
 def update_trade_pnl(trade, current_price):
@@ -837,8 +847,8 @@ def load_trades():
     if TRADES_FILE.exists():
         try:
             return json.load(open(TRADES_FILE))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"load_trades: 读取失败，返回空列表: {ex}")
     return []
 
 def save_trades(trades):
@@ -1635,7 +1645,8 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                 else:
                     # Fallback to fixed time stop if no klines
                     position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
-        except Exception:
+        except Exception as ex:
+            logger.debug(f"run_scan: 计算持仓时长失败: {ex}")
             trade['age_hours'] = 0
 
         if pnl_pct > 0.03:
@@ -1935,7 +1946,8 @@ def main():
                 treasury['daily_snapshot'] = equity
                 treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
                 treasury['session_start'] = equity
-        except Exception:
+        except Exception as ex:
+            logger.debug(f"更新treasury快照失败: {ex}")
             treasury['hourly_snapshot'] = equity
             treasury['daily_snapshot'] = equity
             treasury['hourly_snapshot_time'] = treasury.get('last_update', '')[:10]

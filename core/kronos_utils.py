@@ -456,7 +456,10 @@ def check_existing_oco_orders(instId: str) -> Tuple[bool, str]:
     """
     data = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={instId}&ordType=oco')
     if data.get('code') != '0':
-        return False, ''
+        logger.warning(f"check_existing_oco_orders: OKX API error for {instId}: {data.get('msg', data)}")
+        # Return True (has active orders) to BLOCK new OCO placement when API is uncertain
+        # This is safer than potentially creating duplicate OCOs
+        return True, f"API_ERROR: {data.get('msg', 'unknown')}"
     
     orders = data.get('data', [])
     for order in orders:
