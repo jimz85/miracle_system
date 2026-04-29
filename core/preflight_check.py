@@ -237,8 +237,10 @@ def _check_price_precision(client, symbol: str, price: float) -> CheckResult:
         )
     
     tick_sz = info.get("tick_sz", 0.1)
-    # 检查价格是否是对tickSz的整数倍
-    precision_ok = abs(price % tick_sz) < 1e-9 or abs(tick_sz - (price % tick_sz)) < 1e-9
+    # 检查价格是否是对tickSz的整数倍（使用整数运算避免浮点精度问题）
+    price_ticks = round(price / tick_sz)
+    adjusted_price = price_ticks * tick_sz
+    precision_ok = abs(price - adjusted_price) < 1e-9
     
     # 调整到合法精度
     if not precision_ok:

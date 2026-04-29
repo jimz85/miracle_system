@@ -545,7 +545,42 @@ def save_whitelist(wl):
     with open(STATE_DIR / 'whitelist.json', 'w') as f:
         json.dump({'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])}, f)
 
-Gemma4_TIMEOUT = 30  # gemma4超时30秒，超时跳过不否决
+Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
+
+def _rule_based_vote(rsi, adx, bb_pos):
+    """基于RSI/ADX/布林带的规则化方向投票（当Gemma不可用时使用）
+    返回0.0-1.0：1.0=强烈LONG，0.0=强烈SHORT，0.5=中立
+    """
+    score = 0.5  # 从中立开始
+    
+    # RSI打分：超卖偏向多，超买偏向空
+    if rsi < 30:
+        score += 0.25  # 严重超卖 → 多
+    elif rsi < 40:
+        score += 0.15
+    elif rsi > 70:
+        score -= 0.25  # 严重超买 → 空
+    elif rsi > 60:
+        score -= 0.15
+    
+    # ADX打分：趋势强度（不看方向，只看强度）
+    if adx > 25:
+        score += 0.05  # 强趋势确认
+    elif adx < 15:
+        score -= 0.05  # 震荡市场，谨慎
+    
+    # 布林带打分：价格在低位偏多，高位偏空
+    if bb_pos < 20:
+        score += 0.20  # 价格贴近下轨 → 支撑/偏多
+    elif bb_pos < 35:
+        score += 0.10
+    elif bb_pos > 80:
+        score -= 0.20  # 价格贴近上轨 → 压力/偏空
+    elif bb_pos > 65:
+        score -= 0.10
+    
+    return max(0.0, min(1.0, score))
+
 
 def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
     """调用gemma4获取方向判断，每币独立缓存5分钟
@@ -553,11 +588,11 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
     - 1.0 = 强烈LONG
     - 0.5 = 中立/WAIT
     - 0.0 = 强烈SHORT
-    - 负数 = gemma4否决(超时/异常)
+    - 负数 = gemma4否决(超时/异常)——实际使用时已替换为规则回退
 
     Fallback机制:
-    - 超时30秒 → vote=-1 跳过（不否决）
-    - 解析失败 → vote=0.6
+    - 超时10秒 → 调用_rule_based_vote规则回退
+    - 解析失败 → 调用_rule_based_vote规则回退
     - 连续3次失败 → circuit breaker升级tier
     """
     import time as _time
@@ -657,23 +692,23 @@ confidence表示你对方向判断的确信程度：
                 if 'LONG' in output_upper[:20] or 'SHORT' in output_upper[:20]:
                     vote = 0.6
                 else:
-                    # 解析失败 → vote=0.6
-                    vote = 0.6
+                    # 解析失败 → 使用规则回退
+                    vote = _rule_based_vote(rsi, adx, bb_pos)
                     failure_type = 'parse'
         except Exception:
-            # 解析异常 → vote=0.6
-            vote = 0.6
+            # 解析异常 → 使用规则回退
+            vote = _rule_based_vote(rsi, adx, bb_pos)
             failure_type = 'parse'
 
     except subprocess.TimeoutExpired:
-        # 超时 → vote=-1 跳过（不否决）
-        vote = -1
+        # 超时 → 使用规则回退
+        vote = _rule_based_vote(rsi, adx, bb_pos)
         failure_type = 'timeout'
 
     except Exception:
-        # 其他异常 → vote=-1 跳过
-        vote = -1
-        failure_type = 'timeout'
+        # 其他异常 → 使用规则回退
+        vote = _rule_based_vote(rsi, adx, bb_pos)
+        failure_type = 'error'
 
     # ---- 连续失败追踪 + circuit breaker升级 ----
     treasury = load_treasury()
@@ -1442,6 +1477,9 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             age_hours = (dt.now() - open_dt).total_seconds() / 3600
             trade['age_hours'] = round(age_hours, 1)
             if age_hours > 24:
+                # TODO(atr): 当前使用固定24h时间止损，但1H策略应改为ATR-based：
+                #   监控"过去24小时价格变动 < 0.5×ATR"作为横盘/无趋势的代理指标，
+                #   横盘达到N小时则触发时间止损。后续应实现TIME_STOP_ATR_HOURS参数。
                 position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
         except Exception:
             trade['age_hours'] = 0
