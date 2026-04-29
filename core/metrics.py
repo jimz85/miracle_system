@@ -132,6 +132,7 @@ class TradingMetrics:
             f"{ns}_daily_loss",
             "Daily loss amount"
         )
+        self._last_daily_loss_day: str | None = None  # 跟踪日期用于日重置
         
         # 信号指标
         self.signals_generated = Counter(
@@ -188,9 +189,14 @@ class TradingMetrics:
         self.consecutive_losses.set(consecutive_losses)
     
     def record_daily_loss(self, loss: float):
-        """记录日亏损"""
+        """记录日亏损，自动在新的一天重置"""
         if not self._enabled:
             return
+        today = datetime.now().strftime("%Y-%m-%d")
+        # 新的一天，重置信使
+        if self._last_daily_loss_day and self._last_daily_loss_day != today:
+            self.daily_loss.set(0.0)
+        self._last_daily_loss_day = today
         self.daily_loss.set(loss)
     
     def record_signal(self, symbol: str, direction: str, confidence: float):

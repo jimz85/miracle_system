@@ -198,30 +198,37 @@ FOMC_WINDOW_DAYS = 2
 def is_fomc_window(dt: datetime = None) -> bool:
     """
     检测当前是否处于FOMC窗口期
-    
+
     FOMC窗口期定义：会议日前后各2天（共5天窗口）
     在此期间市场波动性增加，置信度应降低50%
-    
+
     Args:
         dt: 要检查的时间，默认为当前时间
-        
+
     Returns:
         bool: 是否处于FOMC窗口期
     """
     from datetime import timedelta
-    
+
     if dt is None:
         dt = datetime.now()
-    
+
+    # 检查FOMC日期是否已过期，发出警告
+    last_fomc = max(datetime(d[0], d[1], d[2]) for d in KNOWN_FOMC_DATES_2026)
+    if dt > last_fomc + timedelta(days=FOMC_WINDOW_DAYS + 30):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"FOMC日期表已过期（最后日期: {last_fomc.date()}），请更新KNOWN_FOMC_DATES_2026")
+
     # 检查是否在已知FOMC日期的窗口内
     for fomc_date in KNOWN_FOMC_DATES_2026:
         meeting = datetime(fomc_date[0], fomc_date[1], fomc_date[2])
         window_start = meeting - timedelta(days=FOMC_WINDOW_DAYS)
         window_end = meeting + timedelta(days=FOMC_WINDOW_DAYS + 1)  # +1因为end是不包含的
-        
+
         if window_start <= dt < window_end:
             return True
-    
+
     return False
 
 

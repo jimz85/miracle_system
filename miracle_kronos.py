@@ -965,10 +965,10 @@ SCAN_COINS = [
 
 # OKX USDT永续合约乘数（每张合约对应的币数量）
 # 用于计算合约张数: sz = sz_dollar / (entry × multiplier)
-# BTC: 0.01 BTC/张, ETH: 0.1 ETH/张, DOGE: 1000 DOGE/张, SOL: 1 SOL/张, ADA: 100 ADA/张
+# BTC: 0.01 BTC/张, ETH: 0.1 ETH/张, DOGE: 1000 DOGE/张, SOL: 1 SOL/张, ADA: 100 ADA/张, XRP: 10 XRP/张
 CONTRACT_MULTIPLIER = {
     'BTC': 0.01, 'ETH': 0.1, 'SOL': 1, 'DOGE': 1000,
-    'ADA': 100, 'XRP': 1, 'BNB': 10, 'AVAX': 1,
+    'ADA': 100, 'XRP': 10, 'BNB': 10, 'AVAX': 1,
     'LINK': 1, 'DOT': 1,
 }
 
