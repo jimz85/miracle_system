@@ -113,7 +113,7 @@ class StrategyVersionControl:
     def _generate_version_id(self, params: Dict[str, Any]) -> str:
         """生成版本ID"""
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        param_hash = hashlib.md5(json.dumps(params, sort_keys=True).encode()).hexdigest()[:8]
+        param_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:16]
         return f"v{timestamp}-{param_hash}"
     
     def _save_version_file(self, version: StrategyVersion) -> Path:

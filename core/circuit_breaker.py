@@ -193,6 +193,7 @@ class CircuitBreaker:
         self.equity_snapshot = EquitySnapshot()
         self.last_trade_time: float | None = None
         self._last_recovery_check_equity: float = 0.0  # 上次检查时的权益
+        self._cooldown_end_time: float = 0.0  # 冷却结束时间戳
 
     def check_treasury_limits(
         self,
@@ -240,16 +241,29 @@ class CircuitBreaker:
 
         # 5. 构建结果
         can_open = new_tier in [SurvivalTier.NORMAL, SurvivalTier.CAUTION]
+        # 6. 冷却期检查：即使层级允许开仓，冷却期内也不允许
+        import time as _time
+        in_cooldown = False
+        if can_open and self._cooldown_end_time > 0 and _time.time() < self._cooldown_end_time:
+            remaining = self._cooldown_end_time - _time.time()
+            can_open = False
+            in_cooldown = True
+            tier_reason_extra = f" (冷却中，剩余{int(remaining//60)+1}分钟)"
+        else:
+            # 冷却已结束，清除冷却时间戳
+            if self._cooldown_end_time > 0 and _time.time() >= self._cooldown_end_time:
+                self._cooldown_end_time = 0.0
+            tier_reason_extra = ""
         max_position_pct = self._get_max_position_pct(new_tier)
 
         return CircuitBreakerResult(
-            allowed=new_tier not in [SurvivalTier.PAUSED, SurvivalTier.CRITICAL],
+            allowed=can_open,  # allowed reflects cooldown state
             tier=new_tier,
             max_position_pct=max_position_pct,
             can_open=can_open,
             can_close=True,  # 任何层级都可以平仓
             consecutive_losses=self.consecutive_losses,
-            reason=self._get_tier_reason(new_tier, drawdown_pct),
+            reason=self._get_tier_reason(new_tier, drawdown_pct) + tier_reason_extra,
             drawdown_pct=drawdown_pct,
             equity=current_equity
         )
@@ -266,9 +280,15 @@ class CircuitBreaker:
 
         if pnl < 0:
             self.consecutive_losses += 1
+            # 设置冷却时间
+            if self.consecutive_losses >= 3:
+                self._cooldown_end_time = self.last_trade_time + self.cooldown_hours_after_3_losses * 3600
+            elif self.consecutive_losses == 2:
+                self._cooldown_end_time = self.last_trade_time + self.cooldown_hours_after_2_losses * 3600
         else:
-            # 盈利后重置连亏计数
+            # 盈利后重置连亏计数和冷却
             self.consecutive_losses = 0
+            self._cooldown_end_time = 0.0
 
     def _determine_tier(self, drawdown: float) -> SurvivalTier:
         """根据回撤确定生存层"""

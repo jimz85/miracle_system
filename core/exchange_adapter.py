@@ -4,12 +4,14 @@ from __future__ import annotations
 Exchange Adapter - 交易所适配层
 统一OKX/Binance双交易所接口
 """
+import base64
 import hashlib
 import hmac
 import json
 import logging
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -178,7 +180,7 @@ class OKXAdapter(ExchangeAdapter):
         return "okx"
     
     def _sign(self, timestamp: str, method: str, path: str, body: str = "") -> str:
-        """签名"""
+        """签名 - OKX requires base64-encoded HMAC-SHA256"""
         if not self.secret:
             return ""
         message = timestamp + method + path + body
@@ -187,7 +189,8 @@ class OKXAdapter(ExchangeAdapter):
             message.encode(),
             hashlib.sha256
         )
-        return mac.hexdigest()
+        # OKX API requires base64-encoded signature, NOT hex
+        return base64.b64encode(mac.digest()).decode()
     
     def _request(
         self,
@@ -199,27 +202,30 @@ class OKXAdapter(ExchangeAdapter):
     ) -> Dict | None:
         """发送请求"""
         url = self.base_url + path
-        
+
         headers = {
             "Content-Type": "application/json"
         }
-        
+
         if auth and self.api_key:
-            timestamp = str(int(time.time()))
+            # OKX requires ISO8601 with milliseconds, e.g. "2026-04-29T07:30:00.000Z"
+            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(time.time() * 1000) % 1000)
             headers["OK-ACCESS-KEY"] = self.api_key
             headers["OK-ACCESS-TIMESTAMP"] = timestamp
             headers["OK-ACCESS-PASSPHRASE"] = self.passphrase or ""
-            
+            # x-simulated-trading: "1" = simulation, "0" = live
+            headers["x-simulated-trading"] = os.getenv('OKX_FLAG', '1')
+
             body = json.dumps(data) if data else ""
             sign = self._sign(timestamp, method, path, body)
             headers["OK-ACCESS-SIGN"] = sign
-        
+
         try:
             if method == "GET":
                 resp = self._session.get(url, params=params, headers=headers, timeout=10)
             else:
                 resp = self._session.request(method, url, json=data, headers=headers, timeout=10)
-            
+
             resp.raise_for_status()
             return resp.json()
         except Exception as e:

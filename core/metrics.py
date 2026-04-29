@@ -12,6 +12,11 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# 缓存的健康检查ExchangeClient（60秒复用）
+_cached_health_client = None
+_cached_health_client_time = 0.0
+_HEALTH_CLIENT_TTL = 60.0  # 复用60秒
+
 # 尝试导入prometheus_client
 try:
     from prometheus_client import (
@@ -446,12 +451,17 @@ def create_metrics_app():
             components = []
             overall_status = "ok"
             
-            # Check 1: Exchange connectivity (critical)
+            # Check 1: Exchange connectivity (critical) - 复用缓存client
+            global _cached_health_client, _cached_health_client_time
             try:
                 from core.exchange_client import ExchangeClient
                 from core.executor_config import ExecutorConfig
-                config = ExecutorConfig()
-                client = ExchangeClient("okx", config)
+                now = time.time()
+                if _cached_health_client is None or (now - _cached_health_client_time) > _HEALTH_CLIENT_TTL:
+                    config = ExecutorConfig()
+                    _cached_health_client = ExchangeClient("okx", config)
+                    _cached_health_client_time = now
+                client = _cached_health_client
                 balance = client.get_balance()
                 components.append({
                     "name": "exchange_okx",

@@ -85,24 +85,58 @@ def _sign(ts, method, path, body=''):
     return base64.b64encode(hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
 
 def okx_req(method, path, body=''):
+    """OKX API request with retry and exponential backoff."""
     import time as _time
     from datetime import datetime
 
     import requests
-    ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(_time.time() * 1000) % 1000)
-    headers = {
-        'OK-ACCESS-KEY': os.environ.get('OKX_API_KEY', ''),
-        'OK-ACCESS-SIGN': _sign(ts, method, path, body),
-        'OK-ACCESS-TIMESTAMP': ts,
-        'OK-ACCESS-PASSPHRASE': os.environ.get('OKX_PASSPHRASE', ''),
-        'x-simulated-trading': OKX_FLAG,
-        'Content-Type': 'application/json',
-    }
-    try:
-        r = requests.request(method, 'https://www.okx.com' + path, headers=headers, data=body, timeout=10)
-        return r.json()
-    except Exception as e:
-        return {'code': '99999', 'msg': str(e)}
+
+    for attempt in range(3):
+        try:
+            ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(_time.time() * 1000) % 1000)
+            headers = {
+                'OK-ACCESS-KEY': os.environ.get('OKX_API_KEY', ''),
+                'OK-ACCESS-SIGN': _sign(ts, method, path, body),
+                'OK-ACCESS-TIMESTAMP': ts,
+                'OK-ACCESS-PASSPHRASE': os.environ.get('OKX_PASSPHRASE', ''),
+                'x-simulated-trading': OKX_FLAG,
+                'Content-Type': 'application/json',
+            }
+            r = requests.request(method, 'https://www.okx.com' + path, headers=headers, data=body, timeout=10)
+            # Retry on 429 (rate limit) and 5xx (server error)
+            if r.status_code == 429:
+                retry_after = float(r.headers.get('Retry-After', 5))
+                logger.warning(f"OKX rate limited, retrying in {retry_after}s...")
+                _time.sleep(retry_after)
+                continue
+            if r.status_code >= 500 and attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(f"OKX server error {r.status_code}, retrying in {wait}s...")
+                _time.sleep(wait)
+                continue
+            return r.json()
+        except requests.exceptions.Timeout:
+            if attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(f"OKX request timeout, retrying in {wait}s...")
+                _time.sleep(wait)
+                continue
+            return {'code': '99999', 'msg': 'Request timeout after 3 retries'}
+        except requests.exceptions.ConnectionError:
+            if attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(f"OKX connection error, retrying in {wait}s...")
+                _time.sleep(wait)
+                continue
+            return {'code': '99999', 'msg': 'Connection error after 3 retries'}
+        except Exception as e:
+            if attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(f"OKX request error: {e}, retrying in {wait}s...")
+                _time.sleep(wait)
+                continue
+            return {'code': '99999', 'msg': str(e)}
+    return {'code': '99999', 'msg': 'Max retries exceeded'}
 
 # ===== 核心指标计算 =====
 def calc_rsi(prices, period=14):
@@ -119,29 +153,68 @@ def calc_rsi(prices, period=14):
     return 100 - (100 / (1 + rs))
 
 def calc_adx(highs, lows, closes, period=14):
-    if len(closes) < period * 2:
+    """
+    Calculate ADX using Wilder's smoothing (recursive EMA equivalent).
+    Unlike simple SMA which re-averages each window, Wilder's smoothing
+    uses: smoothed = prev * (period-1)/period + current/period
+
+    This produces smoother, less reactive ADX values.
+    """
+    if len(closes) < period * 2 + 1:
         return 20.0, 20.0, 20.0
+
+    # Step 1: Calculate raw TR and DM values
     trs = []
     dm_plus = []
     dm_minus = []
     for i in range(1, len(closes)):
         h, lo = highs[i], lows[i]
-        prev_c = closes[i-1]
+        prev_c = closes[i - 1]
         tr = max(h - lo, abs(h - prev_c), abs(lo - prev_c))
         trs.append(tr)
-        dm_p = max(h - highs[i-1], 0) if i > 0 else 0
-        dm_m = max(lows[i-1] - lo, 0) if i > 0 else 0
-        dm_plus.append(dm_p)
-        dm_minus.append(dm_m)
+        dm_plus.append(max(h - highs[i - 1], 0))
+        dm_minus.append(max(lows[i - 1] - lo, 0))
+
     if len(trs) < period:
         return 20.0, 20.0, 20.0
-    atr = sum(trs[-period:]) / period
+
+    # Step 2: Initialize smoothed ATR, DI+, DI- with SMA of first 'period' values
+    atr = sum(trs[:period]) / period
+    di_plus = sum(dm_plus[:period]) / atr
+    di_minus = sum(dm_minus[:period]) / atr
+
     if atr == 0:
         return 20.0, 20.0, 20.0
-    di_plus = sum(dm_plus[-period:]) / atr
-    di_minus = sum(dm_minus[-period:]) / atr
-    dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100 if (di_plus + di_minus) > 0 else 0
-    return di_plus, di_minus, dx
+
+    # Step 3: Apply Wilder's smoothing for remaining bars
+    dx_values = []
+    for i in range(period, len(trs)):
+        tr = trs[i]
+        dmp = dm_plus[i]
+        dmm = dm_minus[i]
+
+        # Wilder's smoothing: new = prev * (period-1)/period + current/period
+        atr = (atr * (period - 1) + tr) / period
+        di_plus = (di_plus * (period - 1) + dmp / atr * 100) / period if atr > 0 else 0
+        di_minus = (di_minus * (period - 1) + dmm / atr * 100) / period if atr > 0 else 0
+
+        if (di_plus + di_minus) > 0:
+            dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100
+        else:
+            dx = 0
+        dx_values.append(dx)
+
+    if len(dx_values) < period:
+        return 20.0, 20.0, 20.0
+
+    # Step 4: ADX is Wilder smoothed DX
+    adx = sum(dx_values[:period]) / period
+    if len(dx_values) > period:
+        for dx in dx_values[period:]:
+            adx = (adx * (period - 1) + dx) / period
+
+    # Return DI+, DI-, ADX
+    return di_plus, di_minus, adx
 
 def calc_macd(prices, fast=12, slow=26, signal=9):
     if len(prices) < slow + signal:

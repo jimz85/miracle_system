@@ -157,17 +157,81 @@ class EmergencyStopManager:
             logger.error(f"Error during cleanup: {e}")
     
     def _cancel_all_orders(self):
-        """取消所有活跃订单"""
-        logger.info("Cancelling all active orders...")
-        # 这里可以实现实际的取消订单逻辑
-        # 取决于具体的交易平台接口
-        pass
-    
+        """取消所有活跃订单 - 实际通过OKX API取消"""
+        try:
+            import requests
+            import hmac
+            import base64
+            import hashlib
+            from datetime import datetime as dt
+
+            api_key = os.getenv('OKX_API_KEY', '')
+            secret = os.getenv('OKX_SECRET', '')
+            passphrase = os.getenv('OKX_PASSPHRASE', '')
+            flag = os.getenv('OKX_FLAG', '1')
+
+            if not api_key or not secret:
+                logger.warning("OKX credentials not available, skipping order cancellation")
+                return
+
+            # Get all pending algo orders
+            ts = dt.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(__import__('time').time() * 1000) % 1000)
+            msg = ts + 'GET' + '/api/v5/trade/orders-algo-pending?instType=SWAP&ordType=oco,conditional&limit=100'
+            sig = base64.b64encode(hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
+            headers = {
+                'OK-ACCESS-KEY': api_key,
+                'OK-ACCESS-SIGN': sig,
+                'OK-ACCESS-TIMESTAMP': ts,
+                'OK-ACCESS-PASSPHRASE': passphrase,
+                'x-simulated-trading': flag,
+                'Content-Type': 'application/json'
+            }
+            resp = requests.get('https://www.okx.com/api/v5/trade/orders-algo-pending?instType=SWAP&ordType=oco,conditional&limit=100',
+                               headers=headers, timeout=10)
+            data = resp.json()
+
+            if data.get('data'):
+                algo_ids = [{'algoId': o['algoId'], 'instId': o['instId']} for o in data['data']]
+                # Cancel all
+                cancel_body = json.dumps(algo_ids)
+                ts2 = dt.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(__import__('time').time() * 1000) % 1000)
+                msg2 = ts2 + 'POST' + '/api/v5/trade/cancel-algos' + cancel_body
+                sig2 = base64.b64encode(hmac.new(secret.encode(), msg2.encode(), hashlib.sha256).digest()).decode()
+                headers2 = {
+                    'OK-ACCESS-KEY': api_key,
+                    'OK-ACCESS-SIGN': sig2,
+                    'OK-ACCESS-TIMESTAMP': ts2,
+                    'OK-ACCESS-PASSPHRASE': passphrase,
+                    'x-simulated-trading': flag,
+                    'Content-Type': 'application/json'
+                }
+                cancel_resp = requests.post('https://www.okx.com/api/v5/trade/cancel-algos',
+                                          headers=headers2, data=cancel_body, timeout=10)
+                cancel_data = cancel_resp.json()
+                logger.info(f"Cancel all orders result: code={cancel_data.get('code')} msg={cancel_data.get('msg')}")
+            else:
+                logger.info("No pending orders to cancel")
+        except Exception as e:
+            logger.error(f"Error cancelling orders: {e}")
+
     def _notify_systems(self):
-        """通知相关系统"""
-        logger.info("Notifying other systems...")
-        # 这里可以实现通知逻辑（如Feishu、邮件等）
-        pass
+        """通知相关系统 - 发送Feishu告警"""
+        try:
+            import requests
+            webhook = os.getenv('FEISHU_WEBHOOK_URL', '')
+            if not webhook:
+                logger.warning("FEISHU_WEBHOOK_URL not set, skipping notification")
+                return
+            payload = {
+                "msg_type": "text",
+                "content": {
+                    "text": f"🚨 **Emergency Stop Triggered**\nReason: {self._stop_reason or 'N/A'}\nTime: {self._stop_time or 'N/A'}\nTriggered by: {self._stopped_by or 'unknown'}"
+                }
+            }
+            requests.post(webhook, json=payload, timeout=10)
+            logger.info("Feishu notification sent")
+        except Exception as e:
+            logger.error(f"Error sending notification: {e}")
 
 
 # ============================================================

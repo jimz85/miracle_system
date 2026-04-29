@@ -98,7 +98,7 @@ class LLMCache:
     
     def _make_key(self, prompt: str, provider: str, model: str | None = None) -> str:
         """生成缓存键"""
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:32]
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()  # full 64-char hash
         parts = ["llm", provider]
         if model:
             parts.append(model)

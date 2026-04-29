@@ -41,11 +41,13 @@ class TradeLogger:
             self.trades = []
 
     def _save_trades(self):
-        """保存交易记录到文件"""
+        """保存交易记录到文件 - 使用原子写入防止崩溃损坏"""
         os.makedirs(self.config.log_dir, exist_ok=True)
         filepath = f"{self.config.log_dir}/{self.config.trade_log_file}"
-        with open(filepath, "w") as f:
+        tmp_filepath = filepath + ".tmp"
+        with open(tmp_filepath, "w") as f:
             json.dump(self.trades, f, indent=2, default=str)
+        os.replace(tmp_filepath, filepath)  # 原子替换
 
     def log_entry(self, trade_record: Dict) -> str:
         """

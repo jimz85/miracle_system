@@ -41,6 +41,7 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 
 # 缓存（5秒TTL）
 _cache: Dict[str, tuple] = {}
+_MAX_CACHE_SIZE = 500  # 最大缓存条目数，防止内存无限增长
 
 
 def _get_cached(key: str, ttl: float = 5):
@@ -49,11 +50,22 @@ def _get_cached(key: str, ttl: float = 5):
         data, timestamp = _cache[key]
         if time.time() - timestamp < ttl:
             return data
+        del _cache[key]  # 过期数据清理
     return None
 
 
 def _set_cached(key: str, data: Any):
-    """写入缓存"""
+    """写入缓存，带LRU清理防止无限增长"""
+    # 清理过期条目
+    now = time.time()
+    expired = [k for k, (_, ts) in _cache.items() if now - ts >= 300]
+    for k in expired:
+        del _cache[k]
+    # 如果缓存满了，清理最老的条目
+    if len(_cache) >= _MAX_CACHE_SIZE:
+        oldest_keys = sorted(_cache.keys(), key=lambda k: _cache[k][1])[:50]
+        for k in oldest_keys:
+            del _cache[k]
     _cache[key] = (data, time.time())
 
 

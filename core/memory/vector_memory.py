@@ -28,9 +28,9 @@ _EMBEDDING_AVAILABLE = False
 
 try:
     from sentence_transformers import SentenceTransformer
-    _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
     _EMBEDDING_AVAILABLE = True
-    logger.info("sentence_transformers loaded - semantic search ENABLED")
+    logger.info("sentence_transformers loaded - semantic search ENABLED (local_files_only)")
 except ImportError:
     logger.warning(
         "sentence_transformers not available - falling back to keyword matching. "
