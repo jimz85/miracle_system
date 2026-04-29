@@ -410,7 +410,7 @@ def voting_vote(factors: dict, weights: dict) -> dict:
     if extreme and extreme in ('long', 'short'):
         # 极端RSI: 直接用RSI_weight作为信号强度，乘以1.5
         rsi_extreme_vote = 1 if extreme == 'long' else -1
-        score = weights.get('RSI', 0.15) * rsi_extreme_vote * 3.0  # RSI权重×方向×3倍放大
+        score = weights.get('RSI', 0.15) * rsi_extreme_vote * 7.0  # RSI权重×方向×7倍放大（确保extreme confidence高于普通信号）
         direction = extreme
     else:
         # 加权得分
@@ -697,6 +697,7 @@ confidence表示你对方向判断的确信程度：
     failure_type = None  # 'timeout' | 'parse' | None
 
     try:
+        output = ''  # 初始化变量，确保 'output' in dir() 检查始终有效
         import subprocess
         result = subprocess.run(
             ['ollama', 'run', 'gemma4-2b-heretic:latest', prompt],
@@ -714,8 +715,10 @@ confidence表示你对方向判断的确信程度：
             else:
                 # 备选：根据direction关键词判断
                 output_upper = output.upper()[:20]
-                if 'LONG' in output_upper[:20] or 'SHORT' in output_upper[:20]:
-                    vote = 0.6
+                if 'LONG' in output_upper:
+                    vote = 0.6   # 弱LONG
+                elif 'SHORT' in output_upper:
+                    vote = 0.4   # 弱SHORT → (0.4-0.5)*2 = -0.2
                 else:
                     # 解析失败 → 使用规则回退
                     vote = _rule_based_vote(rsi, adx, bb_pos)
@@ -762,7 +765,6 @@ confidence表示你对方向判断的确信程度：
                     # 保存升级后的tier
                     save_treasury(treasury)
 
-        save_treasury(treasury)
     else:
         # 成功 → 重置连续失败计数
         if gemma_fail_count > 0:
