@@ -424,8 +424,13 @@ def voting_vote(factors: dict, weights: dict) -> dict:
                 direction = 'wait'
                 score = 0
 
+    # confidence计算：extreme RSI用固定高信心(0.80)，普通信号用score归一化
+    if extreme:
+        conf = 0.80   # RSI<5或>95是最强信号，给最高信心
+    else:
+        conf = min(abs(score) / 2.0, 1.0)
     return {'score': score, 'direction': direction, 'votes': votes,
-            'confidence': min(abs(score) / 2.0, 1.0), 'extreme': extreme}
+            'confidence': conf, 'extreme': extreme}
 
 # ===== 熔断系统 (from Kronos real_monitor.py) =====
 def load_treasury():
@@ -540,15 +545,26 @@ def load_whitelist():
     if wl_file.exists():
         try:
             data = json.load(open(wl_file))
-            # 确保blacklist始终为set
-            data['blacklist'] = set(data.get('blacklist', []))
+            # 确保blacklist为dict并清洗过期项（7天TTL）
+            raw_bl = data.get('blacklist', {})
+            if isinstance(raw_bl, list):
+                # 旧格式set转dict（无时间戳，视为立即加入）
+                bl_dict = {k: now for k in raw_bl}
+            else:
+                bl_dict = raw_bl
+            # 清除7天前加入的黑名单
+            BL_TTL = 7 * 86400  # 7天秒数
+            bl_dict = {k: t for k, t in bl_dict.items() if now - t < BL_TTL}
+            data['blacklist'] = bl_dict
+            # 确保patterns始终为dict
+            data.setdefault('patterns', {})
             with _whitelist_lock:
                 _whitelist_cache['data'] = data
                 _whitelist_cache['timestamp'] = now
             return data
         except Exception as e:
             logger.warning(f"load_whitelist: 读取白名单失败，使用默认配置: {e}")
-    data = {'patterns': {}, 'blacklist': set()}
+    data = {'patterns': {}, 'blacklist': {}}
     with _whitelist_lock:
         _whitelist_cache['data'] = data
         _whitelist_cache['timestamp'] = now
@@ -557,7 +573,11 @@ def load_whitelist():
 def save_whitelist(wl):
     with _whitelist_lock:
         _whitelist_cache['data'] = None  # invalidate cache
-    atomic_write_json(STATE_DIR / 'whitelist.json', {'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])})
+    # blacklist为dict时直接序列化
+    atomic_write_json(STATE_DIR / 'whitelist.json', {
+        'patterns': wl.get('patterns', {}),
+        'blacklist': wl.get('blacklist', {})
+    })
 
 _gemma_cache_lock = threading.Lock()
 Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
@@ -798,7 +818,9 @@ def check_whitelist(rsi, adx, bb_pos, direction):
     """检查白名单模式"""
     wl = load_whitelist()
     key = get_pattern_key(rsi, adx, bb_pos, direction)
-    if key in wl.get('blacklist', set()):
+    import time
+    bl = wl.get('blacklist', {})
+    if key in bl and (time.time() - bl[key]) < (7 * 86400):
         return False, '黑名单模式'
     stats = wl.get('patterns', {}).get(key, {})
     if stats.get('count', 0) >= 5 and stats.get('win_rate', 0.5) < 0.40:
@@ -815,9 +837,10 @@ def update_whitelist(entry_key, won: bool):
     stats['win_rate'] = stats['wins'] / stats['count']
     wl['patterns'][entry_key] = stats
     
-    # 黑名单降级
+    # 黑名单降级（7天TTL）
     if stats['count'] >= 10 and stats['win_rate'] < 0.35:
-        wl['blacklist'].add(entry_key)
+        import time
+        wl['blacklist'][entry_key] = int(time.time())
     save_whitelist(wl)
 
 # ===== 交易日志 =====
