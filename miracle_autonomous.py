@@ -521,8 +521,8 @@ class ReflectionImprover:
 
         # 胜率贡献 (最高+0.15)
         wr = metrics.get("avg_win_rate", 0)
-        if wr > 50:
-            score += min(0.15, (wr - 50) / 100)
+        if wr > 0.50:  # 50% as fraction
+            score += min(0.15, (wr - 0.50) * 0.3)  # 30% improvement → +0.15 max bonus
 
         # 回撤惩罚 (-0.2以内)
         dd = metrics.get("avg_dd", 0)
