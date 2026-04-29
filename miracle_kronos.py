@@ -281,8 +281,7 @@ def load_ic_weights():
 
 def save_ic_weights(weights):
     data = {'weights': weights, 'updated': datetime.now().isoformat()}
-    with open(IC_WEIGHTS_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
+    atomic_write_json(IC_WEIGHTS_FILE, data)
 
 DEFAULT_WEIGHTS = {
     'RSI': 0.15, 'ADX': 0.0, 'Bollinger': 0.30,
@@ -1552,10 +1551,21 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             age_hours = (dt.now() - open_dt).total_seconds() / 3600
             trade['age_hours'] = round(age_hours, 1)
             if age_hours > 24:
-                # TODO(atr): 当前使用固定24h时间止损，但1H策略应改为ATR-based：
-                #   监控"过去24小时价格变动 < 0.5×ATR"作为横盘/无趋势的代理指标，
-                #   横盘达到N小时则触发时间止损。后续应实现TIME_STOP_ATR_HOURS参数。
-                position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
+                # ATR-based time stop: if price hasn't moved at least 0.5×ATR in 24h, it's consolidating - exit
+                klines_1h = get_klines(inst_id, '1H', 100)
+                if klines_1h and len(klines_1h) >= 30:
+                    highs_1h = [k['high'] for k in klines_1h]
+                    lows_1h = [k['low'] for k in klines_1h]
+                    closes_1h = [k['close'] for k in klines_1h]
+                    atr = calc_atr(highs_1h, lows_1h, closes_1h)
+                    if atr > 0 and entry > 0:
+                        atr_pct = atr / entry
+                        price_moved_pct = abs(current - entry) / entry
+                        if price_moved_pct < atr_pct * 0.5:
+                            position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损(24h+ATR确认震荡)', 'urgency': 7, 'pnl_pct': pnl_pct})
+                else:
+                    # Fallback to fixed time stop if no klines
+                    position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
         except Exception:
             trade['age_hours'] = 0
 
