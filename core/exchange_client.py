@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -42,6 +43,7 @@ class ExchangeClient:
         # OKX rate limit: 20 req/2s = 1 req per 0.1s
         # Token bucket: {"last": timestamp of last request, "interval": minimum interval}
         self._rate_limiter = {"last": 0.0, "interval": 0.1}
+        self._rate_limiter_lock = threading.Lock()
 
         if self.exchange == "okx":
             self._setup_okx()
@@ -126,13 +128,14 @@ class ExchangeClient:
 
     def _wait_for_rate_limit(self):
         """Token bucket: wait until minimum interval has passed since last request."""
-        now = time.monotonic()
-        elapsed = now - self._rate_limiter["last"]
-        if elapsed < self._rate_limiter["interval"]:
-            sleep_time = self._rate_limiter["interval"] - elapsed
-            logger.debug(f"Rate limit: sleeping {sleep_time:.3f}s")
-            time.sleep(sleep_time)
-        self._rate_limiter["last"] = time.monotonic()
+        with self._rate_limiter_lock:
+            now = time.monotonic()
+            elapsed = now - self._rate_limiter["last"]
+            if elapsed < self._rate_limiter["interval"]:
+                sleep_time = self._rate_limiter["interval"] - elapsed
+                logger.debug(f"Rate limit: sleeping {sleep_time:.3f}s")
+                time.sleep(sleep_time)
+            self._rate_limiter["last"] = time.monotonic()
 
     def _make_request(self, method: str, endpoint: str, params: Dict = None,
                       data: Dict = None, signed: bool = True) -> Dict:
