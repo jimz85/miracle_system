@@ -461,7 +461,7 @@ def check_existing_oco_orders(instId: str) -> Tuple[bool, str]:
     orders = data.get('data', [])
     for order in orders:
         if order.get('instId') == instId and order.get('ordType') == 'oco':
-            return True, f"已有活跃OCO: {order.get('ordId', '')}"
+            return True, f"已有活跃OCO: {order.get('algoId', '')}"
     
     return False, ''
 
