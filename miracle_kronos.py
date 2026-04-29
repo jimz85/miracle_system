@@ -62,6 +62,10 @@ from core.market_intel_base import (
 # ===== Memory模块 =====
 from core.memory import get_structured_memory
 
+# ===== Exchange & Price Factors =====
+from core.exchange_adapter import get_default_exchange
+from core.price_factors import PriceFactors
+
 # ===== 配置 =====
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
 STATE_DIR = Path(__file__).parent / 'data'
@@ -1014,6 +1018,10 @@ CONTRACT_MULTIPLIER_FALLBACK = {
 }
 _contract_multiplier_cache = {}
 
+# Funding Rate & OI History Cache (max 10 entries per coin)
+_fr_history = {}  # {coin: [funding_rate_values]}
+_oi_history = {}  # {coin: [oi_values]}
+
 MAX_POSITIONS = 3
 SL_PCT = 0.05  # 5%止损 (仅用于静态计算后备)
 TP_PCT = 0.10  # 10%止盈 (仅用于静态计算后备)
@@ -1117,6 +1125,38 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     if not klines_1h or len(klines_1h) < 30:
         return None
     
+    # ---- Funding Rate & OI Fetching with History Cache ----
+    funding_rate_info = None
+    oi_info = None
+    fr_result = {}
+    oi_result = {}
+    try:
+        exchange = get_default_exchange()
+        fr_data = exchange.get_funding_rate(instId)
+        oi_data = exchange.get_oi(instId)
+        
+        # Update funding rate history
+        if fr_data and fr_data.get('funding_rate') is not None:
+            fr_value = fr_data['funding_rate']
+            if symbol not in _fr_history:
+                _fr_history[symbol] = []
+            _fr_history[symbol].append(fr_value)
+            if len(_fr_history[symbol]) > 10:
+                _fr_history[symbol] = _fr_history[symbol][-10:]
+            funding_rate_info = fr_data
+        
+        # Update OI history
+        if oi_data and oi_data.get('oi') is not None:
+            oi_value = oi_data['oi']
+            if symbol not in _oi_history:
+                _oi_history[symbol] = []
+            _oi_history[symbol].append(oi_value)
+            if len(_oi_history[symbol]) > 10:
+                _oi_history[symbol] = _oi_history[symbol][-10:]
+            oi_info = oi_data
+    except Exception as e:
+        logger.debug(f"Failed to fetch funding rate/OI for {symbol}: {e}")
+    
     closes_1h = [k['close'] for k in klines_1h]
     highs_1h = [k['high'] for k in klines_1h]
     lows_1h = [k['low'] for k in klines_1h]
@@ -1200,6 +1240,34 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     elif adx > 22:
         final_score *= 1.15
 
+    # ---- Funding Rate Factor: 影响信心加分 ----
+    fr_confidence_boost = 0.0
+    if funding_rate_info and symbol in _fr_history:
+        fr_history = _fr_history[symbol]
+        fr_result = PriceFactors.calc_funding_rate_factor(fr_history, side=vote['direction'])
+        fr_confidence_boost = fr_result.get('confidence_boost', 0.0)
+        final_score += fr_confidence_boost
+        logger.debug(f"[{symbol}] Funding rate boost: {fr_confidence_boost:.4f} (fr={fr_result.get('funding_rate', 0):.6f})")
+
+    # ---- OI Direction Factor: OI下降 + short方向 = 确认; OI下降 + long方向 = 减弱 ----
+    oi_penalty = 0.0
+    if oi_info and symbol in _oi_history:
+        oi_history = _oi_history[symbol]
+        oi_result = PriceFactors.calc_oi_change_rate(oi_history)
+        oi_direction = oi_result.get('oi_direction', 'stable')
+        oi_penalty = oi_result.get('confidence_penalty', 0.0)
+        
+        if oi_direction == 'decreasing' and oi_penalty > 0:
+            if vote['direction'] == 'short':
+                # OI下降+做空 = 确认信号，稍微减少惩罚
+                oi_penalty *= 0.5
+                logger.debug(f"[{symbol}] OI decreasing + short: penalty reduced to {oi_penalty:.4f}")
+            elif vote['direction'] == 'long':
+                # OI下降+做多 = 减弱信号，充分应用惩罚
+                logger.debug(f"[{symbol}] OI decreasing + long: full penalty {oi_penalty:.4f}")
+        
+        final_score -= oi_penalty
+
     # 低于阈值过滤 (极端信号阈值更低)
     min_threshold = 0.20 if vote.get('extreme') else 0.25
     if final_score < min_threshold:
@@ -1223,6 +1291,13 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
         'pattern_key': get_pattern_key(rsi, adx, bb_pos, vote['direction']),
         'votes': vote.get('votes', {}),
         'extreme': vote.get('extreme'),
+        # Funding Rate & OI factors
+        'funding_rate': fr_result.get('funding_rate', 0.0) if funding_rate_info else None,
+        'funding_rate_direction': fr_result.get('funding_rate_direction', 'stable') if funding_rate_info else None,
+        'fr_confidence_boost': fr_confidence_boost,
+        'oi_direction': oi_result.get('oi_direction', 'stable') if oi_info else None,
+        'oi_change_rate': oi_result.get('oi_change_rate', 0.0) if oi_info else None,
+        'oi_penalty': oi_penalty,
     }
 
 def select_best(candidates, positions, local_trades=None):
