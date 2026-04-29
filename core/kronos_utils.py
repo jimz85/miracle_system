@@ -430,16 +430,18 @@ def parallel_scan_coins(
     scan_func,
     coins: List[Tuple[str, str]],
     max_workers: int = 5,
-    timeout: float = 30.0
+    timeout: float = 30.0,
+    exchange=None
 ) -> List[Any]:
     """
     并发扫描多个币种
     
     Args:
-        scan_func: 单币扫描函数，签名为 (instId, symbol) -> result
+        scan_func: 单币扫描函数，签名为 (instId, symbol, exchange) -> result
         coins: [(instId, symbol), ...]
         max_workers: 最大并发数
         timeout: 单币超时时间
+        exchange: 交易所适配器实例 (可选，若为None则scan_func内部创建)
     
     Returns:
         有效结果列表
@@ -448,7 +450,7 @@ def parallel_scan_coins(
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_coin = {
-            executor.submit(scan_func, instId, symbol): (instId, symbol)
+            executor.submit(scan_func, instId, symbol, exchange): (instId, symbol)
             for instId, symbol in coins
         }
         

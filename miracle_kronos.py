@@ -423,43 +423,6 @@ def save_treasury(state):
     with open(TREASURY_FILE, 'w') as f:
         json.dump(state, f, indent=2)
 
-def check_tier(equity, treasury) -> tuple:
-    """5层熔断判定"""
-    hourly_snap = treasury.get('hourly_snapshot', equity)
-    daily_snap = treasury.get('daily_snapshot', equity)
-    session_snap = treasury.get('session_start', equity)
-    
-    hourly_loss_pct = (hourly_snap - equity) / hourly_snap if hourly_snap > 0 else 0
-    daily_loss_pct = (daily_snap - equity) / daily_snap if daily_snap > 0 else 0
-    session_dd_pct = (session_snap - equity) / session_snap if session_snap > 0 else 0
-    
-    if session_dd_pct >= 0.20:
-        tier = 'suspended'
-        can_trade = False
-        reason = '回撤20%触发熔断'
-    elif daily_loss_pct >= 0.10:
-        tier = 'critical'
-        can_trade = False
-        reason = '日亏10%触发熔断'
-    elif hourly_loss_pct >= 0.05:
-        tier = 'caution'
-        can_trade = True
-        reason = '小时亏5%'
-    elif hourly_loss_pct >= 0.02:
-        tier = 'normal'
-        can_trade = True
-        reason = '正常'
-    else:
-        tier = 'normal'
-        can_trade = True
-        reason = '正常'
-    
-    return tier, can_trade, reason, {
-        'hourly_loss_pct': hourly_loss_pct,
-        'daily_loss_pct': daily_loss_pct,
-        'session_dd_pct': session_dd_pct
-    }
-
 # ===== 数据获取 =====
 def get_klines(instId, timeframe='1H', limit=100):
     """从OKX获取K线数据"""
@@ -1132,8 +1095,11 @@ def fetch_contract_multiplier(coin: str) -> float:
     _contract_multiplier_cache[coin] = fallback
     return fallback
 
-def scan_coin(instId, symbol, equity, btc_trend, weights):
+def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
     """扫描单个币种"""
+    if exchange is None:
+        exchange = get_default_exchange()
+    
     klines_1h = get_klines(instId, '1H', 100)
     klines_4h = get_klines(instId, '4H', 100)
     
@@ -1146,7 +1112,6 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     fr_result = {}
     oi_result = {}
     try:
-        exchange = get_default_exchange()
         fr_data = exchange.get_funding_rate(instId)
         oi_data = exchange.get_oi(instId)
         
@@ -1355,11 +1320,10 @@ def select_best(candidates, positions, local_trades=None):
         return None, vetoed_pattern_keys
     return max(filtered, key=lambda x: x['score']), vetoed_pattern_keys
 
-def _parallel_scan_wrapper(instId_symbol, equity, btc_trend, weights):
+def _parallel_scan_wrapper(instId, symbol, equity, btc_trend, weights, exchange=None):
     """并行扫描包装器"""
-    instId, symbol = instId_symbol
     try:
-        return scan_coin(instId, symbol, equity, btc_trend, weights)
+        return scan_coin(instId, symbol, equity, btc_trend, weights, exchange)
     except Exception as e:
         logger.warning(f"扫描失败 {instId}: {e}")
         return None
@@ -1466,11 +1430,14 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         positions = get_positions()  # 重新获取最新状态
     
     # P0: 并发扫描所有币 (替代原有串行for循环)
+    # 初始化exchange一次，避免每个coin创建新实例
+    exchange = get_default_exchange()
     candidates = parallel_scan_coins(
         scan_func=_parallel_scan_wrapper,
         coins=SCAN_COINS,
         max_workers=5,
-        timeout=30.0
+        timeout=30.0,
+        exchange=exchange
     )
     
     candidates.sort(key=lambda x: x['score'], reverse=True)
