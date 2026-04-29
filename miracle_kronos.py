@@ -26,6 +26,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -939,14 +940,19 @@ def close_position(symbol: str, reason: str = "signal",
     # 平多: side=sell, 平空: side=buy
     close_side = 'sell' if pos_side == 'long' else 'buy'
 
-    body = json.dumps({
+    # P0 Fix: OKX net mode (default) does NOT accept posSide - causes 400 error
+    # Only include posSide when explicitly in hedge mode
+    body = {
         'instId': inst_id,
         'tdMode': 'isolated',
         'side': close_side,
         'ordType': 'market',
         'sz': str(sz),
-        'posSide': pos_side,  # P0 Fix: OKX隔离保证金平仓必须传posSide
-    })
+    }
+    # Only add posSide if explicitly provided AND not 'net' (hedge mode)
+    if pos_side and pos_side not in ('net', None, ''):
+        body['posSide'] = pos_side
+    body = json.dumps(body)
     data = okx_req('POST', '/api/v5/trade/order', body)
     if data.get('code') == '0':
         logger.info(f"[{symbol}] 平仓成功 ({reason})")
@@ -1430,10 +1436,12 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         positions = get_positions()  # 重新获取最新状态
     
     # P0: 并发扫描所有币 (替代原有串行for循环)
+    # P0 Fix: 使用functools.partial绑定equity/btc_trend/weights参数
     # 初始化exchange一次，避免每个coin创建新实例
     exchange = get_default_exchange()
+    wrapped_scan = partial(_parallel_scan_wrapper, equity=equity, btc_trend=btc_trend, weights=weights)
     candidates = parallel_scan_coins(
-        scan_func=_parallel_scan_wrapper,
+        scan_func=wrapped_scan,
         coins=SCAN_COINS,
         max_workers=5,
         timeout=30.0,
