@@ -100,8 +100,9 @@ class PositionManager:
     3. 跟踪持仓状态
     """
 
-    def __init__(self, max_positions: int = 3):
+    def __init__(self, max_positions: int = 3, pending_ttl_seconds: int = 3600):
         self.max_positions = max_positions
+        self.pending_ttl_seconds = pending_ttl_seconds
         self.positions: Dict[str, Dict] = {}  # symbol -> position_info
         self.pending_queue: List[Dict] = []  # 等待入场的信号
         self.total_trades_today: int = 0
@@ -123,10 +124,12 @@ class PositionManager:
         """开仓"""
         if not self.can_open_new_position():
             # 仓位已满，加入等待队列
+            queued_price = position_info.get("entry_price")
             self.pending_queue.append({
                 "symbol": symbol,
                 "position_info": position_info,
-                "queued_at": datetime.now()
+                "queued_at": datetime.now(),
+                "queued_price": queued_price
             })
             logger.info(f"[{symbol}] 仓位已满，加入等待队列")
             return False
@@ -153,7 +156,23 @@ class PositionManager:
 
     def _process_queue(self):
         """处理等待队列"""
-        if not self.pending_queue or not self.can_open_new_position():
+        if not self.can_open_new_position():
+            return
+
+        # 首先过滤掉已过期的信号
+        now = datetime.now()
+        expired_items = [p for p in self.pending_queue
+                        if (now - p["queued_at"]).total_seconds() >= self.pending_ttl_seconds]
+        if expired_items:
+            for p in expired_items:
+                logger.warning(f"信号过期: {p['symbol']} @ {p['queued_price']}")
+
+        self.pending_queue = [
+            p for p in self.pending_queue
+            if (now - p["queued_at"]).total_seconds() < self.pending_ttl_seconds
+        ]
+
+        if not self.pending_queue:
             return
 
         # FIFO：按顺序处理等待队列
