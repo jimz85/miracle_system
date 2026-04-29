@@ -1839,31 +1839,25 @@ def main():
             if pos and args.mode == 'live':
                 close_data = close_position(sym, decision['reason'], pos)
                 if close_data.get('code') == '0':
-                    # 更新本地交易记录
-                    local_trades = get_open_trades()
-                    for t in local_trades:
-                        if t.get('coin', '').upper() == sym.upper():
+                    # P0-4 Fix: Load FULL trade history to preserve CLOSED trades
+                    all_trades = load_trades()
+                    for t in all_trades:
+                        if t.get('coin', '').upper() == sym.upper() and t.get('status') == 'OPEN':
                             t['status'] = 'CLOSED'
-                            t['exit_reason'] = decision['reason']
+                            t['exit_reason'] = decision.get('reason', '')
                             t['exit_time'] = datetime.now().isoformat()
-                            # 从本次结果的 trade 中获取 learner trade_id
-                            if result.get('trade'):
-                                t['trade_id'] = result['trade'].get('trade_id')
-                    save_trades(local_trades)  # Full history preserved
-                    # 自适应学习: 出场反馈
-                    try:
-                        learner = AgentLearner(str(STATE_DIR))
-                        trade_id = result.get('trade', {}).get('trade_id')
-                        if trade_id:
-                            learner.on_trade_exit(trade_id, {
-                                'exit_time': datetime.now().isoformat(),
-                                'exit_price': pos.get('last', 0),
-                                'close_reason': decision['reason'],
-                                'pnl_pct': decision.get('pnl_pct', 0),
-                            })
-                            logger.info(f"Agent-L出场反馈: trade_id={trade_id} reason={decision['reason']}")
-                    except Exception as e:
-                        logger.warning(f"出场学习反馈失败: {e}")
+                            # P0-5 Fix: Read trade_id from local trade object, not result
+                            trade_id = t.get('trade_id')
+                            if trade_id:
+                                learner = AgentLearner(str(STATE_DIR))
+                                learner.on_trade_exit(trade_id, {
+                                    'exit_time': datetime.now().isoformat(),
+                                    'exit_price': pos.get('last', 0),
+                                    'close_reason': decision.get('reason', ''),
+                                    'pnl_pct': decision.get('pnl_pct', 0),
+                                })
+                                logger.info(f"Agent-L出场反馈: trade_id={trade_id} reason={decision.get('reason', '')}")
+                    save_trades(all_trades)  # Full history preserved
 
     # 更新treasury (快照时间轴管理)
     treasury = load_treasury()
