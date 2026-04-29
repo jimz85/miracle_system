@@ -79,6 +79,16 @@ IDEMPOTENCY_LOG = STATE_DIR / 'trade_idempotency.json'
 # 日志配置
 logger = logging.getLogger('miracle_kronos')
 
+# ===== 安全类型转换 =====
+def safe_float(val, default=0.0):
+    """Safely convert OKX API value to float - handles None, '', 'null'"""
+    if val is None or val == '' or val == 'null':
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
 # ===== OKX API (兼容旧接口) =====
 def _sign(ts, method, path, body=''):
     import base64
@@ -421,8 +431,7 @@ def save_treasury(state):
         # 新的一天：用当前权益初始化日快照
         state['daily_snapshot'] = state.get('equity', state.get('daily_snapshot'))
         state['daily_snapshot_time'] = state.get('last_update', '')[:10]  # YYYY-MM-DD
-    with open(TREASURY_FILE, 'w') as f:
-        json.dump(state, f, indent=2)
+    atomic_write_json(TREASURY_FILE, state)
 
 # ===== 数据获取 =====
 def get_klines(instId, timeframe='1H', limit=100):
@@ -442,11 +451,11 @@ def get_klines(instId, timeframe='1H', limit=100):
         try:
             parsed.append({
                 'ts': int(c[0]),
-                'open': float(c[1]),
-                'high': float(c[2]),
-                'low': float(c[3]),
-                'close': float(c[4]),
-                'vol': float(c[5]),
+                'open': safe_float(c[1]),
+                'high': safe_float(c[2]),
+                'low': safe_float(c[3]),
+                'close': safe_float(c[4]),
+                'vol': safe_float(c[5]),
             })
         except Exception:
             pass
@@ -460,8 +469,8 @@ def get_account_balance():
             details = data['data'][0].get('details', [])
             for d in details:
                 if d.get('ccy') == 'USDT':
-                    return float(d.get('eq', 0))
-            return float(data['data'][0].get('totalEq', 0))
+                    return safe_float(d.get('eq'), 0)
+            return safe_float(data['data'][0].get('totalEq'), 0)
         except Exception:
             pass
     return 0
@@ -473,18 +482,18 @@ def get_positions():
         return []
     positions = []
     for raw in data.get('data', []):
-        notional = float(raw.get('notionalUsd', 0))
+        notional = safe_float(raw.get('notionalUsd'), 0)
         if notional > 1:
             positions.append({
                 'instId': raw.get('instId'),
                 'side': raw.get('posSide'),  # 'long' or 'short'
                 # P0 Fix: OKX字段是 pos/avgPx，不是 sz/avgOpenPx
-                'sz': float(raw.get('pos', 0)),  # 合约张数
-                'entry': float(raw.get('avgPx', 0)),  # 入场价
-                'unrealized_pnl': float(raw.get('upl', 0)),
+                'sz': safe_float(raw.get('pos'), 0),  # 合约张数
+                'entry': safe_float(raw.get('avgPx'), 0),  # 入场价
+                'unrealized_pnl': safe_float(raw.get('upl'), 0),
                 'notional': notional,
-                'liqPx': float(raw.get('liqPx', 0)),  # 强平价
-                'leverage': float(raw.get('lever', 3)),
+                'liqPx': safe_float(raw.get('liqPx'), 0),  # 强平价
+                'leverage': safe_float(raw.get('lever'), 3),
             })
     return positions
 
@@ -492,7 +501,7 @@ def get_ticker(instId):
     """获取当前价格"""
     data = okx_req('GET', f'/api/v5/market/ticker?instId={instId}')
     if data.get('code') == '0' and data.get('data'):
-        return float(data['data'][0].get('last', 0))
+        return safe_float(data['data'][0].get('last'), 0)
     return 0
 
 # ===== 白名单模式学习 (from Miracle agent_signal.py) =====
@@ -509,8 +518,7 @@ def load_whitelist():
     return {'patterns': {}, 'blacklist': set()}
 
 def save_whitelist(wl):
-    with open(STATE_DIR / 'whitelist.json', 'w') as f:
-        json.dump({'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])}, f)
+    atomic_write_json(STATE_DIR / 'whitelist.json', {'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])})
 
 Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
 
@@ -1089,7 +1097,7 @@ def fetch_contract_multiplier(coin: str) -> float:
             # OKX returns contract multiplier in 'ctMult' field
             ct_mult = data['data'][0].get('ctMult')
             if ct_mult:
-                multiplier = float(ct_mult)
+                multiplier = safe_float(ct_mult, 1.0)
                 _contract_multiplier_cache[coin] = multiplier
                 logger.info(f"OKX API contract multiplier for {coin}: {multiplier}")
                 return multiplier
@@ -1291,10 +1299,9 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
 
 def select_best(candidates, positions, local_trades=None):
     """选最优候选
-    gemma4否决机制: gemma_vote < 0.3 的候选币不参与排名
-    - gemma_vote >= 0.3: 参与排名
-    - gemma_vote < 0.3: 过滤掉不参与排名
-    - gemma_vote = -1: 跳过（gemma超时/异常，不否决）
+    gemma4否决机制: gemma_vote < 0 (error/timeout) 的候选币不参与排名
+    - gemma_vote >= 0: 参与排名 (包括 bearish 0.3-0.5 和 bullish 0.5-1.0)
+    - gemma_vote < 0: 过滤掉不参与排名 (gemma超时/异常)
     
     Returns: (best_candidate, vetoed_pattern_keys)
     """
@@ -1305,22 +1312,21 @@ def select_best(candidates, positions, local_trades=None):
         held.update(t.get('coin', '') for t in local_trades)
     available = [c for c in candidates if c['symbol'] not in held]
     
-    # gemma4否决: gemma_vote < 0.3 则不参与排名
-    # gemma_vote存储在 votes['Gemma'] 中
-    # -1 表示跳过(超时/异常)，0.0-0.3表示低置信度否决
+    # gemma4否决: gemma_vote < 0 表示gemma错误/超时，则否决
+    # 允许所有有效的gemma信号通过（不管是0.3-0.5 bearish还是0.5-1.0 bullish）
     vetoed = []
     vetoed_pattern_keys = []
     filtered = []
     for c in available:
         gemma_vote = c.get('votes', {}).get('Gemma', 0)
-        if 0 <= gemma_vote < 0.3:
+        if gemma_vote < 0:  # Gemma error/timeout - veto
             vetoed.append(c['symbol'])
             vetoed_pattern_keys.append(c.get('pattern_key', ''))
             continue
         filtered.append(c)
     
     if vetoed:
-        print(f"gemma4否决: {vetoed} (gemma_vote<0.3)")
+        print(f"gemma4否决: {vetoed} (gemma_vote<0)")
     
     if not filtered:
         return None, vetoed_pattern_keys

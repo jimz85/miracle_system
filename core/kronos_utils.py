@@ -28,6 +28,16 @@ _logger = logging.getLogger(__name__)
 BASE_URL = 'https://www.okx.com'
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')
 
+# ===== 安全类型转换 =====
+def safe_float(val, default=0.0):
+    """Safely convert OKX API value to float - handles None, '', 'null'"""
+    if val is None or val == '' or val == 'null':
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
 # 合约乘数映射 (OKX永续合约)
 # sz是合约张数，需要乘以每张合约的币数量才能得到实际币数量
 CONTRACT_MULTIPLIER = {
@@ -38,6 +48,39 @@ CONTRACT_MULTIPLIER = {
     'BNB-USDT-SWAP': 10,     # 1张 = 10 BNB
     'XRP-USDT-SWAP': 10,     # 1张 = 10 XRP
 }
+
+# Contract multiplier cache for fetch_contract_multiplier
+_contract_multiplier_cache = {}
+
+def fetch_contract_multiplier(instId: str) -> float:
+    """
+    Fetch contract multiplier from OKX API for a given instId (e.g. 'BTC-USDT-SWAP').
+    Caches result in _contract_multiplier_cache.
+    Falls back to hardcoded CONTRACT_MULTIPLIER if API fails.
+    """
+    if instId in _contract_multiplier_cache:
+        return _contract_multiplier_cache[instId]
+
+    try:
+        url = f"{BASE_URL}/api/v5/public/instruments"
+        params = {'instType': 'SWAP', 'instId': instId}
+        resp = requests.get(url, params=params, timeout=5)
+        data = resp.json()
+
+        if data.get('code') == '0' and data.get('data'):
+            ct_mult = data['data'][0].get('ctMult')
+            if ct_mult:
+                multiplier = safe_float(ct_mult, 1.0)
+                _contract_multiplier_cache[instId] = multiplier
+                _logger.info(f"OKX API contract multiplier for {instId}: {multiplier}")
+                return multiplier
+    except Exception as e:
+        _logger.warning(f"Failed to fetch contract multiplier for {instId}: {e}")
+
+    # Fallback to hardcoded values
+    fallback = CONTRACT_MULTIPLIER.get(instId, 1.0)
+    _contract_multiplier_cache[instId] = fallback
+    return fallback
 
 # ===== 基础工具 =====
 
@@ -177,11 +220,11 @@ def check_treasury_trade_allowed(equity: float, treasury_state: dict) -> Tuple[b
         }
     
     # 5. 储备金检查
-    reserve_amount = equity * limits['reserve_pct']
-    available = equity - reserve_amount
-    if available < equity * limits['per_trade_pct']:
-        return False, f'可用${available:.2f}低于最低交易额', {
-            'available': available, 'reserve': reserve_amount
+    per_trade_amount = equity * limits['per_trade_pct']  # 2% of equity
+    available = equity * (1 - limits['reserve_pct'])  # 80% available
+    if per_trade_amount > available:  # Can't risk more than available
+        return False, f"Per-trade risk {per_trade_amount:.2f} exceeds available {available:.2f}", {
+            'available': available, 'per_trade': per_trade_amount, 'reserve': equity - available
         }
     
     return True, 'OK', {
@@ -367,7 +410,7 @@ def validate_oco_order(
     
     # 3. 仓位价值检查
     # sz是合约张数，需要乘以合约乘数得到实际币数量
-    multiplier = CONTRACT_MULTIPLIER.get(instId, 1)
+    multiplier = fetch_contract_multiplier(instId)
     position_value = sz * entry_price * multiplier
     if position_value < min_size:
         return False, f'仓位价值${position_value:.2f}<最低${min_size}', {
@@ -565,7 +608,7 @@ def get_account_balance() -> dict:
     data = okx_req('GET', '/api/v5/account/balance')
     try:
         if data.get('code') == '0' and data.get('data'):
-            return {'totalEq': float(data['data'][0].get('totalEq', 0))}
+            return {'totalEq': safe_float(data['data'][0].get('totalEq'), 0)}
     except Exception as e:
         _logger.debug(f"get_account_balance: 解析余额失败: {e}")
     return {'totalEq': 0}
