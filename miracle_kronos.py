@@ -79,6 +79,21 @@ IDEMPOTENCY_LOG = STATE_DIR / 'trade_idempotency.json'
 # 日志配置
 logger = logging.getLogger('miracle_kronos')
 
+# ===== 全局仓位模式检测 =====
+_pos_mode = 'net'  # 'net' or 'hedge', updated at startup
+
+def _detect_pos_mode():
+    """检测账户是net模式还是hedge模式"""
+    global _pos_mode
+    positions = get_positions()
+    for p in positions:
+        if p.get('sz', 0) != 0:
+            side = p.get('side', 'net')
+            _pos_mode = side if side in ('long', 'short') else 'net'
+            return _pos_mode
+    _pos_mode = 'net'
+    return 'net'
+
 # ===== 安全类型转换 =====
 def safe_float(val, default=0.0):
     """Safely convert OKX API value to float - handles None, '', 'null'"""
@@ -381,7 +396,8 @@ def voting_vote(factors: dict, weights: dict) -> dict:
         'Vol': vol_vote,
         'MACD': macd_vote,
         'BTC': btc_vote,
-        'Gemma': factors.get('_gemma_vote', 0),
+        # P0 Fix: Gemma vote is 0-1 range, remap to -1 to +1
+        'Gemma': (factors.get('_gemma_vote', 0.5) - 0.5) * 2,
     }
 
     # ---- 极端RSI信号: 直接替换RSI投票方向 ----
@@ -866,17 +882,21 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
     })
     lev_result = okx_req('POST', '/api/v5/account/set-leverage', leverage_body)
     if lev_result.get('code') != '0':
-        logger.warning(f"设置杠杆失败 {instId} {leverage}x: {lev_result.get('msg')}")
+        logger.error(f"设置杠杆失败 {instId} {leverage}x: {lev_result.get('msg')}，取消开仓")
+        return {'code': '99999', 'msg': f'杠杆设置失败: {lev_result.get("msg")}'}
 
     # ── Step 2: 市价开仓 ──
-    open_body = json.dumps({
+    open_body = {
         'instId': instId,
         'tdMode': 'isolated',
         'side': open_side,
         'ordType': 'market',
         'sz': str(int(sz)),
-        'posSide': pos_side,
-    })
+    }
+    # P0 Fix: posSide only in hedge mode, not net mode
+    if _pos_mode != 'net' and pos_side:
+        open_body['posSide'] = pos_side
+    open_body = json.dumps(open_body)
     open_result = okx_req('POST', '/api/v5/trade/order', open_body)
     if open_result.get('code') != '0':
         logger.error(f"开仓失败 {instId}: {open_result.get('msg')}")
@@ -885,19 +905,22 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
 
     # ── Step 3: 挂OCO Bracket（止损+止盈，保护已有仓位） ──
     # reduceOnly=True确保只平仓不开新仓
-    oco_body = json.dumps({
+    oco_body = {
         'instId': instId,
         'tdMode': 'isolated',
         'side': close_side,
         'ordType': 'oco',
         'sz': str(int(sz)),
-        'posSide': pos_side,
         'reduceOnly': True,       # P0 Fix: 只平仓不开新仓
         'slTriggerPx': str(sl_price),
         'slOrdPx': '-1',             # 市价触发
         'tpTriggerPx': str(tp_price),
         'tpOrdPx': '-1',            # 市价触发
-    })
+    }
+    # P0 Fix: posSide only in hedge mode, not net mode
+    if _pos_mode != 'net' and pos_side:
+        oco_body['posSide'] = pos_side
+    oco_body = json.dumps(oco_body)
     oco_result = okx_req('POST', '/api/v5/trade/order-algo', oco_body)
 
     # 汇总结果
@@ -1627,8 +1650,19 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         elif tp_triggered:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'TP触发', 'urgency': 8, 'pnl_pct': pnl_pct})
 
+    # P0 Fix: Load full trade history, update OPEN trades, then save ALL
     if local_trades:
-        save_trades(local_trades)  # Full history preserved
+        all_trades = load_trades()
+        # Update current_pnl and current_price for open trades
+        for t in all_trades:
+            if t.get('status') == 'OPEN':
+                for lt in local_trades:
+                    if t.get('coin', '').upper() == lt.get('coin', '').upper():
+                        t['current_pnl'] = lt.get('current_pnl', 0)
+                        t['current_pnl_pct'] = lt.get('current_pnl_pct', 0)
+                        t['current_price'] = lt.get('current_price', 0)
+                        break
+        save_trades(all_trades)  # Full history preserved (OPEN + CLOSED)
     
     if len(positions) >= MAX_POSITIONS:
         return {
@@ -1851,9 +1885,11 @@ def main():
                             trade_id = t.get('trade_id')
                             if trade_id:
                                 learner = AgentLearner(str(STATE_DIR))
+                                # P0 Fix: Use get_ticker() for accurate exit price, not pos.get('last', 0)
+                                exit_price = get_ticker(inst_id)
                                 learner.on_trade_exit(trade_id, {
                                     'exit_time': datetime.now().isoformat(),
-                                    'exit_price': pos.get('last', 0),
+                                    'exit_price': exit_price if exit_price > 0 else pos.get('last', 0),
                                     'close_reason': decision.get('reason', ''),
                                     'pnl_pct': decision.get('pnl_pct', 0),
                                 })
