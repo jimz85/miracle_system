@@ -1711,6 +1711,7 @@ def main():
             if now.date() != last_dt.date():
                 treasury['daily_snapshot'] = equity
                 treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
+                treasury['session_start'] = equity
         except Exception:
             treasury['hourly_snapshot'] = equity
             treasury['daily_snapshot'] = equity

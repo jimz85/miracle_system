@@ -76,7 +76,7 @@ SEARCH_SPACE = {
     "tp1_atr_mult": {"min": 1.5, "max": 5.0, "type": "float"},
     "tp2_atr_mult": {"min": 3.0, "max": 10.0, "type": "float"},
     "vol_ratio_threshold": {"min": 0.8, "max": 2.0, "type": "float"},
-    "position_size_pct": {"min": 0.05, "max": 0.20, "type": "float"},
+    "position_size_pct": {"min": 0.05, "max": 0.15, "type": "float"},
     "bb_position_oversold": {"min": 10.0, "max": 35.0, "type": "float"},
     "bb_position_overbought": {"min": 65.0, "max": 90.0, "type": "float"},
     "atr_percentile_max": {"min": 40.0, "max": 90.0, "type": "float"},
@@ -150,7 +150,7 @@ class DataCollector:
         self.cache: Dict[str, pd.DataFrame] = {}
 
     def load_coin_data(self, coin: str, timeframe: str = "1h",
-                       bear_only: bool = True) -> pd.DataFrame | None:
+                       bear_only: bool = False) -> pd.DataFrame | None:
         """加载单个币种数据"""
         cache_key = f"{coin}_{timeframe}"
         if cache_key in self.cache:
@@ -161,12 +161,14 @@ class DataCollector:
             logger.warning(f"[DataCollector] {coin}: insufficient data")
             return None
 
-        # 熊市过滤
+        # 熊市过滤 (仅 bear_only=True 时启用)
         if bear_only:
             df["datetime_utc"] = pd.to_datetime(df["datetime_utc"])
             dynamic_end = df["datetime_utc"].max().strftime("%Y-%m-%d")
             mask = (df["datetime_utc"] >= "2025-08-01") & (df["datetime_utc"] <= dynamic_end)
             df = df[mask].copy()
+        else:
+            df["datetime_utc"] = pd.to_datetime(df["datetime_utc"])
 
         if len(df) < 200:
             logger.warning(f"[DataCollector] {coin}: bear period has only {len(df)} rows")
@@ -652,7 +654,7 @@ class AutonomousLoop:
         self.state.stage = LoopStage.DATA_COLLECTION
 
         self.data = self.data_collector.load_all_data(
-            self.coins, self.timeframe, bear_only=True
+            self.coins, self.timeframe, bear_only=False
         )
 
         if not self.data:
