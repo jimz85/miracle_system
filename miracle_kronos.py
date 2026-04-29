@@ -900,13 +900,19 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
             'oco': oco_result,
         }
     else:
-        # OCO失败，但仓位已开！记录警告
-        logger.error(f"开仓成功但OCO失败 {instId}: {oco_result.get('msg')}")
+        # OCO失败，但仓位已开！立即平仓防风险
+        logger.warning(f"OCO挂单失败，已平仓防风险 {instId}: {oco_result.get('msg')}")
+        
+        # 提取symbol并平仓
+        symbol = instId.replace('-USDT-SWAP', '')
+        close_result = close_position(symbol, reason="OCO失败自动平仓")
+        
         return {
             'code': oco_result.get('code', '99999'),
-            'msg': f'OCO挂单失败: {oco_result.get("msg")}',
+            'msg': f'OCO挂单失败，已平仓防风险: {oco_result.get("msg")}',
             'open_success': True,
             'open': open_result,
+            'close_result': close_result,
         }
 
 def close_position(symbol: str, reason: str = "signal",
@@ -966,16 +972,107 @@ SCAN_COINS = [
 # OKX USDT永续合约乘数（每张合约对应的币数量）
 # 用于计算合约张数: sz = sz_dollar / (entry × multiplier)
 # BTC: 0.01 BTC/张, ETH: 0.1 ETH/张, DOGE: 1000 DOGE/张, SOL: 1 SOL/张, ADA: 100 ADA/张, XRP: 10 XRP/张
-CONTRACT_MULTIPLIER = {
+CONTRACT_MULTIPLIER_FALLBACK = {
     'BTC': 0.01, 'ETH': 0.1, 'SOL': 1, 'DOGE': 1000,
     'ADA': 100, 'XRP': 10, 'BNB': 10, 'AVAX': 1,
     'LINK': 1, 'DOT': 1,
 }
+_contract_multiplier_cache = {}
 
 MAX_POSITIONS = 3
-SL_PCT = 0.05  # 5%止损
-TP_PCT = 0.10  # 10%止盈
+SL_PCT = 0.05  # 5%止损 (仅用于静态计算后备)
+TP_PCT = 0.10  # 10%止盈 (仅用于静态计算后备)
 POSITION_SIZE_PCT = 0.02  # 每次2%仓位
+
+
+def calc_atr(highs, lows, closes, period=14):
+    """计算ATR (Average True Range)"""
+    if len(closes) < period * 2 + 1:
+        return 0.0
+
+    trs = []
+    for i in range(1, len(closes)):
+        h, lo = highs[i], lows[i]
+        prev_c = closes[i - 1]
+        tr = max(h - lo, abs(h - prev_c), abs(lo - prev_c))
+        trs.append(tr)
+
+    if len(trs) < period:
+        return 0.0
+
+    atr = sum(trs[:period]) / period
+    for i in range(period, len(trs)):
+        atr = (atr * (period - 1) + trs[i]) / period
+    return atr
+
+
+def get_dynamic_sl_tp(coin, entry_price, atr):
+    """
+    ATR-based dynamic SL/TP calculation.
+    
+    For SL: use 2×ATR for normal, 1.5×ATR for tight (high volatility coins like DOGE)
+    For TP: use 2×SL distance (RR=2) or 3×SL distance (RR=3)
+    Keep a minimum SL% of 0.5% (absolute floor for low ATR coins)
+    
+    Formula: sl_price = entry * (1 - 2*atr_pct) where atr_pct = ATR/entry
+    """
+    if entry_price <= 0 or atr <= 0:
+        return SL_PCT, TP_PCT  # Fallback to static if invalid inputs
+    
+    atr_pct = atr / entry_price  # ATR as percentage of entry price
+    
+    # High volatility coins get tighter SL (DOGE, SHIB, etc.)
+    tight_coins = {'DOGE', 'SHIB', 'PEPE', 'BONK', 'WIF'}
+    if coin in tight_coins:
+        sl_multiplier = 1.5
+    else:
+        sl_multiplier = 2.0
+    
+    # Calculate SL percentage
+    sl_pct = sl_multiplier * atr_pct
+    
+    # Floor: minimum 0.5% SL regardless of low ATR
+    min_sl_pct = 0.005
+    if sl_pct < min_sl_pct:
+        sl_pct = min_sl_pct
+    
+    # TP: RR=2 for normal, RR=3 for high conviction (adx > 30)
+    tp_pct = 2.0 * sl_pct
+    
+    return sl_pct, tp_pct
+
+
+def fetch_contract_multiplier(coin: str) -> float:
+    """
+    Fetch contract multiplier from OKX API.
+    Caches result in _contract_multiplier_cache.
+    Falls back to hardcoded values if API fails.
+    """
+    if coin in _contract_multiplier_cache:
+        return _contract_multiplier_cache[coin]
+    
+    try:
+        import requests
+        url = "https://www.okx.com/api/v5/public/instruments"
+        params = {'instType': 'SWAP', 'instId': f'{coin}-USDT-SWAP'}
+        resp = requests.get(url, params=params, timeout=5)
+        data = resp.json()
+        
+        if data.get('code') == '0' and data.get('data'):
+            # OKX returns contract multiplier in 'ctMult' field
+            ct_mult = data['data'][0].get('ctMult')
+            if ct_mult:
+                multiplier = float(ct_mult)
+                _contract_multiplier_cache[coin] = multiplier
+                logger.info(f"OKX API contract multiplier for {coin}: {multiplier}")
+                return multiplier
+    except Exception as e:
+        logger.warning(f"Failed to fetch contract multiplier for {coin}: {e}")
+    
+    # Fallback to hardcoded values
+    fallback = CONTRACT_MULTIPLIER_FALLBACK.get(coin, 1.0)
+    _contract_multiplier_cache[coin] = fallback
+    return fallback
 
 def scan_coin(instId, symbol, equity, btc_trend, weights):
     """扫描单个币种"""
@@ -1005,6 +1102,10 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     di_plus, di_minus, adx = calc_adx(highs_1h, lows_1h, closes_1h)
     macd, signal, hist = calc_macd(closes_1h)
     bb_upper, bb_lower, bb_pos = calc_bollinger(closes_1h)
+    
+    # ATR计算用于动态SL/TP
+    atr = calc_atr(highs_1h, lows_1h, closes_1h)
+    sl_pct, tp_pct = get_dynamic_sl_tp(symbol, closes_1h[-1], atr)
     
     # 量比
     vol_ratio = 1.0
@@ -1045,20 +1146,16 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
     if not ok:
         return None
     
-    # 4H共振: 做空需要4H确认
-    if vote['direction'] == 'short' and not btc_4h_confirmed:
+    # 4H共振: BOTH long and short require 4H confirmation (conservative approach)
+    if not btc_4h_confirmed:
         return None
     
     # 评分
     di_plus if vote['direction'] == 'long' else di_minus
     abs(vote['score'])
     
-    # 综合评分 = IC投票分 × 4H确认修正
-    # 4H确认: 做多时也有帮助，做空时必需
-    if vote['direction'] == 'long':
-        mt_boost = 1.2 if btc_4h_confirmed else 1.0  # 做多不受4H惩罚
-    else:
-        mt_boost = 1.3 if btc_4h_confirmed else 0.0   # 做空无4H确认=否决
+    # 综合评分 = IC投票分 × 4H确认修正 (now symmetric - both get 1.2x boost with 4H)
+    mt_boost = 1.2 if btc_4h_confirmed else 1.0
 
     final_score = abs(vote['score']) * mt_boost
 
@@ -1079,8 +1176,9 @@ def scan_coin(instId, symbol, equity, btc_trend, weights):
         'direction': vote['direction'],
         'score': final_score,
         'entry': closes_1h[-1],
-        'sl': SL_PCT,
-        'tp': TP_PCT,
+        'sl': sl_pct,
+        'tp': tp_pct,
+        'atr': atr,  # Include ATR for transparency
         'rsi': rsi,
         'adx': adx,
         'adx_4h': adx_4h,
@@ -1352,10 +1450,20 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             peak_pnl = trade.get('peak_pnl_pct', pnl_pct)
             if pnl_pct > peak_pnl:
                 trade['peak_pnl_pct'] = pnl_pct
+                trade['peak_price'] = current  # Track peak price for trailing stop
             else:
-                drawdown = peak_pnl - pnl_pct
-                if drawdown > peak_pnl * 0.5:
-                    position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(回撤{drawdown:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+                # PRICE-based trailing stop (3% price retracement triggers)
+                # For LONG: trailing_sl = peak_price * (1 - 0.03)
+                # For SHORT: trailing_sl = peak_price * (1 + 0.03)
+                peak_price = trade.get('peak_price', entry)
+                if direction == 'long':
+                    trailing_sl = peak_price * (1 - 0.03)
+                    if current <= trailing_sl:
+                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(价格回撤{(peak_price - current)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+                else:
+                    trailing_sl = peak_price * (1 + 0.03)
+                    if current >= trailing_sl:
+                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(价格回撤{(current - peak_price)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
 
         if pnl_pct <= -SL_PCT:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
@@ -1390,8 +1498,8 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             # 计算仓位
             # P1 Fix: 使用OKX合约真实乘数计算张数
             # sz = 仓位USD / (入场价 × 每张合约的币数量)
-            # 之前硬编码100导致DOGE张数偏大10倍(DOGE乘数=1000不是100)
-            multiplier = CONTRACT_MULTIPLIER.get(best['symbol'], 1)
+            # P1 Fix: 从OKX API获取合约乘数，失败则用硬编码后备
+            multiplier = fetch_contract_multiplier(best['symbol'])
             sz_dollar = equity * POSITION_SIZE_PCT
             entry = best['entry']
             contract_value_usd = entry * multiplier  # 每张合约的USD价值
