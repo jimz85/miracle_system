@@ -128,7 +128,7 @@ class LoopState:
     strategy_quality_score: float = 0.5  # 0-1
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "stage": self.stage.value,
             "iteration": self.iteration,
             "best_sharpe": self.best_sharpe,
@@ -139,6 +139,25 @@ class LoopState:
             "market_regime": self.market_regime,
             "strategy_quality_score": self.strategy_quality_score,
         }
+        if self.best_config is not None:
+            result["best_config"] = self.best_config.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "LoopState":
+        state = cls()
+        state.stage = LoopStage(d.get("stage", "data_collection"))
+        state.iteration = d.get("iteration", 0)
+        state.best_sharpe = d.get("best_sharpe", 0.0)
+        state.total_experiments = d.get("total_experiments", 0)
+        state.kept_count = d.get("kept", 0)
+        state.discarded_count = d.get("discarded", 0)
+        state.crashed_count = d.get("crashed", 0)
+        state.market_regime = d.get("market_regime", "unknown")
+        state.strategy_quality_score = d.get("strategy_quality_score", 0.5)
+        if "best_config" in d and d["best_config"]:
+            state.best_config = StrategyConfig.from_dict(d["best_config"])
+        return state
 
 
 # ===== 数据收集模块 =====
@@ -845,6 +864,15 @@ class AutonomousLoop:
                 logger.info(f"[AutonomousLoop] 时间限制到达 ({max_time_minutes}min)")
                 break
 
+            # ε-greedy探索: 10%概率随机探索以避免局部最优
+            if random.random() < 0.1:
+                hyp = self.hyp_generator.generate_random_mutation(baseline_config)
+                mutated_dict = baseline_config.to_dict()
+                for k, v in hyp.mutations.items():
+                    mutated_dict[k] = v
+                baseline_config = StrategyConfig.from_dict(mutated_dict)
+                logger.info(f"ε-greedy: 从随机基线探索 ({hyp.description})")
+
             # 运行迭代
             kept = self.run_iteration(baseline_config)
 
@@ -912,6 +940,16 @@ def main():
             with open(state_file) as f:
                 saved_state = json.load(f)
             logger.info(f"[main] 恢复状态: iteration={saved_state.get('iteration')}")
+            # Restore state fields
+            loop.state.iteration = saved_state.get('iteration', 0)
+            loop.state.best_sharpe = saved_state.get('best_sharpe', 0)
+            # Restore best_config if saved
+            best_config_path = RESULTS_DIR / "best_config.json"
+            if best_config_path.exists():
+                with open(best_config_path) as f:
+                    best_data = json.load(f)
+                loop.state.best_config = StrategyConfig.from_dict(best_data)
+                logger.info(f"[main] 恢复best_config: sharpe={loop.state.best_sharpe}")
 
     best_config = loop.run(
         n_iterations=args.experiments,

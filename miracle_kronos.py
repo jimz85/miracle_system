@@ -25,6 +25,7 @@ import logging
 import os
 import sys
 import time
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from datetime import datetime
@@ -109,7 +110,6 @@ def _sign(ts, method, path, body=''):
     import base64
     import hashlib
     import hmac
-    os.environ.get('OKX_API_KEY', '')
     secret = os.environ.get('OKX_SECRET', '')
     msg = ts + method + path + body
     return base64.b64encode(hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()).decode()
@@ -170,13 +170,18 @@ def okx_req(method, path, body=''):
 
 # ===== 核心指标计算 =====
 def calc_rsi(prices, period=14):
+    """RSI with Wilder's Smoothing (same as core/factor_calculations.py)"""
     if len(prices) < period + 1:
         return 50.0
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-    gains = [d if d > 0 else 0 for d in deltas[-period:]]
-    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
+    deltas = np.diff(prices)
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    avg_gain = float(np.mean(gains[:period]))
+    avg_loss = float(np.mean(losses[:period]))
+    alpha = 1.0 / period
+    for i in range(period, len(gains)):
+        avg_gain = avg_gain + alpha * (gains[i] - avg_gain)
+        avg_loss = avg_loss + alpha * (losses[i] - avg_loss)
     if avg_loss == 0:
         return 100.0
     rs = avg_gain / avg_loss
@@ -355,9 +360,9 @@ def voting_vote(factors: dict, weights: dict) -> dict:
     # ---- ADX因子 ----
     adx_vote = 0
     if adx > 30:
-        adx_vote = 2   # 强趋势确认
+        adx_vote = 1   # 强趋势确认 (上限1.0，与其他因子对齐)
     elif adx > 22:
-        adx_vote = 1
+        adx_vote = 0.5
     elif adx < 15:
         adx_vote = 0   # 无趋势
 
@@ -374,10 +379,10 @@ def voting_vote(factors: dict, weights: dict) -> dict:
 
     # ---- Vol ----
     vol_vote = 0
-    if vol_ratio < 0.7:
-        vol_vote = 0.5  # 低波幅 → 即将突破
-    elif vol_ratio > 1.5:
-        vol_vote = -0.5  # 高波幅 → 趋势可能反转
+    if vol_ratio > 1.5:
+        vol_vote = 0.5  # 高波幅 → 趋势确认（趋势跟踪系统的正常状态）
+    elif vol_ratio < 0.7:
+        vol_vote = -0.5  # 低波幅 → 犹豫/假突破风险
 
     # ---- MACD ----
     macd_vote = 0
@@ -522,19 +527,31 @@ def get_ticker(instId):
     return 0
 
 # ===== 白名单模式学习 (from Miracle agent_signal.py) =====
+_whitelist_cache = {'timestamp': 0, 'data': None, 'ttl': 5}  # 5-second TTL cache
+
 def load_whitelist():
+    import time
+    now = time.time()
+    if _whitelist_cache['data'] is not None and (now - _whitelist_cache['timestamp']) < _whitelist_cache['ttl']:
+        return _whitelist_cache['data']
     wl_file = STATE_DIR / 'whitelist.json'
     if wl_file.exists():
         try:
             data = json.load(open(wl_file))
             # 确保blacklist始终为set
             data['blacklist'] = set(data.get('blacklist', []))
+            _whitelist_cache['data'] = data
+            _whitelist_cache['timestamp'] = now
             return data
         except Exception:
             pass
-    return {'patterns': {}, 'blacklist': set()}
+    data = {'patterns': {}, 'blacklist': set()}
+    _whitelist_cache['data'] = data
+    _whitelist_cache['timestamp'] = now
+    return data
 
 def save_whitelist(wl):
+    _whitelist_cache['data'] = None  # invalidate cache
     atomic_write_json(STATE_DIR / 'whitelist.json', {'patterns': wl['patterns'], 'blacklist': list(wl['blacklist'])})
 
 Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
@@ -574,7 +591,7 @@ def _rule_based_vote(rsi, adx, bb_pos):
     return max(0.0, min(1.0, score))
 
 
-def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
+def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, di_plus=None, di_minus=None, cache_ttl=300):
     """调用gemma4获取方向判断，每币独立缓存5分钟
     返回0-1置信度分数：
     - 1.0 = 强烈LONG
@@ -634,6 +651,14 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
     else:
         bb_desc = "价格在中部"
 
+    # DI方向解读
+    di_desc = ""
+    if di_plus is not None and di_minus is not None:
+        if di_plus > di_minus:
+            di_desc = f"DI+({di_plus:.1f}) > DI-({di_minus:.1f}) → 多头趋势"
+        else:
+            di_desc = f"DI-({di_minus:.1f}) > DI+({di_plus:.1f}) → 空头趋势"
+
     prompt = f"""你是专业加密货币操盘手。分析{symbol}短期走势。
 
 ## 市场数据
@@ -641,6 +666,7 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, cache_ttl=300):
 - ADX: {adx:.1f} → {trend_desc}
 - 布林带位置: {bb_pos:.1f}% → {bb_desc}
 - 当前价格: ${price:.4f}
+{f'- {di_desc}' if di_desc else ''}
 
 ## 你的任务
 作为职业操盘手，基于以上数据判断短期(1-4小时)方向和信心程度。
@@ -1209,7 +1235,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
     
     # ---- Gemma LLM 因子 (带缓存) ----
     current_price = closes_1h[-1]
-    gemma_vote = _gemma_vote_cached(symbol, rsi, adx, bb_pos, current_price)
+    gemma_vote = _gemma_vote_cached(symbol, rsi, adx, bb_pos, current_price, di_plus, di_minus)
 
     # ---- DOT极值RSI检测 ----
     # RSI < 5 = 极端超卖 → 强烈反弹信号 (仅在非强趋势时有效)
@@ -1247,9 +1273,6 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         return None
     
     # 评分
-    di_plus if vote['direction'] == 'long' else di_minus
-    abs(vote['score'])
-    
     # 综合评分 = IC投票分 × 4H确认修正 (now symmetric - both get 1.2x boost with 4H)
     mt_boost = 1.2 if btc_4h_confirmed else 1.0
 
