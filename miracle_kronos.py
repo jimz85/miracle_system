@@ -2006,12 +2006,24 @@ def main():
             from datetime import datetime as dt
             last_dt = dt.fromisoformat(last_update)
             if now.hour != last_dt.hour:
+                # 新的一小时：检查上一小时是否盈利
+                prev_hourly_snapshot = treasury.get('hourly_snapshot', equity)
                 treasury['hourly_snapshot'] = equity
                 treasury['hourly_snapshot_time'] = treasury.get('last_update', '')[:10]
+                # V6-3: 追踪连续盈利小时数用于tier降级
+                if equity > prev_hourly_snapshot:
+                    treasury['consecutive_win_hours'] = treasury.get('consecutive_win_hours', 0) + 1
+                    logger.info(f"连续盈利+1h: {treasury['consecutive_win_hours']}h (equity=${equity:.2f})")
+                else:
+                    treasury['consecutive_win_hours'] = 0
+                treasury['consecutive_loss_hours'] = 0  # 重置亏损计数
             if now.date() != last_dt.date():
                 treasury['daily_snapshot'] = equity
                 treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
                 treasury['session_start'] = equity
+                # 换日时重置连续计数（避免跨天累积）
+                treasury['consecutive_win_hours'] = 0
+                treasury['consecutive_loss_hours'] = 0
         except Exception as ex:
             logger.debug(f"更新treasury快照失败: {ex}")
             treasury['hourly_snapshot'] = equity
