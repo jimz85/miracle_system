@@ -84,16 +84,26 @@ logger = logging.getLogger('miracle_kronos')
 _pos_mode = 'net'  # 'net' or 'hedge', updated at startup
 
 def _detect_pos_mode():
-    """检测账户是net模式还是hedge模式"""
+    """检测账户是net模式还是hedge模式
+    P0 Fix: 用OKX账户配置API检测，不再依赖持仓推断
+    空仓时也能正确识别账户模式，避免Hedge账户开仓失败
+    """
     global _pos_mode
-    positions = get_positions()
-    for p in positions:
-        if p.get('sz', 0) != 0:
-            side = p.get('side', 'net')
-            _pos_mode = side if side in ('long', 'short') else 'net'
-            return _pos_mode
-    _pos_mode = 'net'
-    return 'net'
+    # 调用OKX账户配置API，posMode返回 'net_mode' 或 'long_short_mode'
+    data = okx_req('GET', '/api/v5/account/config')
+    if data.get('code') == '0' and data.get('data'):
+        pos_mode_str = data['data'][0].get('posMode', 'net_mode')
+        _pos_mode = 'hedge' if pos_mode_str != 'net_mode' else 'net'
+    else:
+        # API失败时用持仓推断作为fallback
+        positions = get_positions()
+        for p in positions:
+            if p.get('sz', 0) != 0:
+                side = p.get('side', 'net')
+                _pos_mode = 'hedge' if side in ('long', 'short') else 'net'
+                return _pos_mode
+        _pos_mode = 'net'  # 空仓且API失败，默认net
+    return _pos_mode
 
 # ===== 安全类型转换 =====
 def safe_float(val, default=0.0):
@@ -295,7 +305,8 @@ KRONOS_IC_FILE = Path(os.environ.get('KRONOS_IC_FILE', str(_KRONOS_IC_DEFAULT)))
 def load_ic_weights():
     if KRONOS_IC_FILE.exists():
         try:
-            d = json.load(open(KRONOS_IC_FILE))
+            with open(KRONOS_IC_FILE) as f:
+                d = json.load(f)
             w = d.get('weights', {})
             if w and sum(w.values()) > 0:
                 return w
@@ -443,7 +454,8 @@ def voting_vote(factors: dict, weights: dict) -> dict:
 def load_treasury():
     if TREASURY_FILE.exists():
         try:
-            return json.load(open(TREASURY_FILE))
+            with open(TREASURY_FILE) as f:
+                return json.load(f)
         except Exception as ex:
             logger.debug(f"load_treasury: 读取失败，使用默认状态: {ex}")
     from datetime import date, datetime
@@ -551,7 +563,8 @@ def load_whitelist():
     wl_file = STATE_DIR / 'whitelist.json'
     if wl_file.exists():
         try:
-            data = json.load(open(wl_file))
+            with open(wl_file) as f:
+                data = json.load(f)
             # 确保blacklist为dict并清洗过期项（7天TTL）
             raw_bl = data.get('blacklist', {})
             if isinstance(raw_bl, list):
@@ -645,7 +658,8 @@ def _gemma_vote_cached(symbol, rsi, adx, bb_pos, price, di_plus=None, di_minus=N
     with _gemma_cache_lock:
         if cache_file.exists():
             try:
-                all_cache = json.load(open(cache_file))
+                with open(cache_file) as f:
+                    all_cache = json.load(f)
                 entry = all_cache.get(symbol, {})
                 if entry.get('bucket') == now_bucket:
                     return entry.get('vote', 0)
@@ -805,7 +819,8 @@ confidence表示你对方向判断的确信程度：
             all_cache = {}
             if cache_file.exists():
                 try:
-                    all_cache = json.load(open(cache_file))
+                    with open(cache_file) as f:
+                        all_cache = json.load(f)
                 except Exception as e:
                     logger.debug(f"gemma_cache_write: 读取现缓存失败: {e}")
             all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100] if 'output' in dir() else ''}
@@ -855,7 +870,8 @@ def get_open_trades():
     """获取本地记录的OPEN交易"""
     if TRADES_FILE.exists():
         try:
-            all_trades = json.load(open(TRADES_FILE))
+            with open(TRADES_FILE) as f:
+                all_trades = json.load(f)
             return [t for t in all_trades if t.get('status') == 'OPEN']
         except Exception as ex:
             logger.debug(f"get_open_trades: 读取失败，返回空列表: {ex}")
@@ -878,7 +894,8 @@ def update_trade_pnl(trade, current_price):
 def load_trades():
     if TRADES_FILE.exists():
         try:
-            return json.load(open(TRADES_FILE))
+            with open(TRADES_FILE) as f:
+                return json.load(f)
         except Exception as ex:
             logger.debug(f"load_trades: 读取失败，返回空列表: {ex}")
     return []
@@ -1050,8 +1067,8 @@ def close_position(symbol: str, reason: str = "signal",
         'ordType': 'market',
         'sz': str(sz),
     }
-    # posSide only for hedge mode (not for net mode and not for local record 'long'/'short')
-    if pos_side and pos_side not in ('net', 'long', 'short', None, ''):
+    # posSide only in hedge mode — use global pos mode (set by _detect_pos_mode)
+    if _pos_mode != 'net' and pos_side:
         body['posSide'] = pos_side
     body = json.dumps(body)
     data = okx_req('POST', '/api/v5/trade/order', body)
