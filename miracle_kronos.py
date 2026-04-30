@@ -1851,6 +1851,20 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             multiplier = fetch_contract_multiplier(best['symbol'])
             # Dynamic position sizing based on signal strength
             base_pct = 0.02  # Base 2%
+            
+            # 回撤自适应：权益从高点回撤时削减仓位
+            peak_eq = treasury.get('peak_equity', equity)
+            drawdown_pct = (peak_eq - equity) / peak_eq if peak_eq > 0 else 0
+            if drawdown_pct > 0.15:
+                base_pct *= 0.25  # 回撤>15% → 仓位75%
+                logger.warning(f"大回撤{drawdown_pct:.1%}→仓位减75%")
+            elif drawdown_pct > 0.10:
+                base_pct *= 0.50  # 回撤>10% → 仓位减半
+                logger.warning(f"中回撤{drawdown_pct:.1%}→仓位减50%")
+            elif drawdown_pct > 0.05:
+                base_pct *= 0.75  # 回撤>5% → 仓位减25%
+                logger.info(f"小回撤{drawdown_pct:.1%}→仓位减25%")
+            
             score = best.get('score', 0.5)
             # Score 0.25→1x (2%), Score 0.75→1.5x (3%), Score 1.0→2x (4%)
             score_multiplier = 1.0 + (score - 0.25) * 2.0  # Normalized
@@ -2514,6 +2528,9 @@ def main():
         treasury['daily_snapshot'] = equity
         treasury['session_start'] = equity
     treasury['last_update'] = now.isoformat()
+    # 追踪权益峰值（用于回撤计算）
+    peak = treasury.get('peak_equity', equity)
+    treasury['peak_equity'] = max(peak, equity)
     save_treasury(treasury)
     
     # 输出结果
