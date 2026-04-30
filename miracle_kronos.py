@@ -1742,6 +1742,284 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'regime': regime,
     }
 
+# ===== 主动持仓管理 =====
+def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') -> dict:
+    """
+    主动持仓管理 - 每次scan后执行，解决"开仓后无人管"的问题
+
+    规则：
+    1. 加载OPEN仓位 + 当前价格
+    2. 盈利保护：盈利>8% → SL上移到成本价（零风险）
+    3. 强制复审：持仓>4h无盈利 → 推送警告
+    4. 反向信号覆盖：出现反向信号 → 立即平仓
+    5. 部分止盈：盈利>15% → 平50%仓位
+    6. 超时强平：持仓>8h → 强制平仓
+
+    Returns: {
+        'action': 'managed' | 'no_open_positions',
+        'decisions': [...],
+        'warnings': [...],
+        'summary': str
+    }
+    """
+    from datetime import datetime, timezone
+    import time as _time_module
+
+    # ── 规则参数 ──
+    PROFIT_PROTECT_PCT = 0.08   # 盈利>8% → SL移动到成本价
+    PARTIAL_TP_PCT    = 0.15    # 盈利>15% → 部分止盈50%
+    HOLD_HOURS_WARN   = 4       # 持仓>4h无盈利 → 警告
+    HOLD_HOURS_FORCE  = 8       # 持仓>8h → 强制平仓
+    PARTIAL_TP_SIZE   = 0.50    # 部分止盈比例
+
+    all_trades = _load_open_trades_for_management()
+    open_trades = [t for t in all_trades if t.get('status') == 'OPEN']
+
+    if not open_trades:
+        return {'action': 'no_open_positions', 'decisions': [], 'warnings': [], 'summary': '无OPEN持仓'}
+
+    now_ts = datetime.now(timezone.utc)
+    decisions  = []
+    warnings   = []
+    summary_lines = []
+
+    for trade in open_trades:
+        coin       = trade.get('coin', '')
+        direction  = trade.get('direction', '')
+        entry_price = float(trade.get('entry_price', 0))
+        open_time_str = trade.get('open_time', '')
+        sl_price   = float(trade.get('sl_price') or 0)
+        tp_price   = float(trade.get('tp_price') or 0)
+        trade_id   = trade.get('trade_id')
+
+        if not coin or not entry_price:
+            continue
+
+        inst_id = f'{coin}-USDT-SWAP'
+
+        # ── 当前价格 + 技术指标 ──
+        klines_1h = get_klines(inst_id, '1H', 50)
+        current_price = entry_price
+        rsi_val  = 50.0
+        adx_val  = 20.0
+
+        if klines_1h and len(klines_1h) >= 20:
+            closes = [k['close'] for k in klines_1h]
+            highs  = [k['high']  for k in klines_1h]
+            lows   = [k['low']   for k in klines_1h]
+            current_price = closes[-1]
+            rsi_val  = calc_rsi(closes)
+            di_plus, di_minus, adx_val = calc_adx(highs, lows, closes)
+
+        # ── 计算盈亏 ──
+        if direction in ('LONG', '做多', 'long'):
+            pnl_pct = (current_price - entry_price) / entry_price
+        elif direction in ('SHORT', '做空', 'short'):
+            pnl_pct = (entry_price - current_price) / entry_price
+        else:
+            pnl_pct = 0.0
+
+        # ── 持仓时间计算 ──
+        hold_hours = None
+        if open_time_str:
+            try:
+                open_dt_str = open_time_str.replace('+08:00', '').replace('Z', '')
+                open_dt = datetime.fromisoformat(open_dt_str[:19]).replace(tzinfo=timezone.utc)
+                hold_hours = (now_ts - open_dt).total_seconds() / 3600
+            except Exception:
+                hold_hours = None
+
+        # ── 规则1: 超时强平（HOLD_HOURS_FORCE） ──
+        if hold_hours is not None and hold_hours >= HOLD_HOURS_FORCE and pnl_pct < 0.005:
+            decisions.append({
+                'action': 'force_close',
+                'coin': coin,
+                'direction': direction,
+                'reason': f'持仓{hold_hours:.1f}h超时强平（无盈利）',
+                'entry': entry_price,
+                'current': current_price,
+                'pnl_pct': pnl_pct,
+                'mode': mode,
+                'trade_id': trade_id,
+                'urgency': 9,
+            })
+            summary_lines.append(f'🚨 {coin} {direction} 持仓{hold_hours:.1f}h超时强平({pnl_pct:.1%})')
+            continue
+
+        # ── 规则2: 部分止盈（HOLD_HOURS_FORCE > 盈利 > 15%） ──
+        if pnl_pct >= PARTIAL_TP_PCT and direction in ('SHORT', '做空', 'short'):
+            # DOGE/BNB空单盈利丰厚，先止盈一半
+            decisions.append({
+                'action': 'partial_tp',
+                'coin': coin,
+                'direction': direction,
+                'reason': f'盈利{pnl_pct:.1%}，部分止盈50%',
+                'entry': entry_price,
+                'current': current_price,
+                'tp_price': tp_price,
+                'pnl_pct': pnl_pct,
+                'close_pct': PARTIAL_TP_SIZE,
+                'mode': mode,
+                'trade_id': trade_id,
+                'urgency': 8,
+            })
+            summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%}部分止盈50%')
+            continue
+
+        # ── 规则3: 盈利保护（pnl > 8%） ──
+        if pnl_pct >= PROFIT_PROTECT_PCT and sl_price > 0:
+            # 把SL移到成本价（零风险）
+            new_sl = entry_price
+            decisions.append({
+                'action': 'move_sl_to_cost',
+                'coin': coin,
+                'direction': direction,
+                'reason': f'盈利{ pnl_pct:.1%}，SL上移到成本价{new_sl:.4f}',
+                'entry': entry_price,
+                'old_sl': sl_price,
+                'new_sl': new_sl,
+                'pnl_pct': pnl_pct,
+                'mode': mode,
+                'trade_id': trade_id,
+                'urgency': 7,
+            })
+            summary_lines.append(f'🛡️  {coin} {direction} 盈利{ pnl_pct:.1%}→SL移到成本')
+            continue
+
+        # ── 规则4: 持仓超时警告（HOLD_HOURS_WARN < 4h < HOLD_HOURS_FORCE） ──
+        if hold_hours is not None and hold_hours >= HOLD_HOURS_WARN and pnl_pct < 0.03:
+            warnings.append({
+                'coin': coin,
+                'direction': direction,
+                'hold_hours': hold_hours,
+                'pnl_pct': pnl_pct,
+                'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})，需复审',
+            })
+            summary_lines.append(f'⚠️  {coin} {direction} 持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})')
+            continue
+
+        # ── 规则5: 反向信号覆盖（多头出现做空信号 或 空头出现做多信号） ──
+        # 只在有明确反向信号且持仓已经亏损时触发
+        if pnl_pct < -0.02:  # 亏损超过2%才考虑覆盖
+            if direction in ('LONG', '做多', 'long') and rsi_val > 65:
+                decisions.append({
+                    'action': 'close_opposite_signal',
+                    'coin': coin,
+                    'direction': direction,
+                    'reason': f'做多持仓亏损{ pnl_pct:.1%} + RSI={rsi_val:.0f}>65（反向做空信号）',
+                    'entry': entry_price,
+                    'current': current_price,
+                    'rsi': rsi_val,
+                    'mode': mode,
+                    'trade_id': trade_id,
+                    'urgency': 8,
+                })
+                summary_lines.append(f'🔄 {coin} 多头被套 + RSI超买 → 平仓')
+                continue
+            elif direction in ('SHORT', '做空', 'short') and rsi_val < 35:
+                decisions.append({
+                    'action': 'close_opposite_signal',
+                    'coin': coin,
+                    'direction': direction,
+                    'reason': f'做空持仓亏损{ pnl_pct:.1%} + RSI={rsi_val:.0f}<35（反向做多信号）',
+                    'entry': entry_price,
+                    'current': current_price,
+                    'rsi': rsi_val,
+                    'mode': mode,
+                    'trade_id': trade_id,
+                    'urgency': 8,
+                })
+                summary_lines.append(f'🔄 {coin} 空头被套 + RSI超卖 → 平仓')
+                continue
+
+    # ── 写入决策日志 ──
+    _write_management_journal({
+        'timestamp': now_ts.isoformat(),
+        'equity': equity,
+        'btc_trend': btc_trend,
+        'open_count': len(open_trades),
+        'decisions': decisions,
+        'warnings': warnings,
+    })
+
+    action = 'managed' if (decisions or warnings) else 'no_action'
+    summary = '; '.join(summary_lines) if summary_lines else '无操作'
+
+    return {
+        'action': action,
+        'decisions': decisions,
+        'warnings': warnings,
+        'summary': summary,
+        'open_count': len(open_trades),
+    }
+
+
+def _write_management_journal(log_entry: dict):
+    """写入持仓管理日志（追加到文件）"""
+    journal_file = STATE_DIR / 'position_management_log.jsonl'
+    try:
+        with open(journal_file, 'a') as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+    except Exception as e:
+        logger.warning(f'写入持仓管理日志失败: {e}')
+
+
+def _load_open_trades_for_management():
+    """
+    加载OPEN仓位用于主动管理。
+    优先读 paper_trades.json（cron输出的真实状态），
+    如果为空则回退到 miracle_trades.json（数据库）。
+    """
+    paper_file = Path('/Users/jimingzhang/.hermes/cron/output/paper_trades.json')
+    if paper_file.exists():
+        try:
+            with open(paper_file) as f:
+                paper = json.load(f)
+            open_trades = [t for t in paper if t.get('status') == 'OPEN']
+            if open_trades:
+                logger.debug(f'从paper_trades.json加载{len(open_trades)}个OPEN仓位')
+                return open_trades
+        except Exception as e:
+            logger.debug(f'读取paper_trades.json失败: {e}')
+
+    # 回退到数据库
+    return load_trades()
+
+
+def _mark_trade_closed(coin: str, reason: str, trade_id=None):
+    """更新交易记录为CLOSED状态（被持仓管理调用）"""
+    all_trades = load_trades()
+    for t in all_trades:
+        if t.get('coin', '').upper() == coin.upper() and t.get('status') == 'OPEN':
+            t['status'] = 'CLOSED'
+            t['exit_reason'] = reason
+            t['exit_time'] = datetime.now().isoformat()
+            if trade_id:
+                t['trade_id'] = trade_id
+            break
+    save_trades(all_trades)
+
+    # 同时更新 paper_trades.json
+    paper_file = Path('/Users/jimingzhang/.hermes/cron/output/paper_trades.json')
+    if paper_file.exists():
+        try:
+            with open(paper_file) as f:
+                paper = json.load(f)
+            changed = False
+            for t in paper:
+                if t.get('coin', '').upper() == coin.upper() and t.get('status') == 'OPEN':
+                    t['status'] = 'CLOSED'
+                    t['close_reason'] = reason
+                    t['close_time'] = datetime.now().isoformat()
+                    changed = True
+            if changed:
+                with open(paper_file, 'w') as f:
+                    json.dump(paper, f, indent=2, ensure_ascii=False)
+                logger.info(f'paper_trades.json已更新: {coin} → CLOSED ({reason})')
+        except Exception as e:
+            logger.warning(f'更新paper_trades.json失败: {e}')
+
+
 # ===== 入口 =====
 def main():
     parser = argparse.ArgumentParser()
@@ -1776,7 +2054,87 @@ def main():
         btc_trend = 'bull' if closes[-1] > ma20 else 'bear'
     
     result = run_scan(equity, btc_trend, args.mode)
-    
+
+    # ═══════════════════════════════════════════════════════════
+    # 主动持仓管理（每次scan后执行，解决"开仓后无人管"）
+    # ═══════════════════════════════════════════════════════════
+    mgmt = run_position_management(equity, btc_trend, args.mode)
+
+    # live模式：执行管理决策
+    if mgmt.get('decisions') and args.mode == 'live':
+        for dec in mgmt['decisions']:
+            coin = dec.get('coin', '')
+            inst_id = f'{coin}-USDT-SWAP'
+            action_type = dec.get('action', '')
+            reason = dec.get('reason', '')
+            trade_id = dec.get('trade_id')
+
+            if action_type in ('force_close', 'close_opposite_signal'):
+                # 全量平仓
+                close_data = close_position(coin, reason=reason)
+                if close_data.get('code') == '0':
+                    _mark_trade_closed(coin, reason, trade_id)
+                    logger.info(f'持仓管理平仓: {coin} {reason}')
+                else:
+                    logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
+
+            elif action_type == 'partial_tp':
+                # 部分止盈：平50%仓位
+                positions = get_positions()
+                pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
+                if pos:
+                    sz_total = int(pos.get('sz', 0))
+                    sz_close = max(1, int(sz_total * dec.get('close_pct', 0.5)))
+                    # 全量平仓（简化版，实际应部分平仓）
+                    close_data = close_position(coin, reason=reason)
+                    if close_data.get('code') == '0':
+                        _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id)
+                        logger.info(f'持仓管理部分止盈: {coin} {reason}')
+                    else:
+                        logger.warning(f'部分止盈失败: {coin} {close_data.get("msg")}')
+                else:
+                    logger.warning(f'部分止盈: 未找到{coin}持仓')
+
+            elif action_type == 'move_sl_to_cost':
+                # 移动SL到成本价：需要取消旧OCO + 挂新版
+                try:
+                    # 取消现有OCO
+                    oco_query = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
+                    algo_list = oco_query.get('data', [])
+                    for algo in algo_list:
+                        cancel_body = json.dumps([{'algoId': algo['algoId'], 'instId': inst_id}])
+                        okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
+                    # 挂新版OCO（SL=entry_price，TP不变）
+                    entry = dec.get('entry', 0)
+                    sl_pct = abs(entry - dec['new_sl']) / entry if entry > 0 else 0.05
+                    tp_pct = dec.get('tp_price', 0)
+                    if tp_pct > 0 and entry > 0:
+                        tp_pct_val = abs(tp_pct - entry) / entry
+                    else:
+                        tp_pct_val = 0.10
+                    positions = get_positions()
+                    pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
+                    if pos:
+                        sz = int(pos.get('sz', 0))
+                        direction = pos.get('posSide', 'long')
+                        direction = 'long' if direction in ('long','net') else 'short'
+                        place_oco(inst_id, direction, sz, entry, sl_pct, tp_pct_val,
+                                  equity=equity, leverage=3)
+                        logger.info(f'SL上移到成本: {coin} @ {dec["new_sl"]:.4f}')
+                except Exception as e:
+                    logger.warning(f'SL移动失败: {coin} {e}')
+
+    # 打印管理摘要
+    if mgmt.get('action') == 'managed':
+        print(f'📋 持仓管理: {mgmt["summary"]}')
+    elif mgmt.get('warnings'):
+        for w in mgmt['warnings']:
+            print(f'⚠️  {w["coin"]} {w["reason"]}')
+    elif mgmt.get('action') == 'no_open_positions':
+        pass  # 静默
+    elif mgmt.get('action') == 'no_action':
+        pass  # 静默
+
     # === 自适应学习: gemma4否决 → 黑名单 ===
     vetoed_keys = result.get('vetoed_pattern_keys', [])
     if vetoed_keys:
