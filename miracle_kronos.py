@@ -136,15 +136,17 @@ def okx_req(method, path, body=''):
     for attempt in range(3):
         try:
             ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(_time.time() * 1000) % 1000)
+            # cancel-algos 必须用 POST，且签名也必须用 POST
+            actual_method = 'POST' if 'cancel-algos' in path else method
             headers = {
                 'OK-ACCESS-KEY': os.environ.get('OKX_API_KEY', ''),
-                'OK-ACCESS-SIGN': _sign(ts, method, path, body),
+                'OK-ACCESS-SIGN': _sign(ts, actual_method, path, body),
                 'OK-ACCESS-TIMESTAMP': ts,
                 'OK-ACCESS-PASSPHRASE': os.environ.get('OKX_PASSPHRASE', ''),
                 'x-simulated-trading': OKX_FLAG,
                 'Content-Type': 'application/json',
             }
-            r = requests.request(method, 'https://www.okx.com' + path, headers=headers, data=body, timeout=10)
+            r = requests.request(actual_method, 'https://www.okx.com' + path, headers=headers, data=body, timeout=10)
             # Retry on 429 (rate limit) and 5xx (server error)
             if r.status_code == 429:
                 retry_after = float(r.headers.get('Retry-After', 5))
