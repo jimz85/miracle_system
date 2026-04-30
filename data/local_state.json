@@ -10,9 +10,19 @@
     "status": "zombie_imported"
   },
   "DOGE-USDT-SWAP": {
-    "direction": "long",
+    "direction": "short",
     "entry_price": 0.1077,
     "contracts": 223.0,
+    "stop_loss": null,
+    "take_profit": null,
+    "algo_id": null,
+    "opened_at": null,
+    "status": "zombie_imported"
+  },
+  "BNB-USDT-SWAP": {
+    "direction": "long",
+    "entry_price": 615.78,
+    "contracts": 17.0,
     "stop_loss": null,
     "take_profit": null,
     "algo_id": null,
