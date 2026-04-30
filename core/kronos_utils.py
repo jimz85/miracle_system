@@ -177,7 +177,7 @@ def atomic_write_text(path: Path, content: str) -> None:
 TREASURY_LIMITS = {
     'hourly_loss_pct': 0.05,    # 5% per hour
     'daily_loss_pct': 0.10,     # 10% per day
-    'per_trade_pct': 0.02,      # 2% per trade
+    'per_trade_pct': 0.04,       # 4% per trade (P1-8 Fix: raised from 2% to enable dynamic sizing)
     'reserve_pct': 0.20,        # Keep 20% reserve
     'max_single_trade_pct': 0.05,  # Max 5% per single trade
     'min_equity': 1000,         # Min equity to trade

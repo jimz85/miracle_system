@@ -1626,8 +1626,12 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             contract_value_usd = entry * multiplier  # 每张合约的USD价值
             sz = max(1, int(sz_dollar / contract_value_usd))
 
-            # P1: 集中度检查 (still uses 2% as max)
-            new_trade_pct = min(position_pct, 0.02)  # Cap at 2% maximum
+            # P1-8 Fix: 移除 min(position_pct, 0.02) cap，让动态仓位真正生效
+            # score_multiplier范围 1.0x~2.0x，per_trade_pct=4%，position_pct范围 4%~8%
+            # max_single_trade_pct=5%作为硬上限（3x杠杆下8%仓位=24%合约价值，止损5%→单笔最大亏损0.25%资金）
+            # 集中度检查通过 new_trade_pct 参数介入
+            position_pct = min(position_pct, TREASURY_LIMITS['max_single_trade_pct'])  # 硬上限5%
+            new_trade_pct = position_pct
             concentration_allowed, conc_reason, conc_details = check_concentration(
                 symbol=best['symbol'],
                 new_trade_pct=new_trade_pct,
