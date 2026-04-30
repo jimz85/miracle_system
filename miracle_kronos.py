@@ -32,41 +32,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# ===== Agent学习模块 =====
-from agents.agent_learner import AgentLearner
-
-# ===== 内部模块 =====
-from core.kronos_utils import (
-    atomic_write_json,
-    CONCENTRATION_LIMITS,
-    TREASURY_LIMITS,
-    check_and_record_idempotent,
-    check_concentration,
-    check_existing_oco_orders,
-    check_treasury_tier,
-    check_treasury_trade_allowed,
-    generate_trade_idempotency_key,
-    parallel_scan_coins,
-    validate_oco_order,
-)
-from core.kronos_utils import (
-    get_account_balance as _get_balance,
-)
-from core.kronos_utils import (
-    okx_req as _okx_req,
-)
-from core.market_intel_base import (
-    get_fomc_confidence_multiplier,
-    get_market_regime,
-    get_regime_confidence_multiplier,
-)
-
-# ===== Memory模块 =====
-from core.memory import get_structured_memory
-
-# ===== Exchange & Price Factors =====
-from core.exchange_adapter import get_default_exchange
-from core.price_factors import PriceFactors
+# NOTE: Heavy imports moved to lazy (local) imports inside functions:
+#   - core.kronos_utils (atomic_write_json, CONCENTRATION_LIMITS, TREASURY_LIMITS,
+#     check_and_record_idempotent, check_concentration, check_existing_oco_orders,
+#     check_treasury_tier, check_treasury_trade_allowed, generate_trade_idempotency_key,
+#     parallel_scan_coins, validate_oco_order)
+#   - core.market_intel_base (get_fomc_confidence_multiplier, get_market_regime,
+#     get_regime_confidence_multiplier)
+#   - core.exchange_adapter (get_default_exchange)
+#   - core.price_factors (PriceFactors)
+#   - agents.agent_learner (AgentLearner)
+#   - core.memory (get_structured_memory)
 
 # ===== 配置 =====
 # OKX API key是simulation环境的，必须用x-simulated-trading:1
@@ -216,6 +192,7 @@ def load_ic_weights():
     return DEFAULT_WEIGHTS.copy()
 
 def save_ic_weights(weights):
+    from core.kronos_utils import atomic_write_json
     data = {'weights': weights, 'updated': datetime.now().isoformat()}
     atomic_write_json(IC_WEIGHTS_FILE, data)
 
@@ -465,6 +442,7 @@ def load_whitelist():
     return data
 
 def save_whitelist(wl):
+    from core.kronos_utils import atomic_write_json
     with _whitelist_lock:
         _whitelist_cache['data'] = None  # invalidate cache
     # blacklist为dict时直接序列化
@@ -764,6 +742,7 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
         equity: 账户权益（用于验证）
         leverage: 杠杆倍数，默认3x
     """
+    from core.kronos_utils import validate_oco_order, check_existing_oco_orders
     # P1: OCO订单验证
     valid, reason, details = validate_oco_order(
         instId, side, sz, entry_price, sl_pct, tp_pct, equity
@@ -1051,6 +1030,8 @@ def fetch_contract_multiplier(coin: str) -> float:
 
 def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
     """扫描单个币种"""
+    from core.exchange_adapter import get_default_exchange
+    from core.price_factors import PriceFactors
     if exchange is None:
         exchange = get_default_exchange()
     
@@ -1292,6 +1273,7 @@ def _get_memory_confidence_multiplier() -> float:
     Returns:
         float: 置信度乘数 (0.90, 1.00, 或 1.05)
     """
+    from core.memory import get_structured_memory
     try:
         memory = get_structured_memory()
         recent_trades = memory.get_trades(status='closed', limit=10)
@@ -1332,6 +1314,17 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     - 集中度检查: 仓位集中度限制
     - 日志幂等: 幂等日志写入
     """
+    from core.kronos_utils import (
+        check_treasury_tier,
+        check_treasury_trade_allowed,
+        parallel_scan_coins,
+    )
+    from core.market_intel_base import (
+        get_fomc_confidence_multiplier,
+        get_market_regime,
+        get_regime_confidence_multiplier,
+    )
+    from core.exchange_adapter import get_default_exchange
     treasury = load_treasury()
     
     # P0: Treasury预检查 - 交易前必须验证

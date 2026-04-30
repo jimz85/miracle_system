@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
-
-from core.kronos_utils import atomic_write_json
 
 logger = logging.getLogger('miracle_kronos')
 
@@ -62,5 +62,17 @@ def save_treasury(state):
                 state['consecutive_win_hours'] = 0  # 重置计数器
                 logger.info(f"Tier降级: {old_tier}→{state['tier']} (连续{consecutive_win_hours}h盈利)")
 
-    atomic_write_json(TREASURY_FILE, state)
+    # Inline atomic write to avoid importing slow core.kronos_utils
+    path = Path(TREASURY_FILE)
+    fd, tmp = tempfile.mkstemp(suffix='.json.tmp', dir=str(path.parent))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(path))
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 

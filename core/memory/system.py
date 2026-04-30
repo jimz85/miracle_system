@@ -22,8 +22,6 @@ from .structured_memory import (
     TradeRecord,
     get_structured_memory,
 )
-from .vector_memory import MemoryEntry, VectorMemory, get_vector_memory
-
 logger = logging.getLogger(__name__)
 
 
@@ -87,7 +85,7 @@ class MemorySystem:
     """
     
     def __init__(self, 
-                 vector_memory: VectorMemory | None = None,
+                 vector_memory: "VectorMemory | None" = None,
                  structured_memory: StructuredMemory | None = None):
         """
         初始化记忆系统
@@ -96,7 +94,8 @@ class MemorySystem:
             vector_memory: 向量记忆实例
             structured_memory: 结构化记忆实例
         """
-        self.vector = vector_memory or get_vector_memory()
+        from .vector_memory import VectorMemory as _VectorMemory, get_vector_memory as _get_vector_memory
+        self.vector = vector_memory or _get_vector_memory()
         self.structured = structured_memory or get_structured_memory()
     
     # ==================== Add Operations ====================
