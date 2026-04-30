@@ -454,7 +454,7 @@ def save_whitelist(wl):
 _gemma_cache_lock = threading.Lock()
 Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
 
-def _rule_based_vote(rsi, adx, bb_pos):
+def _rule_based_vote(rsi, adx, bb_pos, di_plus=None, di_minus=None):
     """基于RSI/ADX/布林带的规则化方向投票（当Gemma不可用时使用）
     返回0.0-1.0：1.0=强烈LONG，0.0=强烈SHORT，0.5=中立
     """
@@ -470,15 +470,22 @@ def _rule_based_vote(rsi, adx, bb_pos):
     elif rsi > 60:
         score -= 0.15
     
-    # ADX打分：趋势强度（P3 Fix: 与voting_vote主路径对齐）
-    # 主路径: ADX>30→adx_vote=1 (贡献0.12), ADX>22→0.5(贡献0.06)
-    # fallback: ADX>30→+0.10, ADX>22→+0.05, ADX<15→-0.05
+    # ADX打分：趋势强度 + 方向（与voting_vote主路径对齐）
+    # 主路径: ADX>30→adx_vote=1(贡献≈0.12), ADX>22→0.5(贡献≈0.06)
+    # fallback: ADX>30→+0.12, ADX>22→+0.06, ADX<15→-0.05（已对齐）
+    # 当di_plus/di_minus可用时，用方向修正ADX信号（趋势跟踪方向）
     if adx > 30:
-        score += 0.10  # 强趋势确认（与主路径0.12可比）
+        score += 0.12  # 强趋势确认
+        if di_plus is not None and di_minus is not None:
+            # DI+ > DI- → 多头趋势，+0.05；DI- > DI+ → 空头趋势，-0.05
+            if di_plus > di_minus:
+                score += 0.05
+            elif di_minus > di_plus:
+                score -= 0.05
     elif adx > 22:
-        score += 0.05  # 中等趋势
+        score += 0.06  # 中等趋势
     elif adx < 15:
-        score -= 0.05  # 震荡市场，谨慎
+        score -= 0.05  # 震荡市场，RSI均值回归优先
     
     # 布林带打分：价格在低位偏多，高位偏空
     if bb_pos < 20:
@@ -618,23 +625,23 @@ confidence表示你对方向判断的确信程度：
                     vote = 0.4   # 弱SHORT → (0.4-0.5)*2 = -0.2
                 else:
                     # 解析失败 → 使用规则回退
-                    vote = _rule_based_vote(rsi, adx, bb_pos)
+                    vote = _rule_based_vote(rsi, adx, bb_pos, di_plus, di_minus)
                     failure_type = 'parse'
         except Exception as ex:
             # 解析异常 → 使用规则回退
             logger.debug(f" Gemma解析异常，使用规则回退: {ex}")
-            vote = _rule_based_vote(rsi, adx, bb_pos)
+            vote = _rule_based_vote(rsi, adx, bb_pos, di_plus, di_minus)
             failure_type = 'parse'
 
     except subprocess.TimeoutExpired:
         # 超时 → 使用规则回退
-        vote = _rule_based_vote(rsi, adx, bb_pos)
+        vote = _rule_based_vote(rsi, adx, bb_pos, di_plus, di_minus)
         failure_type = 'timeout'
 
     except Exception as ex:
         # 其他异常 → 使用规则回退
         logger.debug(f" Gemma调用异常，使用规则回退: {ex}")
-        vote = _rule_based_vote(rsi, adx, bb_pos)
+        vote = _rule_based_vote(rsi, adx, bb_pos, di_plus, di_minus)
         failure_type = 'error'
 
     # ---- 保存状态（单一出口，避免double write）----
