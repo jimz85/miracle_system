@@ -1236,7 +1236,23 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         '_4h_direction': _4h_direction,
         '_4h_strength': _4h_strength,
     }
-    vote = voting_vote(factors, weights)
+    # ---- 市场状态自适应权重 ----
+    # 震荡市(ADX<20)：增强均值回归因子(RSI/Bollinger)，削弱趋势因子(ADX/MACD/BTC)
+    # 趋势市(ADX>25)：恢复默认权重全集
+    # 过渡区(20-25)：默认权重，不做调整
+    regime_weights = weights.copy()
+    if adx < 20:
+        # 震荡市 → RSI+0.08, Bollinger+0.08, ADX-0.06, MACD-0.06, BTC-0.04
+        for k, delta in {'RSI': 0.08, 'Bollinger': 0.08, 'ADX': -0.06, 'MACD': -0.06, 'BTC': -0.04}.items():
+            if k in regime_weights:
+                regime_weights[k] = max(0.0, regime_weights.get(k, 0) + delta)
+        total = sum(regime_weights.values())
+        if total > 0:
+            for k in regime_weights:
+                regime_weights[k] /= total
+        logger.debug(f"[{symbol}] 震荡市权重调整: RSI={regime_weights.get('RSI', 0):.2f} Bollinger={regime_weights.get('Bollinger', 0):.2f}")
+
+    vote = voting_vote(factors, regime_weights)
     
     if vote['direction'] == 'wait':
         return None
