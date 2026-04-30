@@ -912,7 +912,7 @@ def close_position(symbol: str, reason: str = "signal",
             algo_list = oco_query.get('data', [])
             if algo_list:
                 # Cancel each active OCO order
-                cancel_body = json.dumps([{'algoId': o['algoId'], 'instId': inst_id} for o in algo_list])
+                cancel_body = json.dumps([{'algoId': str(o['algoId']), 'instId': inst_id} for o in algo_list])
                 cancel_result = okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
                 if cancel_result.get('code') == '0':
                     logger.info(f"[{symbol}] 取消OCO订单成功 ({len(algo_list)}个)")
@@ -2100,7 +2100,7 @@ def main():
                     oco_query = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
                     algo_list = oco_query.get('data', [])
                     for algo in algo_list:
-                        cancel_body = json.dumps([{'algoId': algo['algoId'], 'instId': inst_id}])
+                        cancel_body = json.dumps([{'algoId': str(algo['algoId']), 'instId': inst_id}])
                         okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
                     # 挂新版OCO（SL=entry_price，TP不变）
                     entry = dec.get('entry', 0)
