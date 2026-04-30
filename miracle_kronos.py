@@ -1796,6 +1796,29 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'vetoed_pattern_keys': vetoed_pattern_keys,
                 }
             
+            # ---- 币种相关性风控：高相关币种减仓 ----
+            # 已知相关性矩阵（1H, 来自历史数据）
+            CORRELATION_MAP = {
+                'BTC': {'ETH': 0.85, 'SOL': 0.55, 'DOGE': 0.40, 'XRP': 0.50},
+                'ETH': {'BTC': 0.85, 'SOL': 0.60, 'DOGE': 0.45, 'AVAX': 0.65},
+                'SOL': {'AVAX': 0.75, 'ETH': 0.60, 'BTC': 0.55, 'DOGE': 0.35},
+                'AVAX': {'SOL': 0.75, 'ETH': 0.65, 'BTC': 0.50},
+                'DOGE': {'SHIB': 0.80, 'BTC': 0.40, 'ETH': 0.45, 'SOL': 0.35},
+                'SHIB': {'DOGE': 0.80},
+                'XRP': {'ADA': 0.65, 'BTC': 0.50},
+                'ADA': {'XRP': 0.65, 'BTC': 0.45},
+            }
+            for p in positions:
+                p_coin = p.get('instId', '').replace('-USDT-SWAP', '')
+                if p_coin in CORRELATION_MAP.get(best['symbol'], {}):
+                    corr = CORRELATION_MAP[best['symbol']][p_coin]
+                    if corr >= 0.7:
+                        sz = max(1, int(sz * 0.5))
+                        logger.info(f"[{best['symbol']}] 相关性风险: {p_coin} corr={corr:.2f} → 仓位减半({sz}张)")
+                    elif corr >= 0.5:
+                        sz = max(1, int(sz * 0.75))
+                        logger.info(f"[{best['symbol']}] 相关性风险: {p_coin} corr={corr:.2f} → 仓位减25%({sz}张)")
+
             # P1: OCO下单 (带equity参数用于验证, leverage基于ADX动态)
             # Dynamic leverage based on trend strength (ADX)
             adx = best.get('adx', 20)
