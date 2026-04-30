@@ -33,7 +33,9 @@ def load_treasury():
         'equity': 100000, 'hourly_snapshot': 100000, 'hourly_snapshot_time': now[:10],
         'daily_snapshot': 100000, 'daily_snapshot_time': now[:10],
         'tier': 'normal', 'consecutive_loss_hours': 0,
-        'consecutive_win_hours': 0, 'last_update': now
+        'consecutive_win_hours': 0,
+        'gemma_consecutive_failures': 0,  # Gemma tier upgrade tracking
+        'last_update': now
     }
 
 def save_treasury(state):
