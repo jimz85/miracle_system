@@ -69,7 +69,9 @@ from core.exchange_adapter import get_default_exchange
 from core.price_factors import PriceFactors
 
 # ===== 配置 =====
-OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=模拟, 0=实盘
+# OKX API key是simulation环境的，必须用x-simulated-trading:1
+# OKX_FLAG控制的是"是否模拟交易"，这个key本身就是在OKX simulation账户里用真钱交易
+OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=simulation交易(用此key), 0=真实账户
 STATE_DIR = Path(__file__).parent / 'data'
 STATE_DIR.mkdir(exist_ok=True)
 TREASURY_FILE = STATE_DIR / 'miracle_treasury.json'
