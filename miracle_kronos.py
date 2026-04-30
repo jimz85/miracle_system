@@ -199,7 +199,7 @@ def save_ic_weights(weights):
 
 # ===== 模式胜率历史（出场反馈闭环） =====
 def load_pattern_history():
-    """加载模式胜率历史"""
+    """加载模式胜率历史，含期望值统计"""
     if PATTERN_HISTORY_FILE.exists():
         try:
             with open(PATTERN_HISTORY_FILE) as f:
@@ -217,7 +217,7 @@ def save_pattern_history(history):
         logger.debug(f"save_pattern_history: 写入失败: {ex}")
 
 def record_pattern_outcome(pattern_key: str, won: bool, pnl_pct: float):
-    """记录一个模式的出场结果"""
+    """记录一个模式的出场结果，含期望值计算"""
     history = load_pattern_history()
     patterns = history.setdefault('patterns', {})
     # 更新全局统计
@@ -228,15 +228,23 @@ def record_pattern_outcome(pattern_key: str, won: bool, pnl_pct: float):
         history['losses'] = history.get('losses', 0) + 1
     # 更新模式统计
     if pattern_key not in patterns:
-        patterns[pattern_key] = {'entries': 0, 'wins': 0, 'losses': 0, 'total_pnl': 0.0}
+        patterns[pattern_key] = {'entries': 0, 'wins': 0, 'losses': 0,
+                                 'total_pnl': 0.0, 'total_win_pnl': 0.0, 'total_loss_pnl': 0.0}
     p = patterns[pattern_key]
     p['entries'] += 1
     p['total_pnl'] += pnl_pct
     if won:
         p['wins'] += 1
+        p['total_win_pnl'] = p.get('total_win_pnl', 0.0) + pnl_pct
     else:
         p['losses'] += 1
-    logger.debug(f"Pattern记录: {pattern_key} {'WIN' if won else 'LOSS'} ({pnl_pct:+.1%}, 累计{p['entries']}次, {p['wins']/max(p['entries'],1):.0%})")
+        p['total_loss_pnl'] = p.get('total_loss_pnl', 0.0) + pnl_pct
+    # 计算期望值: win_rate × avg_win - loss_rate × avg_loss
+    if p['entries'] >= 3:
+        win_rate = p['wins'] / p['entries']
+        avg_win = p.get('total_win_pnl', 0) / max(p['wins'], 1)
+        avg_loss = abs(p.get('total_loss_pnl', 0)) / max(p['losses'], 1)
+        p['expected_value'] = round(win_rate * avg_win - (1 - win_rate) * avg_loss, 4)
     save_pattern_history(history)
 
 def get_pattern_adjustment(pattern_key: str) -> float:
@@ -1849,34 +1857,54 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             # sz = 仓位USD / (入场价 × 每张合约的币数量)
             # P1 Fix: 从OKX API获取合约乘数，失败则用硬编码后备
             multiplier = fetch_contract_multiplier(best['symbol'])
-            # Dynamic position sizing based on signal strength
-            base_pct = 0.02  # Base 2%
             
-            # 回撤自适应：权益从高点回撤时削减仓位
+            # 回撤自适应 (复用给新risk_pct)
             peak_eq = treasury.get('peak_equity', equity)
             drawdown_pct = (peak_eq - equity) / peak_eq if peak_eq > 0 else 0
-            if drawdown_pct > 0.15:
-                base_pct *= 0.25  # 回撤>15% → 仓位75%
-                logger.warning(f"大回撤{drawdown_pct:.1%}→仓位减75%")
-            elif drawdown_pct > 0.10:
-                base_pct *= 0.50  # 回撤>10% → 仓位减半
-                logger.warning(f"中回撤{drawdown_pct:.1%}→仓位减50%")
-            elif drawdown_pct > 0.05:
-                base_pct *= 0.75  # 回撤>5% → 仓位减25%
-                logger.info(f"小回撤{drawdown_pct:.1%}→仓位减25%")
             
             score = best.get('score', 0.5)
-            # Score 0.25→1x (2%), Score 0.75→1.5x (3%), Score 1.0→2x (4%)
-            score_multiplier = 1.0 + (score - 0.25) * 2.0  # Normalized
-            score_multiplier = max(1.0, min(2.0, score_multiplier))  # Clamp 1x-2x
-            position_pct = base_pct * score_multiplier
-            # P1-8 Fix: 先cap再算sz，保证sz和concentration用同一百分比
-            position_pct = min(position_pct, TREASURY_LIMITS['max_single_trade_pct'])  # 硬上限5%
-            sz_dollar = equity * position_pct
+            # Score-based confidence multiplier
+            score_multiplier = 1.0 + (score - 0.25) * 2.0
+            score_multiplier = max(1.0, min(2.0, score_multiplier))
+            
+            # ── 核心③: 固定风险仓位（职业交易员标准） ──
+            # 每笔固定风险1% equity，强信号×2，回撤时递减
+            # 公式: sz = risk_amount / (|entry - SL| × multiplier)
+            RISK_PER_TRADE = 0.01  # 基准: 每笔风险1%
+            risk_pct = RISK_PER_TRADE
+            risk_pct *= score_multiplier  # 强信号多冒点险(1-2%)
+            # 安全上限: 最大风险不超过5%（极端回撤保护）
+            risk_pct = min(risk_pct, 0.05)
+            # 回撤自适应
+            if drawdown_pct > 0.15:
+                risk_pct *= 0.25
+                logger.warning(f"大回撤{drawdown_pct:.1%}→风险减75%")
+            elif drawdown_pct > 0.10:
+                risk_pct *= 0.50
+                logger.warning(f"中回撤{drawdown_pct:.1%}→风险减50%")
+            elif drawdown_pct > 0.05:
+                risk_pct *= 0.75
+                logger.info(f"小回撤{drawdown_pct:.1%}→风险减25%")
+            risk_amount = equity * risk_pct  # 固定风险金额
+            
             entry = best['entry']
-            contract_value_usd = entry * multiplier  # 每张合约的USD价值
-            sz = max(1, int(sz_dollar / contract_value_usd))
-            new_trade_pct = position_pct
+            sl_pct_trade = best.get('sl', SL_PCT)  # 动态SL%
+            # SL价格距离 = entry × sl_pct
+            if best['direction'] == 'long':
+                sl_distance = entry * sl_pct_trade
+            else:
+                sl_distance = entry * sl_pct_trade  # SHORT的SL也在entry上方sl_pct距离
+            risk_per_contract = sl_distance * multiplier  # 每张合约的风险美元值
+            sz = max(1, int(risk_amount / risk_per_contract)) if risk_per_contract > 0 else 1
+            # 名义值上限: 单仓不超过20% equity（防止杠杆过大）
+            MAX_NOTIONAL_PCT = 0.20
+            notional_cap = int(equity * MAX_NOTIONAL_PCT / (entry * multiplier))
+            if sz > notional_cap:
+                logger.info(f"名义值上限: {sz}→{notional_cap}张 ({MAX_NOTIONAL_PCT:.0%} equity)")
+                sz = max(1, notional_cap)
+            # 同时算notional%用于集中度检查
+            notional_value = sz * entry * multiplier
+            new_trade_pct = notional_value / equity
             concentration_allowed, conc_reason, conc_details = check_concentration(
                 symbol=best['symbol'],
                 new_trade_pct=new_trade_pct,
