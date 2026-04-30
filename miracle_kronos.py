@@ -20,9 +20,12 @@ P0+P1修复:
   python miracle_kronos.py --mode live
 """
 import argparse
-import json
-import logging
 import os
+import sys
+import json
+import math
+import fcntl
+import logging
 import threading
 import time
 import numpy as np
@@ -31,6 +34,7 @@ from functools import partial
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import logging
 
 # NOTE: Heavy imports moved to lazy (local) imports inside functions:
 #   - core.kronos_utils (atomic_write_json, CONCENTRATION_LIMITS, TREASURY_LIMITS,
@@ -50,6 +54,7 @@ from typing import Any, Dict, List, Optional, Tuple
 OKX_FLAG = os.environ.get('OKX_FLAG', '1')  # 1=simulation交易(用此key), 0=真实账户
 STATE_DIR = Path(__file__).parent / 'data'
 STATE_DIR.mkdir(exist_ok=True)
+SCRIPT_DIR = Path(__file__).parent.resolve()
 TREASURY_FILE = STATE_DIR / 'miracle_treasury.json'
 TRADES_FILE = STATE_DIR / 'miracle_trades.json'
 IC_WEIGHTS_FILE = STATE_DIR / 'factor_weights.json'
@@ -211,8 +216,8 @@ def load_pattern_history():
 def save_pattern_history(history):
     """保存模式胜率历史"""
     try:
-        with open(PATTERN_HISTORY_FILE, 'w') as f:
-            json.dump(history, f, indent=2)
+        from core.kronos_utils import atomic_write_json
+        atomic_write_json(PATTERN_HISTORY_FILE, history)
     except Exception as ex:
         logger.debug(f"save_pattern_history: 写入失败: {ex}")
 
@@ -2031,8 +2036,20 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                 # 自适应学习: 入场反馈
                 try:
                     from agents.agent_learner import AgentLearner
-                    learner = AgentLearner(str(STATE_DIR))
-                    pattern_key, is_allowed, trade_id = learner.on_trade_entry(trade)
+                    learner = AgentLearner(str(STATE_DIR.parent))
+                    # Convert trade dict fields for SQLite learner
+                    trade_for_learner = {
+                        "symbol": trade["coin"],
+                        "entry_time": trade["open_time"],
+                        "stop_loss": trade.get("sl_price"),
+                        "take_profit": trade.get("tp_price"),
+                        "direction": trade["direction"],
+                        "entry_price": trade["entry_price"],
+                        "pattern_key": trade.get("pattern_key"),
+                        "factors": {},
+                        "confidence": trade.get("confidence", 0.5),
+                    }
+                    pattern_key, is_allowed, trade_id = learner.on_trade_entry(trade_for_learner)
                     trade['trade_id'] = trade_id
                     logger.info(f"Agent-L入场记录: pattern={pattern_key} trade_id={trade_id} allowed={is_allowed}")
                 except Exception as e:
@@ -2175,7 +2192,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             })
             summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+{hold_hours:.1f}h → 强平')
         # 持仓>6h且亏损（非盈利） → 强制平
-        elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct < 0.02 and pnl_pct < 0:
+        elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct < 0:
             decisions.append({
                 'action': 'force_close',
                 'coin': coin,
@@ -2276,7 +2293,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                     })
                     summary_lines.append(f'🔄 {coin} 空头亏损{pnl_pct:.1%}+RSI超卖 → 平仓')
         # ── 规则5: 持仓超时警告（>3h无盈利，未触发上面规则） ──
-        elif hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct < 0.03:
+        elif hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= 0:
             warnings.append({
                 'coin': coin,
                 'direction': direction,
@@ -2324,7 +2341,7 @@ def _load_open_trades_for_management():
     优先读 paper_trades.json（cron输出的真实状态），
     如果为空则回退到 miracle_trades.json（数据库）。
     """
-    paper_file = Path('/Users/jimingzhang/.hermes/cron/output/paper_trades.json')
+    paper_file = Path.home() / ".hermes" / "cron" / "output" / "paper_trades.json"
     if paper_file.exists():
         try:
             with open(paper_file) as f:
@@ -2371,7 +2388,7 @@ def _mark_trade_closed(coin: str, reason: str, trade_id=None, pnl_pct=None):
             logger.debug(f"出场反馈失败: {ex}")
 
     # 同时更新 paper_trades.json
-    paper_file = Path('/Users/jimingzhang/.hermes/cron/output/paper_trades.json')
+    paper_file = Path.home() / ".hermes" / "cron" / "output" / "paper_trades.json"
     if paper_file.exists():
         try:
             with open(paper_file) as f:
@@ -2491,13 +2508,30 @@ def main():
     
     # manage模式：只持仓管理，不开新仓
     if args.mode == 'manage':
-        mgmt = run_position_management(equity, btc_trend, 'live')
-        if mgmt.get('decisions'):
-            for dec in mgmt['decisions']:
-                _execute_management_decision(dec, equity)
-        if mgmt.get('action') == 'managed':
-            summary_text = mgmt.get('summary', '')
-            print(f'📋 持仓管理: {summary_text}')
+        # 文件锁防冲突（与manage_positions.py共用）
+        lock_file = SCRIPT_DIR / "manage_positions.lock"
+        try:
+            lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, BlockingIOError, OSError):
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ⏭️  文件锁被占用，跳过本周期")
+            return
+        
+        try:
+            mgmt = run_position_management(equity, btc_trend, 'live')
+            if mgmt.get('decisions'):
+                for dec in mgmt['decisions']:
+                    _execute_management_decision(dec, equity)
+            if mgmt.get('action') == 'managed':
+                summary_text = mgmt.get('summary', '')
+                print(f'📋 持仓管理: {summary_text}')
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+            try:
+                lock_file.unlink()
+            except OSError:
+                pass
         return
     
     result = run_scan(equity, btc_trend, args.mode)

@@ -108,86 +108,28 @@ def run_management_cycle(equity: float, btc_trend: str, dry_run: bool = False):
     
     # Step 2: 调用原有的 run_position_management()
     mgmt = run_position_management(equity, btc_trend, 'live' if not dry_run else 'audit')
-    
+
     decisions = mgmt.get('decisions', [])
     warnings = mgmt.get('warnings', [])
-    
+
     if mgmt.get('action') == 'no_open_positions':
         print(f"  无OPEN持仓，跳过")
         append_journal({'action': 'noop', 'reason': 'no_open_positions'})
         return
-    
-    # Step 3: Gemma4 持仓评估（只在有持仓时）
-    if positions:
-        for pos in positions:
-            inst_id = pos.get('instId', '')
-            sym = inst_id.replace('-USDT-SWAP', '')
-            side = pos.get('side', 'long')
-            entry = pos.get('entry', 0)
-            sz = pos.get('sz', 0)
-            upl = pos.get('unrealized_pnl', 0)
-            
-            # 获取技术指标
-            current = get_ticker(inst_id)
-            if current == 0:
-                current = entry
-            
-            klines = get_klines(inst_id, '1H', 50)
-            if klines and len(klines) >= 30:
-                closes = [k['close'] for k in klines]
-                highs = [k['high'] for k in klines]
-                lows = [k['low'] for k in klines]
-                
-                rsi = calc_rsi(closes)
-                _, _, adx = calc_adx(highs, lows, closes)
-                bb_upper, bb_lower, bb_pos = None, None, 50
-                try:
-                    # calc_bollinger returns a tuple
-                    from miracle_kronos import calc_bollinger
-                    bb_result = calc_bollinger(closes)
-                    if bb_result and len(bb_result) >= 3:
-                        bb_upper, bb_lower, bb_pos = bb_result
-                except:
-                    pass
-                
-                # ⭐ Gemma4 持仓评估
-                if rsi > 0 and adx > 0:
-                    try:
-                        gemma_vote = _gemma_vote_cached(sym, rsi, adx, bb_pos, current, 0, 0)
-                        gemma_signal = (gemma_vote - 0.5) * 2  # → -1到+1
-                        
-                        # 计算盈亏方向
-                        pnl_pct = (current - entry) / entry if side in ('long', 'net') else (entry - current) / entry
-                        
-                        print(f"  🤖 Gemma评估 {sym}: gemma_vote={gemma_vote:.2f} signal={gemma_signal:+.2f} pnl={pnl_pct:.2%}")
-                        
-                        # Gemma强烈看空持仓方向 + 亏损 → 平仓
-                        if side in ('long', 'net') and gemma_signal < -0.5 and pnl_pct < 0:
-                            decisions.append({
-                                'action': 'force_close',
-                                'coin': sym,
-                                'direction': side,
-                                'reason': f'Gemma看空(pnl={pnl_pct:.1%})',
-                                'pnl_pct': pnl_pct,
-                                'urgency': 9,
-                                'source': 'gemma4',
-                            })
-                            print(f"  🚨 Gemma: {sym} 看空+亏损 → 平仓")
-                        elif side == 'short' and gemma_signal > 0.5 and pnl_pct < 0:
-                            decisions.append({
-                                'action': 'force_close',
-                                'coin': sym,
-                                'direction': side,
-                                'reason': f'Gemma看多(pnl={pnl_pct:.1%})',
-                                'pnl_pct': pnl_pct,
-                                'urgency': 9,
-                                'source': 'gemma4',
-                            })
-                            print(f"  🚨 Gemma: {sym} 看多+亏损 → 平仓")
-                    except Exception as e:
-                        logger.debug(f"Gemma评估失败 {sym}: {e}")
-    
-    # Step 4: 执行决策
+
+    # Step 2b: 决策去重 — 同一币种只保留最高urgency
+    seen_coins = {}
+    deduped = []
+    for d in sorted(decisions, key=lambda x: -x.get("urgency", 0)):
+        coin = d.get("coin", "")
+        if coin not in seen_coins:
+            seen_coins[coin] = True
+            deduped.append(d)
+        else:
+            print(f"  去重: {coin} 重复决策已合并")
+    decisions = deduped
+
+    # Step 3: 执行决策
     if not decisions:
         print(f"  无需操作")
         append_journal({'action': 'noop', 'reason': 'no_decisions'})
