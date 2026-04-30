@@ -54,6 +54,7 @@ TREASURY_FILE = STATE_DIR / 'miracle_treasury.json'
 TRADES_FILE = STATE_DIR / 'miracle_trades.json'
 IC_WEIGHTS_FILE = STATE_DIR / 'factor_weights.json'
 IDEMPOTENCY_LOG = STATE_DIR / 'trade_idempotency.json'
+PATTERN_HISTORY_FILE = STATE_DIR / 'pattern_history.json'  # 模式胜率历史
 
 # 日志配置
 logger = logging.getLogger('miracle_kronos')
@@ -195,6 +196,72 @@ def save_ic_weights(weights):
     from core.kronos_utils import atomic_write_json
     data = {'weights': weights, 'updated': datetime.now().isoformat()}
     atomic_write_json(IC_WEIGHTS_FILE, data)
+
+# ===== 模式胜率历史（出场反馈闭环） =====
+def load_pattern_history():
+    """加载模式胜率历史"""
+    if PATTERN_HISTORY_FILE.exists():
+        try:
+            with open(PATTERN_HISTORY_FILE) as f:
+                return json.load(f)
+        except Exception as ex:
+            logger.debug(f"load_pattern_history: 读取失败: {ex}")
+    return {'patterns': {}, 'total_trades': 0, 'wins': 0, 'losses': 0}
+
+def save_pattern_history(history):
+    """保存模式胜率历史"""
+    try:
+        with open(PATTERN_HISTORY_FILE, 'w') as f:
+            json.dump(history, f, indent=2)
+    except Exception as ex:
+        logger.debug(f"save_pattern_history: 写入失败: {ex}")
+
+def record_pattern_outcome(pattern_key: str, won: bool, pnl_pct: float):
+    """记录一个模式的出场结果"""
+    history = load_pattern_history()
+    patterns = history.setdefault('patterns', {})
+    # 更新全局统计
+    history['total_trades'] = history.get('total_trades', 0) + 1
+    if won:
+        history['wins'] = history.get('wins', 0) + 1
+    else:
+        history['losses'] = history.get('losses', 0) + 1
+    # 更新模式统计
+    if pattern_key not in patterns:
+        patterns[pattern_key] = {'entries': 0, 'wins': 0, 'losses': 0, 'total_pnl': 0.0}
+    p = patterns[pattern_key]
+    p['entries'] += 1
+    p['total_pnl'] += pnl_pct
+    if won:
+        p['wins'] += 1
+    else:
+        p['losses'] += 1
+    logger.debug(f"Pattern记录: {pattern_key} {'WIN' if won else 'LOSS'} ({pnl_pct:+.1%}, 累计{p['entries']}次, {p['wins']/max(p['entries'],1):.0%})")
+    save_pattern_history(history)
+
+def get_pattern_adjustment(pattern_key: str) -> float:
+    """根据历史胜率获取confidence调整系数
+    返回:
+        1.20 = 高确信度（胜率>66%且样本>=3）
+        1.10 = 轻微提升（胜率>50%且样本>=5）
+        1.00 = 中性（无数据或胜率50%左右）
+        0.70 = 轻微抑制（胜率<40%且样本>=3）
+        0.40 = 强烈抑制（胜率<30%且样本>=5）
+    """
+    history = load_pattern_history()
+    p = history.get('patterns', {}).get(pattern_key)
+    if not p or p['entries'] < 3:
+        return 1.0  # 样本不足，不调整
+    win_rate = p['wins'] / p['entries']
+    if win_rate > 0.66:
+        return 1.2
+    elif win_rate > 0.50 and p['entries'] >= 5:
+        return 1.1
+    elif win_rate < 0.30 and p['entries'] >= 5:
+        return 0.4
+    elif win_rate < 0.40 and p['entries'] >= 3:
+        return 0.7
+    return 1.0
 
 DEFAULT_WEIGHTS = {
     # Normalized to sum=1.0: RSI=0.12, ADX=0.12, Bollinger=0.24, Vol=0.08, MACD=0.20, BTC=0.13, Gemma=0.11
@@ -1258,7 +1325,17 @@ def select_best(candidates, positions, local_trades=None):
     
     if not filtered:
         return None, vetoed_pattern_keys
-    return max(filtered, key=lambda x: x['score']), vetoed_pattern_keys
+
+    # 模式历史调整：高胜率模式提升排序权重
+    def _adjusted_score(c):
+        adj = get_pattern_adjustment(c.get('pattern_key', ''))
+        return c['score'] * adj
+
+    best = max(filtered, key=_adjusted_score)
+    adj = get_pattern_adjustment(best.get('pattern_key', ''))
+    if adj != 1.0:
+        logger.info(f"模式历史调整: {best.get('pattern_key','?')} ×{adj:.2f} (分数 {best['score']:.3f}→{best['score']*adj:.3f})")
+    return best, vetoed_pattern_keys
 
 def _parallel_scan_wrapper(instId, symbol, equity, btc_trend, weights, exchange=None):
     """并行扫描包装器"""
@@ -1999,11 +2076,19 @@ def _load_open_trades_for_management():
     return load_trades()
 
 
-def _mark_trade_closed(coin: str, reason: str, trade_id=None):
-    """更新交易记录为CLOSED状态（被持仓管理调用）"""
+def _mark_trade_closed(coin: str, reason: str, trade_id=None, pnl_pct=None):
+    """更新交易记录为CLOSED状态（被持仓管理调用）
+    同时记录pattern胜率历史（出场反馈闭环）
+    """
+    pattern_key = None
+    entry_price = 0
+    direction = ''
     all_trades = load_trades()
     for t in all_trades:
         if t.get('coin', '').upper() == coin.upper() and t.get('status') == 'OPEN':
+            pattern_key = t.get('pattern_key')
+            entry_price = float(t.get('entry_price', 0))
+            direction = t.get('direction', '')
             t['status'] = 'CLOSED'
             t['exit_reason'] = reason
             t['exit_time'] = datetime.now().isoformat()
@@ -2011,6 +2096,15 @@ def _mark_trade_closed(coin: str, reason: str, trade_id=None):
                 t['trade_id'] = trade_id
             break
     save_trades(all_trades)
+
+    # 出场反馈：记录pattern胜率
+    if pattern_key and pnl_pct is not None:
+        try:
+            won = pnl_pct > 0  # 正收益=胜，负收益=负
+            record_pattern_outcome(pattern_key, won, pnl_pct)
+            logger.debug(f"出场反馈: {coin} {pattern_key} {'WIN' if won else 'LOSS'} ({pnl_pct:+.1%})")
+        except Exception as ex:
+            logger.debug(f"出场反馈失败: {ex}")
 
     # 同时更新 paper_trades.json
     paper_file = Path('/Users/jimingzhang/.hermes/cron/output/paper_trades.json')
@@ -2041,6 +2135,11 @@ def main():
     args = parser.parse_args()
     
     print(f"[Miracle-Kronos] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 模式: {args.mode}")
+    
+    # 初始化IC权重文件（首次运行时种入默认值）
+    if not IC_WEIGHTS_FILE.exists():
+        save_ic_weights(DEFAULT_WEIGHTS)
+        logger.info("factor_weights.json已初始化: 写入DEFAULT_WEIGHTS")
     
     # P0-3 Fix: 启动时检测账户模式（hedge vs net），影响place_oco和close_position的posSide行为
     pos_mode = _detect_pos_mode()
@@ -2086,7 +2185,7 @@ def main():
                 # 全量平仓
                 close_data = close_position(coin, reason=reason)
                 if close_data.get('code') == '0':
-                    _mark_trade_closed(coin, reason, trade_id)
+                    _mark_trade_closed(coin, reason, trade_id, pnl_pct=dec.get('pnl_pct'))
                     logger.info(f'持仓管理平仓: {coin} {reason}')
                 else:
                     logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
@@ -2101,7 +2200,7 @@ def main():
                     # 全量平仓（简化版，实际应部分平仓）
                     close_data = close_position(coin, reason=reason)
                     if close_data.get('code') == '0':
-                        _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id)
+                        _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id, pnl_pct=dec.get('pnl_pct'))
                         logger.info(f'持仓管理部分止盈: {coin} {reason}')
                     else:
                         logger.warning(f'部分止盈失败: {coin} {close_data.get("msg")}')
@@ -2191,6 +2290,14 @@ def main():
                                     'pnl_pct': decision.get('pnl_pct', 0),
                                 })
                                 logger.info(f"Agent-L出场反馈: trade_id={trade_id} reason={decision.get('reason', '')}")
+                            # 出场反馈闭环：记录pattern胜率
+                            pattern_key = t.get('pattern_key')
+                            pnl_pct_dec = decision.get('pnl_pct', 0)
+                            if pattern_key and pnl_pct_dec is not None:
+                                try:
+                                    record_pattern_outcome(pattern_key, pnl_pct_dec > 0, pnl_pct_dec)
+                                except Exception as ex:
+                                    logger.debug(f"出场反馈记录失败: {ex}")
                     save_trades(all_trades)  # Full history preserved
 
     # 更新treasury (快照时间轴管理)
