@@ -1256,21 +1256,21 @@ def select_best(candidates, positions, local_trades=None):
         held.update(t.get('coin', '') for t in local_trades)
     available = [c for c in candidates if c['symbol'] not in held]
     
-    # gemma4否决: gemma_vote < 0 表示gemma错误/超时，则否决
-    # 允许所有有效的gemma信号通过（不管是0.3-0.5 bearish还是0.5-1.0 bullish）
+    # P1-4 Fix: 只否决_gemma_vote为None（超时/错误/不可用），允许所有有效信号（bearish 0.3-0.5也通过）
+    # _gemma_vote存储在candidate顶层；votes['Gemma']是remapped值（负数不代表否决，代表方向）
     vetoed = []
     vetoed_pattern_keys = []
     filtered = []
     for c in available:
-        gemma_vote = c.get('votes', {}).get('Gemma', 0)
-        if gemma_vote < 0:  # Gemma error/timeout - veto
+        gemma_raw = c.get('_gemma_vote')  # None = 不可用, 0.0-1.0 = 有效
+        if gemma_raw is None:  # Gemma超时/错误 → 否决
             vetoed.append(c['symbol'])
             vetoed_pattern_keys.append(c.get('pattern_key', ''))
             continue
         filtered.append(c)
-    
+
     if vetoed:
-        print(f"gemma4否决: {vetoed} (gemma_vote<0)")
+        print(f"gemma4否决: {vetoed} (gemma不可用)")
     
     if not filtered:
         return None, vetoed_pattern_keys
@@ -1429,11 +1429,14 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             # 重新计算每个候选的分数：基于regime调整后的因子vote
             for c in candidates:
                 if c.get('votes'):
-                    regime_score = 0.0
+                    # P1-5 Fix: regime调整作为乘数应用（不覆盖score，保留mt_boost/fr_confidence/oi_penalty）
+                    regime_adj = 1.0
                     for fname, fvote in c['votes'].items():
                         adj = get_regime_confidence_multiplier(1.0, regime, fname.lower())
-                        regime_score += weights.get(fname, 0) * fvote * adj
-                    c['score'] = regime_score
+                        # 加权平均调整系数
+                        regime_adj += (adj - 1.0) * weights.get(fname, 0) * abs(fvote)
+                    regime_adj = max(0.5, min(regime_adj, 1.5))  # 限制在0.5x~1.5x
+                    c['score'] = c['score'] * regime_adj
                     c['regime'] = regime
             # 按调整后分数重新排序
             if regime != "neutral":
@@ -1749,6 +1752,10 @@ def main():
     args = parser.parse_args()
     
     print(f"[Miracle-Kronos] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 模式: {args.mode}")
+    
+    # P0-3 Fix: 启动时检测账户模式（hedge vs net），影响place_oco和close_position的posSide行为
+    pos_mode = _detect_pos_mode()
+    print(f"账户模式: {pos_mode} | ", end='')
     
     # 获取equity
     if args.mode == 'live':

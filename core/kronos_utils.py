@@ -99,7 +99,7 @@ def okx_req(method: str, path: str, body: str = '', api_key: str = None,
     """
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (int(time.time() * 1000) % 1000)
     key = api_key or os.environ.get('OKX_API_KEY', '')
-    secret or os.environ.get('OKX_SECRET', '')
+    # _sign() reads secret directly from env; this parameter is reserved for future multi-key support
     phrase = passphrase or os.environ.get('OKX_PASSPHRASE', '')
     flag = os.environ.get('OKX_FLAG', '1')
 
@@ -219,19 +219,13 @@ def check_treasury_trade_allowed(equity: float, treasury_state: dict) -> Tuple[b
             'tier': 'caution', 'hourly_loss_pct': hourly_loss_pct
         }
     
-    # 5. 储备金检查
-    per_trade_amount = equity * limits['per_trade_pct']  # 2% of equity
-    available = equity * (1 - limits['reserve_pct'])  # 80% available
-    if per_trade_amount > available:  # Can't risk more than available
-        return False, f"Per-trade risk {per_trade_amount:.2f} exceeds available {available:.2f}", {
-            'available': available, 'per_trade': per_trade_amount, 'reserve': equity - available
-        }
+    # P1-9 Fix: 原储备金检查 per_trade_amount > available (2% > 80%) 永不触发，删除
+    # 储备保护由 notional 集中度检查 (check_concentration) 提供
     
     return True, 'OK', {
         'hourly_loss_pct': hourly_loss_pct,
         'daily_loss_pct': daily_loss_pct,
         'session_dd_pct': session_dd_pct,
-        'available': available,
         'tier': 'normal'
     }
 
