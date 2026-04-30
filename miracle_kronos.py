@@ -1766,11 +1766,11 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
     import time as _time_module
 
     # ── 规则参数 ──
-    PROFIT_PROTECT_PCT = 0.08   # 盈利>8% → SL移动到成本价
-    PARTIAL_TP_PCT    = 0.15    # 盈利>15% → 部分止盈50%
-    HOLD_HOURS_WARN   = 4       # 持仓>4h无盈利 → 警告
-    HOLD_HOURS_FORCE  = 8       # 持仓>8h → 强制平仓
-    PARTIAL_TP_SIZE   = 0.50    # 部分止盈比例
+    LOSS_WARN_PCT     = -0.03    # 亏损>3% → 触发警告/平仓
+    HOLD_WARN_HOURS   = 3        # 持仓>3h无盈利 → 触发警告
+    HOLD_FORCE_HOURS  = 6        # 持仓>6h无盈利(亏损) → 强制平仓
+    PROFIT_MOVE_SL    = 0.02     # 盈利>2% → SL上移到成本价
+    PARTIAL_TP_PCT    = 0.12    # 盈利>12% → 部分止盈50%
 
     all_trades = _load_open_trades_for_management()
     open_trades = [t for t in all_trades if t.get('status') == 'OPEN']
@@ -1829,13 +1829,14 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             except Exception:
                 hold_hours = None
 
-        # ── 规则1: 超时强平（HOLD_HOURS_FORCE） ──
-        if hold_hours is not None and hold_hours >= HOLD_HOURS_FORCE and pnl_pct < 0.005:
+        # ── 规则1: 强制平仓（最优先） ──
+        # 亏损>3% + 持仓>3h → 直接平
+        if (hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= LOSS_WARN_PCT):
             decisions.append({
                 'action': 'force_close',
                 'coin': coin,
                 'direction': direction,
-                'reason': f'持仓{hold_hours:.1f}h超时强平（无盈利）',
+                'reason': f'亏损{pnl_pct:.1%}+持仓{hold_hours:.1f}h → 强制平仓',
                 'entry': entry_price,
                 'current': current_price,
                 'pnl_pct': pnl_pct,
@@ -1843,38 +1844,47 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'trade_id': trade_id,
                 'urgency': 9,
             })
-            summary_lines.append(f'🚨 {coin} {direction} 持仓{hold_hours:.1f}h超时强平({pnl_pct:.1%})')
-            continue
-
-        # ── 规则2: 部分止盈（HOLD_HOURS_FORCE > 盈利 > 15%） ──
-        if pnl_pct >= PARTIAL_TP_PCT and direction in ('SHORT', '做空', 'short'):
-            # DOGE/BNB空单盈利丰厚，先止盈一半
+            summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+{hold_hours:.1f}h → 强平')
+        # 持仓>6h且亏损（非盈利） → 强制平
+        elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct < 0.02 and pnl_pct < 0:
+            decisions.append({
+                'action': 'force_close',
+                'coin': coin,
+                'direction': direction,
+                'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%}) → 强平',
+                'entry': entry_price,
+                'current': current_price,
+                'pnl_pct': pnl_pct,
+                'mode': mode,
+                'trade_id': trade_id,
+                'urgency': 9,
+            })
+            summary_lines.append(f'🚨 {coin} {direction} {hold_hours:.1f}h无盈利 → 强平')
+        # ── 规则2: 部分止盈（盈利>12%） ──
+        elif pnl_pct >= PARTIAL_TP_PCT and direction in ('SHORT', '做空', 'short'):
             decisions.append({
                 'action': 'partial_tp',
                 'coin': coin,
                 'direction': direction,
-                'reason': f'盈利{pnl_pct:.1%}，部分止盈50%',
+                'reason': f'盈利{pnl_pct:.1%} → 部分止盈50%',
                 'entry': entry_price,
                 'current': current_price,
                 'tp_price': tp_price,
                 'pnl_pct': pnl_pct,
-                'close_pct': PARTIAL_TP_SIZE,
+                'close_pct': 0.50,
                 'mode': mode,
                 'trade_id': trade_id,
                 'urgency': 8,
             })
-            summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%}部分止盈50%')
-            continue
-
-        # ── 规则3: 盈利保护（pnl > 8%） ──
-        if pnl_pct >= PROFIT_PROTECT_PCT and sl_price > 0:
-            # 把SL移到成本价（零风险）
+            summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%} → 部分止盈')
+        # ── 规则3: 盈利保护（盈利>2% → SL移到成本） ──
+        elif pnl_pct >= PROFIT_MOVE_SL and sl_price > 0:
             new_sl = entry_price
             decisions.append({
                 'action': 'move_sl_to_cost',
                 'coin': coin,
                 'direction': direction,
-                'reason': f'盈利{ pnl_pct:.1%}，SL上移到成本价{new_sl:.4f}',
+                'reason': f'盈利{pnl_pct:.1%} → SL移到成本{new_sl:.4f}',
                 'entry': entry_price,
                 'old_sl': sl_price,
                 'new_sl': new_sl,
@@ -1883,30 +1893,15 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'trade_id': trade_id,
                 'urgency': 7,
             })
-            summary_lines.append(f'🛡️  {coin} {direction} 盈利{ pnl_pct:.1%}→SL移到成本')
-            continue
-
-        # ── 规则4: 持仓超时警告（HOLD_HOURS_WARN < 4h < HOLD_HOURS_FORCE） ──
-        if hold_hours is not None and hold_hours >= HOLD_HOURS_WARN and pnl_pct < 0.03:
-            warnings.append({
-                'coin': coin,
-                'direction': direction,
-                'hold_hours': hold_hours,
-                'pnl_pct': pnl_pct,
-                'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})，需复审',
-            })
-            summary_lines.append(f'⚠️  {coin} {direction} 持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})')
-            continue
-
-        # ── 规则5: 反向信号覆盖（多头出现做空信号 或 空头出现做多信号） ──
-        # 只在有明确反向信号且持仓已经亏损时触发
-        if pnl_pct < -0.02:  # 亏损超过2%才考虑覆盖
+            summary_lines.append(f'🛡️  {coin} {direction} 盈利{pnl_pct:.1%} → SL移成本')
+        # ── 规则4: 反向信号覆盖（亏损>3%且RSI明确反向） ──
+        elif pnl_pct <= LOSS_WARN_PCT:
             if direction in ('LONG', '做多', 'long') and rsi_val > 65:
                 decisions.append({
                     'action': 'close_opposite_signal',
                     'coin': coin,
                     'direction': direction,
-                    'reason': f'做多持仓亏损{ pnl_pct:.1%} + RSI={rsi_val:.0f}>65（反向做空信号）',
+                    'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}>65 → 平仓',
                     'entry': entry_price,
                     'current': current_price,
                     'rsi': rsi_val,
@@ -1914,14 +1909,13 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                     'trade_id': trade_id,
                     'urgency': 8,
                 })
-                summary_lines.append(f'🔄 {coin} 多头被套 + RSI超买 → 平仓')
-                continue
+                summary_lines.append(f'🔄 {coin} 多头亏损{pnl_pct:.1%}+RSI超买 → 平仓')
             elif direction in ('SHORT', '做空', 'short') and rsi_val < 35:
                 decisions.append({
                     'action': 'close_opposite_signal',
                     'coin': coin,
                     'direction': direction,
-                    'reason': f'做空持仓亏损{ pnl_pct:.1%} + RSI={rsi_val:.0f}<35（反向做多信号）',
+                    'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}<35 → 平仓',
                     'entry': entry_price,
                     'current': current_price,
                     'rsi': rsi_val,
@@ -1929,8 +1923,17 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                     'trade_id': trade_id,
                     'urgency': 8,
                 })
-                summary_lines.append(f'🔄 {coin} 空头被套 + RSI超卖 → 平仓')
-                continue
+                summary_lines.append(f'🔄 {coin} 空头亏损{pnl_pct:.1%}+RSI超卖 → 平仓')
+        # ── 规则5: 持仓超时警告（>3h无盈利，未触发上面规则） ──
+        elif hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct < 0.03:
+            warnings.append({
+                'coin': coin,
+                'direction': direction,
+                'hold_hours': hold_hours,
+                'pnl_pct': pnl_pct,
+                'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})',
+            })
+            summary_lines.append(f'⚠️  {coin} {direction} {hold_hours:.1f}h无盈利({pnl_pct:.1%})')
 
     # ── 写入决策日志 ──
     _write_management_journal({
@@ -2060,7 +2063,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     mgmt = run_position_management(equity, btc_trend, args.mode)
 
-    # live模式：执行管理决策
+    # live模式：执行所有管理决策（不只看urgency）
     if mgmt.get('decisions') and args.mode == 'live':
         for dec in mgmt['decisions']:
             coin = dec.get('coin', '')
