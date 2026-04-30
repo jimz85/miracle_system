@@ -1091,8 +1091,8 @@ def get_dynamic_sl_tp(coin, entry_price, atr, adx=None):
     if sl_pct < min_sl_pct:
         sl_pct = min_sl_pct
     
-    # TP: RR=3 for high conviction (adx > 30), RR=2 for normal
-    rr = 3.0 if (adx is not None and adx > 30) else 2.0
+    # TP: RR=4 for high conviction (adx > 30), RR=2 for normal
+    rr = 4.0 if (adx is not None and adx > 30) else 2.0
     tp_pct = rr * sl_pct
     
     return sl_pct, tp_pct
