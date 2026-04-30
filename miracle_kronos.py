@@ -988,15 +988,12 @@ def calc_atr(highs, lows, closes, period=14):
     return atr
 
 
-def get_dynamic_sl_tp(coin, entry_price, atr):
+def get_dynamic_sl_tp(coin, entry_price, atr, adx=None):
     """
-    ATR-based dynamic SL/TP calculation.
-    
-    For SL: use 2×ATR for normal, 1.5×ATR for tight (high volatility coins like DOGE)
-    For TP: use 2×SL distance (RR=2) or 3×SL distance (RR=3)
+    Dynamic SL/TP based on ATR volatility.
     Keep a minimum SL% of 0.5% (absolute floor for low ATR coins)
-    
-    Formula: sl_price = entry * (1 - 2*atr_pct) where atr_pct = ATR/entry
+
+    TP: RR=2 for normal, RR=3 for high conviction (adx > 30)
     """
     if entry_price <= 0 or atr <= 0:
         return SL_PCT, TP_PCT  # Fallback to static if invalid inputs
@@ -1018,8 +1015,9 @@ def get_dynamic_sl_tp(coin, entry_price, atr):
     if sl_pct < min_sl_pct:
         sl_pct = min_sl_pct
     
-    # TP: RR=2 for normal, RR=3 for high conviction (adx > 30)
-    tp_pct = 2.0 * sl_pct
+    # TP: RR=3 for high conviction (adx > 30), RR=2 for normal
+    rr = 3.0 if (adx is not None and adx > 30) else 2.0
+    tp_pct = rr * sl_pct
     
     return sl_pct, tp_pct
 
@@ -1121,7 +1119,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
     
     # ATR计算用于动态SL/TP
     atr = calc_atr(highs_1h, lows_1h, closes_1h)
-    sl_pct, tp_pct = get_dynamic_sl_tp(symbol, closes_1h[-1], atr)
+    sl_pct, tp_pct = get_dynamic_sl_tp(symbol, closes_1h[-1], atr, adx)
     
     # 量比
     vol_ratio = 1.0
