@@ -1241,10 +1241,10 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
 
 def select_best(candidates, positions, local_trades=None):
     """选最优候选
-    gemma4否决机制: gemma_vote < 0 (error/timeout) 的候选币不参与排名
-    - gemma_vote >= 0: 参与排名 (包括 bearish 0.3-0.5 和 bullish 0.5-1.0)
-    - gemma_vote < 0: 过滤掉不参与排名 (gemma超时/异常)
-    
+    gemma4否决机制: _gemma_vote is None (error/timeout) 的候选币不参与排名
+    - _gemma_vote有值 (0.0-1.0): 参与排名 (包括 bearish 0.3-0.5 和 bullish 0.5-1.0)
+    - _gemma_vote is None: 过滤掉不参与排名 (gemma超时/异常)
+
     Returns: (best_candidate, vetoed_pattern_keys)
     """
     if not candidates:
