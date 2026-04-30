@@ -139,3 +139,15 @@
 {"timestamp": "2026-04-30T13:43:39.294622+00:00", "equity": 66702.84773057119, "btc_trend": "neutral", "open_count": 6, "decisions": [], "warnings": []}
 {"timestamp": "2026-04-30T13:52:21.825681+00:00", "equity": 66723.74773057118, "btc_trend": "bear", "open_count": 6, "decisions": [], "warnings": []}
 {"timestamp": "2026-04-30T13:52:33.632437+00:00", "equity": 66723.74773057118, "btc_trend": "bear", "open_count": 6, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T13:57:26.176226+00:00", "equity": 66731.26773057118, "btc_trend": "neutral", "open_count": 6, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:00:48.076110+00:00", "equity": 67000.0, "btc_trend": "bear", "open_count": 6, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:01:52.392816+00:00", "equity": 66686.35773057118, "btc_trend": "bear", "open_count": 6, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:02:12.803043+00:00", "equity": 66678.83773057118, "btc_trend": "neutral", "open_count": 6, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:02:39.833180+00:00", "equity": 66678.83773057118, "btc_trend": "bear", "open_count": 6, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:03:33.350396+00:00", "equity": 66710.41538957118, "btc_trend": "bear", "open_count": 7, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:07:24.535145+00:00", "equity": 66683.71738957117, "btc_trend": "neutral", "open_count": 7, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:14:44.505950+00:00", "equity": 66651.61238957118, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:16:11.445261+00:00", "equity": 66685.40138957118, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:16:31.440579+00:00", "equity": 66685.40138957118, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T14:22:01.010373+00:00", "equity": 66663.07938957118, "btc_trend": "neutral", "open_count": 8, "decisions": [{"action": "move_sl_to_cost", "coin": "BNB", "direction": "SHORT", "reason": "盈利2.1% → SL移到成本626.8000", "entry": 626.8, "old_sl": 651.796185, "new_sl": 626.8, "pnl_pct": 0.02105934907466486, "mode": "live", "trade_id": null, "urgency": 7}], "warnings": []}
+{"timestamp": "2026-04-30T14:28:28.584772+00:00", "equity": 66674.35938957118, "btc_trend": "neutral", "open_count": 8, "decisions": [{"action": "move_sl_to_cost", "coin": "BNB", "direction": "SHORT", "reason": "盈利2.1% → SL移到成本626.8000", "entry": 626.8, "old_sl": 651.796185, "new_sl": 626.8, "pnl_pct": 0.020899808551371905, "mode": "live", "trade_id": null, "urgency": 7}], "warnings": []}

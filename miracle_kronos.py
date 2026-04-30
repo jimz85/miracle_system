@@ -2225,34 +2225,56 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             summary_lines.append(f'🛡️  {coin} {direction} 盈利{pnl_pct:.1%} → SL移成本')
         # ── 规则4: 反向信号覆盖（亏损>3%且RSI明确反向） ──
         elif pnl_pct <= LOSS_WARN_PCT:
-            if direction in ('LONG', '做多', 'long') and rsi_val > 65:
-                decisions.append({
-                    'action': 'close_opposite_signal',
-                    'coin': coin,
-                    'direction': direction,
-                    'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}>65 → 平仓',
-                    'entry': entry_price,
-                    'current': current_price,
-                    'rsi': rsi_val,
-                    'mode': mode,
-                    'trade_id': trade_id,
-                    'urgency': 8,
-                })
-                summary_lines.append(f'🔄 {coin} 多头亏损{pnl_pct:.1%}+RSI超买 → 平仓')
-            elif direction in ('SHORT', '做空', 'short') and rsi_val < 35:
-                decisions.append({
-                    'action': 'close_opposite_signal',
-                    'coin': coin,
-                    'direction': direction,
-                    'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}<35 → 平仓',
-                    'entry': entry_price,
-                    'current': current_price,
-                    'rsi': rsi_val,
-                    'mode': mode,
-                    'trade_id': trade_id,
-                    'urgency': 8,
-                })
-                summary_lines.append(f'🔄 {coin} 空头亏损{pnl_pct:.1%}+RSI超卖 → 平仓')
+            # ⭐ Gemma4 持仓评估（补充RSI规则）
+            gemma_close = False
+            try:
+                klines = get_klines(inst_id, '1H', 50)
+                if klines and len(klines) >= 20:
+                    closes = [k['close'] for k in klines]
+                    _, _, adx = calc_adx(highs, lows, closes)
+                    gemma_vote = _gemma_vote_cached(coin, rsi_val if rsi_val else 50, adx, 50, current_price, 0, 0)
+                    gemma_signal = (gemma_vote - 0.5) * 2
+                    if direction in ('LONG', '做多', 'long') and gemma_signal < -0.5:
+                        decisions.append({
+                            'action': 'force_close', 'coin': coin, 'direction': direction,
+                            'reason': f'亏损{pnl_pct:.1%}+Gemma看空({gemma_signal:+.2f})',
+                            'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
+                            'mode': mode, 'trade_id': trade_id, 'urgency': 9,
+                        })
+                        summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+Gemma看空 → 强平')
+                        gemma_close = True
+                    elif direction in ('SHORT', '做空', 'short') and gemma_signal > 0.5:
+                        decisions.append({
+                            'action': 'force_close', 'coin': coin, 'direction': direction,
+                            'reason': f'亏损{pnl_pct:.1%}+Gemma看多({gemma_signal:+.2f})',
+                            'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
+                            'mode': mode, 'trade_id': trade_id, 'urgency': 9,
+                        })
+                        summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+Gemma看多 → 强平')
+                        gemma_close = True
+            except Exception as ex:
+                logger.debug(f"Gemma持仓评估失败 {coin}: {ex}")
+            
+            # RSI规则（Gemma未触发时使用）
+            if not gemma_close:
+                if direction in ('LONG', '做多', 'long') and rsi_val > 65:
+                    decisions.append({
+                        'action': 'close_opposite_signal',
+                        'coin': coin, 'direction': direction,
+                        'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}>65 → 平仓',
+                        'entry': entry_price, 'current': current_price,
+                        'rsi': rsi_val, 'mode': mode, 'trade_id': trade_id, 'urgency': 8,
+                    })
+                    summary_lines.append(f'🔄 {coin} 多头亏损{pnl_pct:.1%}+RSI超买 → 平仓')
+                elif direction in ('SHORT', '做空', 'short') and rsi_val < 35:
+                    decisions.append({
+                        'action': 'close_opposite_signal',
+                        'coin': coin, 'direction': direction,
+                        'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}<35 → 平仓',
+                        'entry': entry_price, 'current': current_price,
+                        'rsi': rsi_val, 'mode': mode, 'trade_id': trade_id, 'urgency': 8,
+                    })
+                    summary_lines.append(f'🔄 {coin} 空头亏损{pnl_pct:.1%}+RSI超卖 → 平仓')
         # ── 规则5: 持仓超时警告（>3h无盈利，未触发上面规则） ──
         elif hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct < 0.03:
             warnings.append({
@@ -2369,10 +2391,70 @@ def _mark_trade_closed(coin: str, reason: str, trade_id=None, pnl_pct=None):
             logger.warning(f'更新paper_trades.json失败: {e}')
 
 
-# ===== 入口 =====
+def _execute_management_decision(dec: dict, equity: float):
+    """执行单个持仓管理决策 - 供 main() 的 live/manage 模式共用"""
+    coin = dec.get('coin', '')
+    inst_id = f'{coin}-USDT-SWAP'
+    action_type = dec.get('action', '')
+    reason = dec.get('reason', '')
+    trade_id = dec.get('trade_id')
+    pnl_pct = dec.get('pnl_pct', 0)
+
+    if action_type in ('force_close', 'close_opposite_signal'):
+        close_data = close_position(coin, reason=reason)
+        if close_data.get('code') == '0':
+            _mark_trade_closed(coin, reason, trade_id, pnl_pct=pnl_pct)
+            logger.info(f'持仓管理平仓: {coin} {reason}')
+        else:
+            logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
+
+    elif action_type == 'partial_tp':
+        positions = get_positions()
+        pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
+        if pos:
+            close_data = close_position(coin, reason=reason)
+            if close_data.get('code') == '0':
+                _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id, pnl_pct=pnl_pct)
+                logger.info(f'持仓管理部分止盈: {coin} {reason}')
+            else:
+                logger.warning(f'部分止盈失败: {coin} {close_data.get("msg")}')
+        else:
+            logger.warning(f'部分止盈: 未找到{coin}持仓')
+
+    elif action_type == 'move_sl_to_cost':
+        try:
+            oco_query = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
+            algo_list = oco_query.get('data', [])
+            for algo in algo_list:
+                cancel_body = json.dumps([{'algoId': str(algo['algoId']), 'instId': inst_id}])
+                okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
+            entry = dec.get('entry', 0)
+            sl_pct = abs(entry - dec['new_sl']) / entry if entry > 0 else 0.05
+            tp_pct = dec.get('tp_price', 0)
+            if tp_pct > 0 and entry > 0:
+                tp_pct_val = abs(tp_pct - entry) / entry
+            else:
+                tp_pct_val = 0.10
+            positions = get_positions()
+            pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
+            if pos:
+                sz = int(pos.get('sz', 0))
+                direction = pos.get('posSide', 'long')
+                direction = 'long' if direction in ('long','net') else 'short'
+                place_oco(inst_id, direction, sz, entry, sl_pct, tp_pct_val,
+                         equity=equity, leverage=3)
+                logger.info(f'SL上移到成本: {coin} @ {dec["new_sl"]:.4f}')
+        except Exception as e:
+            logger.warning(f'SL移动失败: {coin} {e}')
+
+
+# ═══════════════════════════════════════════════════════════
+# 入口
+# ═══════════════════════════════════════════════════════════
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', default='audit', choices=['audit', 'live'])
+    parser.add_argument('--mode', default='audit', choices=['audit', 'live', 'manage'])
     parser.add_argument('--equity', type=float, default=None)
     args = parser.parse_args()
     
@@ -2407,6 +2489,17 @@ def main():
         ma20 = sum(closes[-20:]) / 20
         btc_trend = 'bull' if closes[-1] > ma20 else 'bear'
     
+    # manage模式：只持仓管理，不开新仓
+    if args.mode == 'manage':
+        mgmt = run_position_management(equity, btc_trend, 'live')
+        if mgmt.get('decisions'):
+            for dec in mgmt['decisions']:
+                _execute_management_decision(dec, equity)
+        if mgmt.get('action') == 'managed':
+            summary_text = mgmt.get('summary', '')
+            print(f'📋 持仓管理: {summary_text}')
+        return
+    
     result = run_scan(equity, btc_trend, args.mode)
 
     # ═══════════════════════════════════════════════════════════
@@ -2414,69 +2507,10 @@ def main():
     # ═══════════════════════════════════════════════════════════
     mgmt = run_position_management(equity, btc_trend, args.mode)
 
-    # live模式：执行所有管理决策（不只看urgency）
+    # live模式：执行所有管理决策
     if mgmt.get('decisions') and args.mode == 'live':
         for dec in mgmt['decisions']:
-            coin = dec.get('coin', '')
-            inst_id = f'{coin}-USDT-SWAP'
-            action_type = dec.get('action', '')
-            reason = dec.get('reason', '')
-            trade_id = dec.get('trade_id')
-
-            if action_type in ('force_close', 'close_opposite_signal'):
-                # 全量平仓
-                close_data = close_position(coin, reason=reason)
-                if close_data.get('code') == '0':
-                    _mark_trade_closed(coin, reason, trade_id, pnl_pct=dec.get('pnl_pct'))
-                    logger.info(f'持仓管理平仓: {coin} {reason}')
-                else:
-                    logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
-
-            elif action_type == 'partial_tp':
-                # 部分止盈：平50%仓位
-                positions = get_positions()
-                pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
-                if pos:
-                    sz_total = int(pos.get('sz', 0))
-                    sz_close = max(1, int(sz_total * dec.get('close_pct', 0.5)))
-                    # 全量平仓（简化版，实际应部分平仓）
-                    close_data = close_position(coin, reason=reason)
-                    if close_data.get('code') == '0':
-                        _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id, pnl_pct=dec.get('pnl_pct'))
-                        logger.info(f'持仓管理部分止盈: {coin} {reason}')
-                    else:
-                        logger.warning(f'部分止盈失败: {coin} {close_data.get("msg")}')
-                else:
-                    logger.warning(f'部分止盈: 未找到{coin}持仓')
-
-            elif action_type == 'move_sl_to_cost':
-                # 移动SL到成本价：需要取消旧OCO + 挂新版
-                try:
-                    # 取消现有OCO
-                    oco_query = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
-                    algo_list = oco_query.get('data', [])
-                    for algo in algo_list:
-                        cancel_body = json.dumps([{'algoId': str(algo['algoId']), 'instId': inst_id}])
-                        okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
-                    # 挂新版OCO（SL=entry_price，TP不变）
-                    entry = dec.get('entry', 0)
-                    sl_pct = abs(entry - dec['new_sl']) / entry if entry > 0 else 0.05
-                    tp_pct = dec.get('tp_price', 0)
-                    if tp_pct > 0 and entry > 0:
-                        tp_pct_val = abs(tp_pct - entry) / entry
-                    else:
-                        tp_pct_val = 0.10
-                    positions = get_positions()
-                    pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
-                    if pos:
-                        sz = int(pos.get('sz', 0))
-                        direction = pos.get('posSide', 'long')
-                        direction = 'long' if direction in ('long','net') else 'short'
-                        place_oco(inst_id, direction, sz, entry, sl_pct, tp_pct_val,
-                                  equity=equity, leverage=3)
-                        logger.info(f'SL上移到成本: {coin} @ {dec["new_sl"]:.4f}')
-                except Exception as e:
-                    logger.warning(f'SL移动失败: {coin} {e}')
+            _execute_management_decision(dec, equity)
 
     # 打印管理摘要
     if mgmt.get('action') == 'managed':
