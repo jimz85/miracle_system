@@ -1204,8 +1204,8 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         
         final_score -= oi_penalty
 
-    # 低于阈值过滤 (极端信号阈值更低)
-    min_threshold = 0.20 if vote.get('extreme') else 0.25
+    # 低于阈值过滤 (extreme信号阈值更低; normal从0.25降至0.15，避免conf~17%的好信号被误杀)
+    min_threshold = 0.20 if vote.get('extreme') else 0.15
     if final_score < min_threshold:
         return None
     
@@ -1225,6 +1225,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         'macd_hist': hist,
         'vol_ratio': vol_ratio,
         'pattern_key': get_pattern_key(rsi, adx, bb_pos, vote['direction']),
+        'confidence': vote.get('confidence'),  # 原始信心分数（0-1），与score共同用于排序
         'votes': vote.get('votes', {}),
         'extreme': vote.get('extreme'),
         # Funding Rate & OI factors
