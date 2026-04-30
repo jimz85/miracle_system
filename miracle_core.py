@@ -25,6 +25,20 @@ from core.factor_calculations import (
     normalize_macd_histogram,
 )
 
+# IC动态权重（可选导入，失败时返回基准权重）
+try:
+    from core.ic_weights import MiracleICTracker
+except ImportError:
+    MiracleICTracker = None
+
+# ===== 日志配置 =====
+
+logger = logging.getLogger("miracle")
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler(Path(__file__).parent / "miracle.log")
+fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logger.addHandler(fh)
+
 # ===== IC动态权重 =====
 
 def get_ic_adjusted_weights() -> Dict[str, float]:
@@ -41,8 +55,6 @@ def get_ic_adjusted_weights() -> Dict[str, float]:
         Dict[str, float]: 归一化后的权重字典
     """
     try:
-        from core.ic_weights import MiracleICTracker
-        
         tracker = MiracleICTracker(sync_with_kronos=True)
         ic_weights = tracker.get_all_weights()
         
@@ -115,7 +127,6 @@ def record_ic_for_factor(factor_name: str, ic_value: float):
         ic_value: IC值
     """
     try:
-        from core.ic_weights import MiracleICTracker
         tracker = MiracleICTracker(sync_with_kronos=False)
         tracker.record_ic(factor_name, ic_value)
     except ImportError:
@@ -280,14 +291,6 @@ def load_config(config_path: str = None) -> Dict:
         return json.load(f)
 
 CONFIG = load_config()
-
-# ===== 日志配置 =====
-
-logger = logging.getLogger("miracle")
-logger.setLevel(logging.INFO)
-fh = logging.FileHandler(Path(__file__).parent / "miracle.log")
-fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-logger.addHandler(fh)
 
 # ===== 数据结构 =====
 

@@ -37,8 +37,7 @@
     "wallet": {"weight": 0.1, "metrics": ["holder_concentration"]}
   },
   "feishu": {
-    "enabled": true,
-    "default_chat_id": "oc_bfd8a7cc1a606f190b53e3fd0167f5a0"
+    "enabled": true
   },
   "exchanges": ["okx", "binance"],
   "fee": {

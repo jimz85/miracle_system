@@ -14,10 +14,67 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== 每日LLM预算控制 ====================
+
+BUDGET_FILE = Path.home() / '.miracle_memory' / 'llm_budget.json'
+DAILY_BUDGET_USD = float(os.getenv('LLM_DAILY_BUDGET_USD', '2.0'))  # 默认$2/天
+
+
+def _ensure_budget_dir():
+    """确保预算文件目录存在"""
+    BUDGET_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def get_daily_spend() -> dict:
+    """获取当日已消耗的API预算
+
+    Returns:
+        {'today': '2026-04-30', 'total_cost': 0.15, 'call_count': 5}
+    """
+    _ensure_budget_dir()
+    today = str(date.today())
+    try:
+        if BUDGET_FILE.exists():
+            data = json.loads(BUDGET_FILE.read_text())
+            if data.get('today') == today:
+                return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {'today': today, 'total_cost': 0.0, 'call_count': 0}
+
+
+def save_daily_spend(cost: float):
+    """记录一次API调用的费用到当日预算"""
+    data = get_daily_spend()
+    data['total_cost'] += cost
+    data['call_count'] += 1
+    _ensure_budget_dir()
+    BUDGET_FILE.write_text(json.dumps(data, indent=2))
+
+
+def check_llm_budget(cost: float = 0.0) -> bool:
+    """检查本次调用是否会超过每日预算上限
+
+    Returns:
+        True = 允许调用, False = 超限拒绝
+    """
+    data = get_daily_spend()
+    projected = data['total_cost'] + cost
+    if projected > DAILY_BUDGET_USD:
+        logger.warning(
+            f"LLM预算超限: 当日已用${data['total_cost']:.2f}/{DAILY_BUDGET_USD}, "
+            f"本次${cost:.2f}会被拒绝"
+        )
+        return False
+    return True
 
 
 # ==================== 枚举和配置 ====================
@@ -682,7 +739,16 @@ class LLMProviderManager:
         return await prov.chat(messages, **kwargs)
     
     async def chat_with_fallback(self, messages: List[Message], **kwargs) -> LLMResponse:
-        """带自动降级的chat方法 - 主力失败自动切换备用"""
+        """带自动降级的chat方法 - 主力失败自动切换备用 + 每日预算控制"""
+        # 每日预算检查
+        if not check_llm_budget():
+            return LLMResponse(
+                content="",
+                provider=self._current_provider or LLMProviderType.CLAUDE,
+                model="",
+                error=f"Daily LLM budget ${DAILY_BUDGET_USD:.2f} exceeded"
+            )
+
         attempted_providers = []
         
         # 首先尝试当前配置的provider
@@ -695,6 +761,8 @@ class LLMProviderManager:
                     response = await prov.chat(messages, **kwargs)
                     if not response.error:
                         self._record_success(current)
+                        if response.cost:
+                            save_daily_spend(response.cost)
                         return response
                     else:
                         logger.warning(f"{current.value} returned error: {response.error}")
@@ -713,6 +781,8 @@ class LLMProviderManager:
                     response = await prov.chat(messages, **kwargs)
                     if not response.error:
                         self._record_success(self._fallback_provider)
+                        if response.cost:
+                            save_daily_spend(response.cost)
                         # 切换到fallback作为新的主provider
                         self.set_provider(self._fallback_provider)
                         return response

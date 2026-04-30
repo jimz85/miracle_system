@@ -178,3 +178,14 @@
 {"timestamp": "2026-04-30T15:21:37.820881+00:00", "equity": 66710.76138957117, "btc_trend": "bear", "open_count": 4, "decisions": [], "warnings": []}
 {"timestamp": "2026-04-30T15:24:00.360565+00:00", "equity": 66720.10438957118, "btc_trend": "bear", "open_count": 4, "decisions": [], "warnings": []}
 {"timestamp": "2026-04-30T15:24:21.101808+00:00", "equity": 66712.71438957118, "btc_trend": "bear", "open_count": 4, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:28:20.144065+00:00", "equity": 66700.88138957118, "btc_trend": "neutral", "open_count": 4, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:30:04.118171+00:00", "equity": 66690.66238957118, "btc_trend": "bear", "open_count": 4, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:31:41.690736+00:00", "equity": 66689.49338957119, "btc_trend": "bull", "open_count": 4, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:31:54.242550+00:00", "equity": 66689.49338957119, "btc_trend": "bull", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:38:10.673086+00:00", "equity": 66704.33038957119, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:40:07.757056+00:00", "equity": 66685.80738957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:43:05.099872+00:00", "equity": 66699.88738957117, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:43:07.352234+00:00", "equity": 66702.11738957118, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:49:04.185305+00:00", "equity": 66639.96638957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:49:05.230642+00:00", "equity": 66637.73638957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:49:27.555968+00:00", "equity": 66637.73638957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
