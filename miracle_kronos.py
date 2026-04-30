@@ -1009,6 +1009,80 @@ def close_position(symbol: str, reason: str = "signal",
         logger.warning(f"[{symbol}] 平仓失败: {data.get('msg', 'unknown')}")
     return data
 
+
+def adjust_trailing_oco(inst_id, direction, entry, current, tp_distance_pct=0.05):
+    """Trailing TP: 取消旧OCO + 挂新OCO（放宽TP，收紧SL到保本）
+
+    安全设计：scan loop的ATR trailing SL是主要出场机制，
+    OCO调整失败不影响已有保护。成功则解除固定TP硬上限。
+
+    Returns: {'code': '0', ...} on success
+    """
+    # 1. 获取当前持仓大小
+    positions = get_positions()
+    pos = next((p for p in positions if p.get('instId') == inst_id), None)
+    if not pos:
+        return {'code': '99999', 'msg': '无OKX持仓'}
+    sz = int(pos.get('sz', 0))
+    if sz <= 0:
+        return {'code': '99999', 'msg': '持仓量为0'}
+
+    pos_side = 'long' if pos.get('posSide', 'long') in ('long', 'net') else 'short'
+
+    # 2. 计算新TP（当前价格附近紧TP）和保本SL
+    if pos_side == 'long':
+        new_tp = round(current * (1 + tp_distance_pct), 4)
+    else:
+        new_tp = round(current * (1 - tp_distance_pct), 4)
+    new_sl = round(entry, 4)  # 保本
+
+    # 3. 查现有OCO
+    try:
+        oco_resp = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
+        algos = oco_resp.get('data', [])
+    except Exception as ex:
+        logger.warning(f"adjust_trailing_oco: 查询OCO失败 {inst_id}: {ex}")
+        algos = []
+
+    if algos:
+        # 4. 取消旧OCO（即使失败也继续挂新）
+        try:
+            cancel_payload = json.dumps([{'algoId': str(a['algoId']), 'instId': inst_id} for a in algos])
+            cancel_resp = okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_payload)
+            if cancel_resp.get('code') == '0':
+                logger.info(f"调整OCO: 取消旧OCO成功 {inst_id} ({len(algos)}个)")
+            else:
+                logger.warning(f"调整OCO: 取消失败 {inst_id}: {cancel_resp.get('msg')}")
+        except Exception as ex:
+            logger.warning(f"调整OCO: 取消异常 {inst_id}: {ex}")
+
+    # 5. 挂新OCO（放宽TP到当前价附近，SL保本）
+    close_side = 'sell' if pos_side == 'long' else 'buy'
+    oco_body = {
+        'instId': inst_id,
+        'tdMode': 'isolated',
+        'side': close_side,
+        'ordType': 'oco',
+        'sz': str(sz),
+        'reduceOnly': True,
+        'slTriggerPx': str(new_sl),
+        'slOrdPx': '-1',
+        'tpTriggerPx': str(new_tp),
+        'tpOrdPx': '-1',
+    }
+    if _pos_mode != 'net':
+        oco_body['posSide'] = pos_side
+    oco_body = json.dumps(oco_body)
+    result = okx_req('POST', '/api/v5/trade/order-algo', oco_body)
+
+    if result.get('code') == '0':
+        logger.info(f"OCO调整成功 {inst_id}: SL保本@{new_sl}, TP@{new_tp} (sz={sz})")
+    else:
+        logger.warning(f"OCO调整失败 {inst_id}: {result.get('msg', 'unknown')}")
+
+    return result
+
+
 # ===== 主扫描逻辑 =====
 SCAN_COINS = [
     ('BTC-USDT-SWAP', 'BTC'),
@@ -1712,6 +1786,17 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             if (direction == 'long' and current > trade_tp) or (direction == 'short' and current < trade_tp):
                 trade['trailing_active'] = True
                 logger.debug(f"Trailing TP激活 {sym}: ADX={adx_val:.0f}, 价格=${current:.4f}超TP=${trade_tp:.4f}")
+
+        # ── OCO动态调整：trailing激活后取消旧OCO，挂新OCO（保本SL+紧TP） ──
+        if trade.get('trailing_active') and not trade.get('oco_adjusted'):
+            # 价格超过原TP 10%以上才调整（避免过早操作）
+            price_ratio = current / trade_tp  # LONG: >1, SHORT: <1
+            trigger_over = price_ratio > 1.1 if direction == 'long' else price_ratio < 0.9
+            if trigger_over:
+                adj_result = adjust_trailing_oco(inst_id, direction, entry, current)
+                if adj_result.get('code') == '0':
+                    trade['oco_adjusted'] = True
+                    logger.info(f"OCO调整完成 {sym}: 原TP=${trade_tp:.4f}→当前=${current:.4f}")
 
         sl_triggered = False
         if direction == 'long':
