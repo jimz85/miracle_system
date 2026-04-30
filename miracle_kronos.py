@@ -386,6 +386,17 @@ def voting_vote(factors: dict, weights: dict) -> dict:
         conf = 0.0    # 被过滤的信号，零信心
     else:
         conf = min(abs(score) / 2.0, 1.0)
+
+    # ── 多时间框架确认：4H趋势反向则重罚 ──
+    _4h_dir = factors.get('_4h_direction', 'neutral')
+    _4h_strength = factors.get('_4h_strength', 0.0)
+    if _4h_strength > 0.5 and direction != 'wait':
+        if (_4h_dir == 'bull' and direction == 'short') or \
+           (_4h_dir == 'bear' and direction == 'long'):
+            conf *= 0.30  # 4H强烈逆势，confidence打3折
+            score *= 0.30
+            logger.debug(f"4H逆势惩罚: {_4h_dir}(强度{_4h_strength:.2f}) vs 1H{direction}, conf={conf:.3f}")
+
     return {'score': score, 'direction': direction, 'votes': votes,
             'confidence': conf, 'extreme': extreme}
 
@@ -422,6 +433,23 @@ def get_klines(instId, timeframe='1H', limit=100):
         except Exception as ex:
             logger.debug(f"get_klines: 解析K线失败，跳过该K线: {ex}")
     return parsed if parsed else None
+
+def get_4h_trend(instId):
+    """获取4H趋势方向+强度，用于多时间框架确认
+    Returns: (direction: 'bull'|'bear'|'neutral', strength: 0.0-1.0)
+    """
+    klines = get_klines(instId, '4H', 30)
+    if not klines or len(klines) < 14:
+        return 'neutral', 0.0
+    closes = [k['close'] for k in klines]
+    highs = [k['high'] for k in klines]
+    lows = [k['low'] for k in klines]
+    di_plus, di_minus, adx = calc_adx(highs, lows, closes)
+    if adx < 20:
+        return 'neutral', 0.0  # 无明确趋势
+    direction = 'bull' if di_plus > di_minus else 'bear'
+    strength = min(adx / 50.0, 1.0)  # ADX 25→0.5, ADX 50→1.0
+    return direction, strength
 
 def get_account_balance():
     """获取OKX账户余额"""
@@ -1196,6 +1224,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
 
     # IC投票
     treasury = load_treasury()
+    _4h_direction, _4h_strength = get_4h_trend(instId)
     factors = {
         'rsi': rsi, 'adx': adx, 'bb_pos': bb_pos,
         'macd_hist': hist, 'vol_ratio': vol_ratio,
@@ -1204,6 +1233,8 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         '_gemma_vote': gemma_vote,
         '_extreme_signal': extreme_signal,
         'gemma_health': treasury.get('gemma_health', 'healthy'),
+        '_4h_direction': _4h_direction,
+        '_4h_strength': _4h_strength,
     }
     vote = voting_vote(factors, weights)
     
@@ -1215,13 +1246,31 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
     if not ok:
         return None
     
-    # 4H共振: BOTH long and short require 4H confirmation (conservative approach)
-    if not btc_4h_confirmed:
+    # ---- 4H多时间框架确认（方向感知） ----
+    # 1H信号 × 4H方向对齐度:
+    #   4H强趋势+方向一致 → ×1.4 确认加成
+    #   4H强趋势+方向相反 → ×0.3 强烈抑制（不逆大趋势）
+    #   4H无趋势(ADX≤20)  → ×1.0 中立，1H信号自己说话
+    if btc_4h_confirmed and adx_4h > 25 and abs(di_plus_4h - di_minus_4h) > 5:
+        signal_dir = vote['direction']
+        if (_4h_direction == 'bull' and signal_dir == 'long') or \
+           (_4h_direction == 'bear' and signal_dir == 'short'):
+            mt_boost = 1.4  # 趋势共振 → 强确认
+            logger.debug(f"[{symbol}] 4H共振确认: {signal_dir}对齐{_4h_direction}趋势 ADX={adx_4h:.0f}")
+        elif (_4h_direction == 'bull' and signal_dir == 'short') or \
+             (_4h_direction == 'bear' and signal_dir == 'long'):
+            mt_boost = 0.3  # 逆大趋势 → 强制抑制
+            logger.debug(f"[{symbol}] 4H抑制: {signal_dir}逆{_4h_direction}趋势 ADX={adx_4h:.0f}")
+        else:
+            mt_boost = 1.0
+    elif btc_4h_confirmed and adx_4h > 20:
+        mt_boost = 1.0  # 弱趋势4H，不调整
+    else:
+        mt_boost = 1.0  # 无趋势4H，不调整
+
+    # 逆大趋势的强抑制：直接否决
+    if mt_boost <= 0.3:
         return None
-    
-    # 评分
-    # 综合评分 = IC投票分 × 4H确认修正 (now symmetric - both get 1.2x boost with 4H)
-    mt_boost = 1.2 if btc_4h_confirmed else 1.0
 
     final_score = abs(vote['score']) * mt_boost
 
