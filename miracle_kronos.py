@@ -305,7 +305,8 @@ def voting_vote(factors: dict, weights: dict) -> dict:
         'MACD': macd_vote,
         'BTC': btc_vote,
         # P0 Fix: Gemma vote is 0-1 range, remap to -1 to +1
-        'Gemma': (factors.get('_gemma_vote', 0.5) - 0.5) * 2,
+        # Gemma health check: if gemma_health=='down', zero out Gemma vote
+        'Gemma': 0 if factors.get('gemma_health') == 'down' else (factors.get('_gemma_vote', 0.5) - 0.5) * 2,
     }
 
     # ---- 极端RSI信号: 直接替换RSI投票方向 ----
@@ -665,26 +666,16 @@ confidence表示你对方向判断的确信程度：
         gemma_fail_count += 1
         treasury['gemma_consecutive_failures'] = gemma_fail_count
 
-        # 连续3次失败 → circuit breaker升级tier
-        if gemma_fail_count >= 3:
-            current_tier = treasury.get('tier', 'normal')
-            tier_order = ['normal', 'caution', 'critical', 'suspended']
-            if current_tier in tier_order:
-                idx = tier_order.index(current_tier)
-                if idx < len(tier_order) - 1:
-                    new_tier = tier_order[idx + 1]
-                    treasury['tier'] = new_tier
-                    treasury['gemma_tier_upgraded'] = True
-                    treasury['gemma_tier_reason'] = (
-                        f'gemma连续{gemma_fail_count}次失败({failure_type})，'
-                        f'tier: {current_tier}→{new_tier}'
-                    )
-                    # save_treasury在if块外统一执行（见下）
+        # 连续3次失败 → gemma_health降级为degraded；连续6次 → down
+        if gemma_fail_count >= 6:
+            treasury['gemma_health'] = 'down'
+        elif gemma_fail_count >= 3:
+            treasury['gemma_health'] = 'degraded'
     else:
-        # 成功 → 重置连续失败计数
+        # 成功 → 重置连续失败计数和gemma_health
         if gemma_fail_count > 0:
             treasury['gemma_consecutive_failures'] = 0
-            treasury['gemma_tier_upgraded'] = False
+            treasury['gemma_health'] = 'healthy'
 
     # V3 NEW-1 Fix: 单一save_treasury调用（原来在两处各调用一次，可能double write）
     save_treasury(treasury)
@@ -1147,6 +1138,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         extreme_signal = 'neutral'  # In strong trend (ADX>=25), don't fight the trend
 
     # IC投票
+    treasury = load_treasury()
     factors = {
         'rsi': rsi, 'adx': adx, 'bb_pos': bb_pos,
         'macd_hist': hist, 'vol_ratio': vol_ratio,
@@ -1154,6 +1146,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         '_di_plus': di_plus, '_di_minus': di_minus,
         '_gemma_vote': gemma_vote,
         '_extreme_signal': extreme_signal,
+        'gemma_health': treasury.get('gemma_health', 'healthy'),
     }
     vote = voting_vote(factors, weights)
     
