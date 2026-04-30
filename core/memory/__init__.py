@@ -46,10 +46,15 @@ from .system import (
     MemorySystemInterface,
     get_memory_system,
 )
-from .vector_memory import MemoryEntry, VectorMemory, get_vector_memory
+def __getattr__(name: str):
+    """Lazy import to avoid loading sentence_transformers/torch at module import time."""
+    if name in ("VectorMemory", "get_vector_memory", "MemoryEntry"):
+        from . import vector_memory
+        return getattr(vector_memory, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
-    # Vector Memory
+    # Vector Memory (lazy)
     "VectorMemory",
     "get_vector_memory",
     "MemoryEntry",
