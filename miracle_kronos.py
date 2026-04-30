@@ -1541,29 +1541,41 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                 trade['peak_pnl_pct'] = pnl_pct
                 trade['peak_price'] = current  # Track peak price for trailing stop
             else:
-                # PRICE-based trailing stop (3% price retracement triggers)
-                # For LONG: trailing_sl = peak_price * (1 - 0.03)
-                # For SHORT: trailing_sl = peak_price * (1 + 0.03)
+                # ATR-based trailing stop (自适应波动率)
+                # 用ATR×2取代固定3%，高波动币允许更大回撤
+                trailing_mult = max(0.015, atr_pct * 2.0) if atr_pct > 0 else 0.03
                 peak_price = trade.get('peak_price', entry)
                 if direction == 'long':
-                    trailing_sl = peak_price * (1 - 0.03)
+                    trailing_sl = peak_price * (1 - trailing_mult)
                     if current <= trailing_sl:
-                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(价格回撤{(peak_price - current)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(ATR回撤{(peak_price - current)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
                 else:
-                    trailing_sl = peak_price * (1 + 0.03)
+                    trailing_sl = peak_price * (1 + trailing_mult)
                     if current >= trailing_sl:
-                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(价格回撤{(current - peak_price)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(ATR回撤{(current - peak_price)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
 
-        # Get dynamic SL/TP from trade record (ATR-based)
-        trade_sl = trade.get('sl_price', 0)
+        # ── Trailing TP: 趋势完好时跳过固定TP，让利润奔跑 ──
+        # 趋势强(ADX>25)：价格超过原TP也不止盈，靠移动止损出场
+        # 趋势弱(ADX<25)：按原TP止盈（震荡市适合落袋）
+        adx_val = trade.get('adx', 20)
         trade_tp = trade.get('tp_price', 0)
-        # Use actual SL/TP price for monitoring instead of hardcoded percentages
+
         if direction == 'long':
-            sl_triggered = current <= trade_sl if trade_sl > 0 else (pnl_pct <= -SL_PCT)
-            tp_triggered = current >= trade_tp if trade_tp > 0 else (pnl_pct >= TP_PCT)
+            tp_triggered = (current >= trade_tp and adx_val < 25) if trade_tp > 0 else (pnl_pct >= TP_PCT and adx_val < 25)
         else:
-            sl_triggered = current >= trade_sl if trade_sl > 0 else (pnl_pct <= -SL_PCT)
-            tp_triggered = current <= trade_tp if trade_tp > 0 else (pnl_pct >= TP_PCT)
+            tp_triggered = (current <= trade_tp and adx_val < 25) if trade_tp > 0 else (pnl_pct >= TP_PCT and adx_val < 25)
+
+        # 趋势强且盈利超TP：记录trailing状态，但不平仓
+        if trade_tp > 0 and adx_val >= 25:
+            if (direction == 'long' and current > trade_tp) or (direction == 'short' and current < trade_tp):
+                trade['trailing_active'] = True
+                logger.debug(f"Trailing TP激活 {sym}: ADX={adx_val:.0f}, 价格=${current:.4f}超TP=${trade_tp:.4f}")
+
+        sl_triggered = False
+        if direction == 'long':
+            sl_triggered = current <= trade.get('sl_price', 0) if trade.get('sl_price', 0) > 0 else (pnl_pct <= -SL_PCT)
+        else:
+            sl_triggered = current >= trade.get('sl_price', 0) if trade.get('sl_price', 0) > 0 else (pnl_pct <= -SL_PCT)
 
         if sl_triggered:
             position_decisions.append({'action': 'close', 'symbol': sym, 'reason': 'SL触发', 'urgency': 9, 'pnl_pct': pnl_pct})
@@ -1858,8 +1870,8 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'urgency': 9,
             })
             summary_lines.append(f'🚨 {coin} {direction} {hold_hours:.1f}h无盈利 → 强平')
-        # ── 规则2: 部分止盈（盈利>12%） ──
-        elif pnl_pct >= PARTIAL_TP_PCT and direction in ('SHORT', '做空', 'short'):
+        # ── 规则2: 部分止盈（盈利>12%，LONG+SHORT） ──
+        elif pnl_pct >= PARTIAL_TP_PCT:
             decisions.append({
                 'action': 'partial_tp',
                 'coin': coin,
