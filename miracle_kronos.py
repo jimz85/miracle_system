@@ -1852,8 +1852,10 @@ def main():
             if now.date() != last_dt.date():
                 treasury['daily_snapshot'] = equity
                 treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
+                # session_start: 每日起始equity，用于每日20%回撤熔断（非跨日Session追踪）
+                # P1-6: 每日重置是故意设计——每个交易日独立风控，坏日子不蔓延到下一天
                 treasury['session_start'] = equity
-                # 换日时重置连续计数（避免跨天累积）
+                # 换日时重置连续计数（避免跨天累积，hourly counters只管当天）
                 treasury['consecutive_win_hours'] = 0
                 treasury['consecutive_loss_hours'] = 0
         except Exception as ex:
