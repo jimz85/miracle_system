@@ -1,0 +1,62 @@
+{
+  "weights": {
+    "RSI": 0.12,
+    "ADX": 0.12,
+    "Bollinger": 0.24,
+    "Vol": 0.08,
+    "MACD": 0.20,
+    "BTC": 0.13,
+    "Gemma": 0.11
+  },
+  "per_coin": {
+    "DOGE": {
+      "active": true,
+      "best_tf": "4H",
+      "min_confidence": 0.25,
+      "note": "Walk-Forward 12.5%一致性，+611%来自单段。保留但降信心。4H ADX>25时信号可信"
+    },
+    "ETH": {
+      "active": true,
+      "best_tf": "1H",
+      "min_confidence": 0.20,
+      "note": "Walk-Forward 63.6%一致性，真Edge。1H为主要周期"
+    },
+    "BTC": {
+      "active": true,
+      "best_tf": "4H",
+      "min_confidence": 0.30,
+      "prefer_short": true,
+      "note": "回测负收益，仅供方向参考(BTC因子)"
+    },
+    "BNB": {
+      "active": true,
+      "best_tf": "1H",
+      "min_confidence": 0.25,
+      "note": "交易太少(8笔)，保守使用"
+    },
+    "AVAX": {
+      "active": false,
+      "note": "1H -83%回测，4H +13.9%但Walk-Forward未验证，暂时关闭"
+    },
+    "ADA": {
+      "active": false,
+      "note": "无本地数据验证"
+    },
+    "SOL": {
+      "active": false,
+      "note": "无本地数据验证"
+    },
+    "XRP": {
+      "active": false,
+      "note": "无本地数据验证"
+    },
+    "LINK": {
+      "active": false,
+      "note": "无本地数据验证"
+    },
+    "DOT": {
+      "active": false,
+      "note": "无本地数据验证"
+    }
+  }
+}

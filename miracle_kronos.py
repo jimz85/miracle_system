@@ -277,6 +277,24 @@ DEFAULT_WEIGHTS = {
     'Vol': 0.08, 'MACD': 0.20, 'BTC': 0.13, 'Gemma': 0.11
 }
 
+PER_COIN_STRATEGY_FILE = STATE_DIR / "per_coin_strategy.json"
+
+def load_per_coin_strategy() -> dict:
+    """Load per-coin strategy config from JSON file"""
+    if PER_COIN_STRATEGY_FILE.exists():
+        try:
+            with open(PER_COIN_STRATEGY_FILE) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"load_per_coin_strategy: 读取失败: {e}")
+    return {}
+
+def get_coin_config(symbol: str) -> dict:
+    """Get per-coin config, returns defaults if not found"""
+    cfg = load_per_coin_strategy()
+    per_coin = cfg.get("per_coin", {})
+    return per_coin.get(symbol, {})
+
 def voting_vote(factors: dict, weights: dict) -> dict:
     """7因子投票: 每个因子投 +1/0/-1, 加权求和
     核心修正: RSI极端值在强趋势(ADX>25)中不代表反转, 而是趋势持续.
@@ -1093,16 +1111,11 @@ def adjust_trailing_oco(inst_id, direction, entry, current, tp_distance_pct=0.05
 
 # ===== 主扫描逻辑 =====
 SCAN_COINS = [
-    ('BTC-USDT-SWAP', 'BTC'),
-    ('ETH-USDT-SWAP', 'ETH'),
-    ('SOL-USDT-SWAP', 'SOL'),
-    ('DOGE-USDT-SWAP', 'DOGE'),
-    ('ADA-USDT-SWAP', 'ADA'),
-    ('XRP-USDT-SWAP', 'XRP'),
-    ('BNB-USDT-SWAP', 'BNB'),
-    ('AVAX-USDT-SWAP', 'AVAX'),
-    ('LINK-USDT-SWAP', 'LINK'),
-    ('DOT-USDT-SWAP', 'DOT'),
+    ("BTC-USDT-SWAP", "BTC"),
+    ("ETH-USDT-SWAP", "ETH"),
+    ("DOGE-USDT-SWAP", "DOGE"),
+    ("BNB-USDT-SWAP", "BNB"),
+    # AVAX, ADA, SOL, XRP, LINK, DOT: inactive - no positive backtest validation
 ]
 
 # OKX USDT永续合约乘数（每张合约对应的币数量）
@@ -1212,13 +1225,19 @@ def fetch_contract_multiplier(coin: str) -> float:
     _contract_multiplier_cache[coin] = fallback
     return fallback
 
-def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
+def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None, coin_config=None):
     """扫描单个币种"""
     from core.exchange_adapter import get_default_exchange
     from core.price_factors import PriceFactors
     if exchange is None:
         exchange = get_default_exchange()
-    
+
+    # Apply per-coin min_confidence override if configured
+    min_conf = 0.15  # default (lowered from 0.3 based on backtest confidence distribution)
+    if coin_config:
+        min_conf = coin_config.get("min_confidence", min_conf)
+        best_tf = coin_config.get("best_tf", "1H")
+
     klines_1h = get_klines(instId, '1H', 100)
     klines_4h = get_klines(instId, '4H', 100)
     
@@ -1407,7 +1426,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None):
         final_score -= oi_penalty
 
     # 低于阈值过滤 (extreme信号阈值更低; normal从0.25降至0.15，避免conf~17%的好信号被误杀)
-    min_threshold = 0.20 if vote.get('extreme') else 0.15
+    min_threshold = 0.20 if vote.get('extreme') else min_conf
     if final_score < min_threshold:
         return None
     
@@ -1484,10 +1503,10 @@ def select_best(candidates, positions, local_trades=None):
         logger.info(f"模式历史调整: {best.get('pattern_key','?')} ×{adj:.2f} (分数 {best['score']:.3f}→{best['score']*adj:.3f})")
     return best, vetoed_pattern_keys
 
-def _parallel_scan_wrapper(instId, symbol, equity, btc_trend, weights, exchange=None):
+def _parallel_scan_wrapper(instId, symbol, equity, btc_trend, weights, exchange=None, coin_config=None):
     """并行扫描包装器"""
     try:
-        return scan_coin(instId, symbol, equity, btc_trend, weights, exchange)
+        return scan_coin(instId, symbol, equity, btc_trend, weights, exchange, coin_config)
     except Exception as e:
         logger.warning(f"扫描失败 {instId}: {e}")
         return None
@@ -1612,7 +1631,12 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     # P0 Fix: 使用functools.partial绑定equity/btc_trend/weights参数
     # 初始化exchange一次，避免每个coin创建新实例
     exchange = get_default_exchange()
-    wrapped_scan = partial(_parallel_scan_wrapper, equity=equity, btc_trend=btc_trend, weights=weights)
+    per_coin_cfg = load_per_coin_strategy().get("per_coin", {})
+    wrapped_scan = partial(
+        _parallel_scan_wrapper,
+        equity=equity, btc_trend=btc_trend, weights=weights,
+        coin_config=per_coin_cfg
+    )
     candidates = parallel_scan_coins(
         scan_func=wrapped_scan,
         coins=SCAN_COINS,

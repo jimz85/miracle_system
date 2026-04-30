@@ -1,6 +1,22 @@
 {
-  "_meta": {
-    "note": "miracle_system 真实持仓状态 - 与OKX实时同步",
-    "updated": "2026-04-28T18:10:00"
+  "XRP-USDT-SWAP": {
+    "direction": "long",
+    "entry_price": 1.373,
+    "contracts": 293.0,
+    "stop_loss": null,
+    "take_profit": null,
+    "algo_id": null,
+    "opened_at": null,
+    "status": "zombie_imported"
+  },
+  "DOGE-USDT-SWAP": {
+    "direction": "long",
+    "entry_price": 0.1077,
+    "contracts": 223.0,
+    "stop_loss": null,
+    "take_profit": null,
+    "algo_id": null,
+    "opened_at": null,
+    "status": "zombie_imported"
   }
 }
