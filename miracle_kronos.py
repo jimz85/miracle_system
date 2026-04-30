@@ -179,123 +179,13 @@ def okx_req(method, path, body=''):
     return {'code': '99999', 'msg': 'Max retries exceeded'}
 
 # ===== 核心指标计算 =====
-def calc_rsi(prices, period=14):
-    """RSI with Wilder's Smoothing (same as core/factor_calculations.py)"""
-    if len(prices) < period + 1:
-        return 50.0
-    deltas = np.diff(prices)
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-    avg_gain = float(np.mean(gains[:period]))
-    avg_loss = float(np.mean(losses[:period]))
-    alpha = 1.0 / period
-    for i in range(period, len(gains)):
-        avg_gain = avg_gain + alpha * (gains[i] - avg_gain)
-        avg_loss = avg_loss + alpha * (losses[i] - avg_loss)
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
 
-def calc_adx(highs, lows, closes, period=14):
-    """
-    Calculate ADX using Wilder's smoothing (recursive EMA equivalent).
-    Unlike simple SMA which re-averages each window, Wilder's smoothing
-    uses: smoothed = prev * (period-1)/period + current/period
+# ===== 技术指标 (from indicators.py) =====
+from indicators import (
+    calc_rsi, calc_adx, calc_macd, calc_bollinger, calc_atr
+)
 
-    This produces smoother, less reactive ADX values.
-    """
-    if len(closes) < period * 2 + 1:
-        return 20.0, 20.0, 20.0
 
-    # Step 1: Calculate raw TR and DM values
-    trs = []
-    dm_plus = []
-    dm_minus = []
-    for i in range(1, len(closes)):
-        h, lo = highs[i], lows[i]
-        prev_c = closes[i - 1]
-        tr = max(h - lo, abs(h - prev_c), abs(lo - prev_c))
-        trs.append(tr)
-        dm_plus.append(max(h - highs[i - 1], 0))
-        dm_minus.append(max(lows[i - 1] - lo, 0))
-
-    if len(trs) < period:
-        return 20.0, 20.0, 20.0
-
-    # Step 2: Initialize smoothed ATR, DI+, DI- with SMA of first 'period' values
-    atr = sum(trs[:period]) / period
-    di_plus = sum(dm_plus[:period]) / atr
-    di_minus = sum(dm_minus[:period]) / atr
-
-    if atr == 0:
-        return 20.0, 20.0, 20.0
-
-    # Step 3: Apply Wilder's smoothing for remaining bars
-    dx_values = []
-    for i in range(period, len(trs)):
-        tr = trs[i]
-        dmp = dm_plus[i]
-        dmm = dm_minus[i]
-
-        # Wilder's smoothing: new = prev * (period-1)/period + current/period
-        atr = (atr * (period - 1) + tr) / period
-        di_plus = (di_plus * (period - 1) + dmp / atr * 100) / period if atr > 0 else 0
-        di_minus = (di_minus * (period - 1) + dmm / atr * 100) / period if atr > 0 else 0
-
-        if (di_plus + di_minus) > 0:
-            dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100
-        else:
-            dx = 0
-        dx_values.append(dx)
-
-    if len(dx_values) < period:
-        return 20.0, 20.0, 20.0
-
-    # Step 4: ADX is Wilder smoothed DX
-    adx = sum(dx_values[:period]) / period
-    if len(dx_values) > period:
-        for dx in dx_values[period:]:
-            adx = (adx * (period - 1) + dx) / period
-
-    # Return DI+, DI-, ADX
-    return di_plus, di_minus, adx
-
-def calc_macd(prices, fast=12, slow=26, signal=9):
-    if len(prices) < slow + signal:
-        return 0.0, 0.0, 0.0
-    # 正向计算EMA (从旧到新)
-    alpha_f = 2 / (fast + 1)
-    alpha_s = 2 / (slow + 1)
-    alpha_sig = 2 / (signal + 1)
-    ema_f = prices[0]
-    ema_s = prices[0]
-    ema_macd = 0.0
-    macd_values = []
-    for i, p in enumerate(prices):
-        ema_f = p * alpha_f + ema_f * (1 - alpha_f)
-        ema_s = p * alpha_s + ema_s * (1 - alpha_s)
-        m = ema_f - ema_s
-        macd_values.append(m)
-        if i == 0:
-            ema_macd = m
-        else:
-            ema_macd = m * alpha_sig + ema_macd * (1 - alpha_sig)
-    macd = macd_values[-1]
-    signal_line = ema_macd
-    histogram = macd - signal_line
-    return macd, signal_line, histogram
-
-def calc_bollinger(prices, period=20, mult=2):
-    if len(prices) < period:
-        return 50.0, 50.0, 50.0
-    recent = prices[-period:]
-    sma = sum(recent) / period
-    std = (sum((p - sma) ** 2 for p in recent) / period) ** 0.5
-    upper = sma + mult * std
-    lower = sma - mult * std
-    pos = (prices[-1] - lower) / (upper - lower) * 100 if (upper - lower) > 0 else 50.0
-    return upper, lower, pos
 
 # ===== IC权重投票系统 (from Kronos voting_system.py) =====
 # 从环境变量读取Kronos IC文件路径，默认 ~/.hermes/cron/output/ic_weights.json
@@ -451,47 +341,10 @@ def voting_vote(factors: dict, weights: dict) -> dict:
             'confidence': conf, 'extreme': extreme}
 
 # ===== 熔断系统 (from Kronos real_monitor.py) =====
-def load_treasury():
-    if TREASURY_FILE.exists():
-        try:
-            with open(TREASURY_FILE) as f:
-                return json.load(f)
-        except Exception as ex:
-            logger.debug(f"load_treasury: 读取失败，使用默认状态: {ex}")
-    from datetime import date, datetime
-    now = datetime.now().isoformat()
-    return {
-        'equity': 100000, 'hourly_snapshot': 100000, 'hourly_snapshot_time': now[:10],
-        'daily_snapshot': 100000, 'daily_snapshot_time': now[:10],
-        'tier': 'normal', 'consecutive_loss_hours': 0,
-        'consecutive_win_hours': 0, 'last_update': now
-    }
 
-def save_treasury(state):
-    # P0 Fix: 确保 daily_snapshot 在新的一天被重置
-    from datetime import date as date_cls
-    today = str(date_cls.today())
-    ds_time = state.get('daily_snapshot_time', '')
-    if ds_time and not ds_time.startswith(today):
-        state['daily_snapshot'] = state.get('equity', state.get('daily_snapshot'))
-        state['daily_snapshot_time'] = state.get('last_update', '')[:10]
+# ===== Treasury状态管理 (from treasury.py) =====
+from treasury import load_treasury, save_treasury
 
-    # V6-3 Fix: Treasury tier 降级机制——连续盈利时逐步降级
-    current_tier = state.get('tier', 'normal')
-    if current_tier != 'normal':
-        # 追踪连续盈利小时数（由调用方在record_trade_outcome中更新）
-        consecutive_win_hours = state.get('consecutive_win_hours', 0)
-        if consecutive_win_hours >= 3:
-            # 连续3小时盈利，降一级
-            tier_order = ['normal', 'caution', 'critical', 'suspended']
-            idx = tier_order.index(current_tier) if current_tier in tier_order else 0
-            if idx > 0:
-                old_tier = state['tier']
-                state['tier'] = tier_order[idx - 1]
-                state['consecutive_win_hours'] = 0  # 重置计数器
-                logger.info(f"Tier降级: {old_tier}→{state['tier']} (连续{consecutive_win_hours}h盈利)")
-
-    atomic_write_json(TREASURY_FILE, state)
 
 # ===== 数据获取 =====
 def get_klines(instId, timeframe='1H', limit=100):
@@ -886,49 +739,12 @@ def update_whitelist(entry_key, won: bool):
     save_whitelist(wl)
 
 # ===== 交易日志 =====
-def get_open_trades():
-    """获取本地记录的OPEN交易"""
-    if TRADES_FILE.exists():
-        try:
-            with open(TRADES_FILE) as f:
-                all_trades = json.load(f)
-            return [t for t in all_trades if t.get('status') == 'OPEN']
-        except Exception as ex:
-            logger.debug(f"get_open_trades: 读取失败，返回空列表: {ex}")
-    return []
 
-def update_trade_pnl(trade, current_price):
-    """更新交易浮动盈亏"""
-    entry = trade.get('entry_price', 0)
-    direction = trade.get('direction', 'long')
-    if entry == 0 or current_price == 0:
-        return trade
-    if direction == 'long':
-        pnl_pct = (current_price - entry) / entry
-    else:
-        pnl_pct = (entry - current_price) / entry
-    trade['current_pnl_pct'] = pnl_pct
-    trade['current_price'] = current_price
-    return trade
-
-def load_trades():
-    if TRADES_FILE.exists():
-        try:
-            with open(TRADES_FILE) as f:
-                return json.load(f)
-        except Exception as ex:
-            logger.debug(f"load_trades: 读取失败，返回空列表: {ex}")
-    return []
-
-def save_trades(trades):
-    atomic_write_json(TRADES_FILE, trades)
-
-def record_trade(trade):
-    trades = load_trades()
-    trades.append(trade)
-    if len(trades) > 1000:
-        trades = trades[-500:]
-    save_trades(trades)
+# ===== 交易日志 (from trade_journal.py) =====
+from trade_journal import (
+    get_open_trades, update_trade_pnl,
+    load_trades, save_trades, record_trade
+)
 
 
 # ===== OCO下单 (带验证) =====
