@@ -311,7 +311,7 @@ def voting_vote(factors: dict, weights: dict) -> dict:
     if extreme and extreme in ('long', 'short'):
         # 极端RSI: 直接用RSI_weight作为信号强度，乘以1.5
         rsi_extreme_vote = 1 if extreme == 'long' else -1
-        score = weights.get('RSI', 0.15) * rsi_extreme_vote * 7.0  # RSI权重×方向×7倍放大（确保extreme confidence高于普通信号）
+        score = weights.get('RSI', 0.15) * rsi_extreme_vote * 3.0  # 方向强度，confidence固定0.80（见下）
         direction = extreme
         # ADX>30强趋势时，extreme信号也必须与趋势一致
         if adx > 30:
@@ -654,7 +654,8 @@ confidence表示你对方向判断的确信程度：
         vote = _rule_based_vote(rsi, adx, bb_pos)
         failure_type = 'error'
 
-    # ---- 连续失败追踪 + circuit breaker升级 ----
+    # ---- 保存状态（单一出口，避免double write）----
+    # 只在状态真正变化时保存
     treasury = load_treasury()
     gemma_fail_count = treasury.get('gemma_consecutive_failures', 0)
 
@@ -676,15 +677,15 @@ confidence表示你对方向判断的确信程度：
                         f'gemma连续{gemma_fail_count}次失败({failure_type})，'
                         f'tier: {current_tier}→{new_tier}'
                     )
-                    # 保存升级后的tier
-                    save_treasury(treasury)
-
+                    # save_treasury在if块外统一执行（见下）
     else:
         # 成功 → 重置连续失败计数
         if gemma_fail_count > 0:
             treasury['gemma_consecutive_failures'] = 0
             treasury['gemma_tier_upgraded'] = False
-            save_treasury(treasury)
+
+    # V3 NEW-1 Fix: 单一save_treasury调用（原来在两处各调用一次，可能double write）
+    save_treasury(treasury)
 
     # 写入每币缓存
     if failure_type is None:
@@ -696,7 +697,7 @@ confidence表示你对方向判断的确信程度：
                         all_cache = json.load(f)
                 except Exception as e:
                     logger.debug(f"gemma_cache_write: 读取现缓存失败: {e}")
-            all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100] if 'output' in dir() else ''}
+            all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100]}
             atomic_write_json(cache_file, all_cache)
 
     return vote
