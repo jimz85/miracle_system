@@ -1592,10 +1592,13 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     logger.warning(msg)
                     phantom_warnings.append(msg)
             if result_reconcile.orphan_orders:
+                # 过滤：OCO订单对应的真实持仓不算孤立
+                real_pos_inst_ids = {p.get('instId', '') for p in get_positions()}
                 for order in result_reconcile.orphan_orders:
-                    msg = f"孤立订单: {order.inst_id} algoId={order.algo_id[:12]}"
-                    logger.warning(msg)
-                    phantom_warnings.append(msg)
+                    if order.inst_id not in real_pos_inst_ids:
+                        msg = f"孤立订单: {order.inst_id} algoId={order.algo_id[:12]}"
+                        logger.warning(msg)
+                        phantom_warnings.append(msg)
             if phantom_warnings:
                 logger.warning(f"幽灵仓位警告共{len(phantom_warnings)}项")
         except Exception as e:

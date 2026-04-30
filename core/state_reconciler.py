@@ -346,6 +346,11 @@ class StateReconciler:
     # 本地状态加载
     # ─────────────────────────────────────────────────────────────
     
+    def _is_placeholder_symbol(self, inst_id: str) -> bool:
+        """判断是否为COIN-X格式的占位符号"""
+        import re
+        return bool(re.match(r'^COIN-\d+', inst_id, re.IGNORECASE))
+
     def load_local_positions(self) -> Dict[str, LocalPositionRecord]:
         """从本地文件加载持仓记录"""
         positions = {}
@@ -359,8 +364,12 @@ class StateReconciler:
                 for inst_id, pos_data in data.items():
                     if isinstance(pos_data, dict):
                         contracts = pos_data.get('contracts', pos_data.get('position', 0))
-                        if contracts and contracts != 0:
-                            positions[inst_id] = LocalPositionRecord(
+                        # 跳过幽灵仓位：contracts=0 或 COIN-X占位符
+                        if not contracts or contracts == 0:
+                            continue
+                        if self._is_placeholder_symbol(inst_id):
+                            continue
+                        positions[inst_id] = LocalPositionRecord(
                                 inst_id=inst_id,
                                 direction=pos_data.get('direction', 'long'),
                                 entry_price=pos_data.get('entry_price', pos_data.get('entry', 0)),
@@ -383,16 +392,25 @@ class StateReconciler:
                 for t in trades:
                     if isinstance(t, dict) and t.get('status') == 'open':
                         inst_id = t.get('symbol', '')
-                        if inst_id and inst_id not in positions:
-                            # 转换symbol格式
-                            if '-SWAP' not in inst_id:
-                                inst_id = inst_id.replace('-USDT', '-USDT-SWAP')
-                            
-                            positions[inst_id] = LocalPositionRecord(
+                        if not inst_id or inst_id in positions:
+                            continue
+                        # 转换symbol格式
+                        if '-SWAP' not in inst_id:
+                            inst_id = inst_id.replace('-USDT', '-USDT-SWAP')
+                        
+                        # 跳过合约数量为0的幽灵仓位
+                        sz = t.get('position_size', t.get('sz', 0))
+                        if not sz or sz == 0:
+                            continue
+                        # 跳过COIN-X格式占位仓位
+                        if self._is_placeholder_symbol(inst_id):
+                            continue
+                        
+                        positions[inst_id] = LocalPositionRecord(
                                 inst_id=inst_id,
                                 direction=t.get('side', 'long'),
                                 entry_price=t.get('entry_price', 0),
-                                contracts=t.get('position_size', t.get('sz', 0)),
+                                contracts=sz,
                                 stop_loss=t.get('stop_loss'),
                                 take_profit=t.get('take_profit'),
                                 algo_id=t.get('algo_id'),
@@ -416,6 +434,10 @@ class StateReconciler:
                 
                 for t in trades:
                     if isinstance(t, dict):
+                        inst_id = t.get('inst_id', t.get('symbol', ''))
+                        # 跳过COIN-X占位符号的订单
+                        if self._is_placeholder_symbol(inst_id):
+                            continue
                         # 普通订单
                         oid = t.get('order_id') or t.get('ordId')
                         if oid:
@@ -454,6 +476,9 @@ class StateReconciler:
                     data = json.load(f)
                 for inst_id, pos_data in data.items():
                     if isinstance(pos_data, dict) and pos_data.get('algo_id') and inst_id != '_meta':
+                        # 跳过COIN-X占位符号
+                        if self._is_placeholder_symbol(inst_id):
+                            continue
                         algo_id = str(pos_data['algo_id'])
                         if algo_id not in orders:
                             orders[algo_id] = LocalOrderRecord(
@@ -476,9 +501,15 @@ class StateReconciler:
     # ─────────────────────────────────────────────────────────────
     
     def save_local_state(self, positions: Dict[str, LocalPositionRecord]):
-        """保存本地持仓状态到文件"""
+        """保存本地持仓状态到文件（自动过滤幽灵仓位）"""
         data = {}
         for inst_id, pos in positions.items():
+            # 跳过contracts=0的幽灵仓位
+            if not pos.contracts or pos.contracts == 0:
+                continue
+            # 跳过COIN-X格式占位仓位
+            if self._is_placeholder_symbol(inst_id):
+                continue
             data[inst_id] = {
                 'direction': pos.direction,
                 'entry_price': pos.entry_price,
@@ -496,7 +527,7 @@ class StateReconciler:
             with open(temp_file, 'w') as f:
                 json.dump(data, f, indent=2)
             temp_file.replace(self.state_file)
-            logger.info(f"本地状态已保存: {len(positions)}个持仓")
+            logger.info(f"本地状态已保存: {len(data)}个持仓（过滤前{len(positions)}）")
         except Exception as e:
             logger.error(f"保存本地状态失败: {e}")
     
@@ -737,9 +768,13 @@ class StateReconciler:
         """自动同步状态"""
         logger.info("执行自动同步...")
         
-        # 1. 清理幽灵仓位（标记为closed）
+        # 1. 清理幽灵仓位（从本地状态中移除）
         for phantom in result.phantom_positions:
-            logger.warning(f"清理幽灵仓位: {phantom.inst_id}")
+            logger.warning(f"清理幽灵仓位: {phantom.inst_id} 从本地状态中移除")
+            # 从本地状态字典中移除
+            if phantom.inst_id in local_positions:
+                del local_positions[phantom.inst_id]
+            # 同时更新交易记录状态
             self.update_trade_status(
                 phantom.inst_id, 
                 'phantom_closed',

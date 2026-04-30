@@ -23,6 +23,8 @@ def calc_rsi(prices, period=14):
         avg_gain = avg_gain + alpha * (gains[i] - avg_gain)
         avg_loss = avg_loss + alpha * (losses[i] - avg_loss)
     if avg_loss == 0:
+        if avg_gain == 0:
+            return 50.0  # 无涨跌 = 中性
         return 100.0
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
@@ -55,11 +57,10 @@ def calc_adx(highs, lows, closes, period=14):
 
     # Step 2: Initialize smoothed ATR, DI+, DI- with SMA of first 'period' values
     atr = sum(trs[:period]) / period
-    di_plus = sum(dm_plus[:period]) / atr
-    di_minus = sum(dm_minus[:period]) / atr
-
     if atr == 0:
         return 20.0, 20.0, 20.0
+    di_plus = sum(dm_plus[:period]) / atr
+    di_minus = sum(dm_minus[:period]) / atr
 
     # Step 3: Apply Wilder's smoothing for remaining bars
     dx_values = []
