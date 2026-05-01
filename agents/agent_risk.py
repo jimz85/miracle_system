@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
+from core.circuit_breaker import MiracleCircuitBreaker, SurvivalTier
+
 # ============================================================
 # 数据结构
 # ============================================================
@@ -76,6 +78,7 @@ class CircuitBreaker:
 
     def __init__(self, config: Dict[str, Any] | None = None):
         cfg = config or {}
+        self._mc = MiracleCircuitBreaker(config)
         self.max_daily_loss_pct: float = cfg.get("max_daily_loss_pct", 5.0)      # 单日亏损5%停止
         self.max_drawdown_pct: float = cfg.get("max_drawdown_pct", 20.0)         # 总回撤20%停止
         self.cooldown_2_losses_hours: int = cfg.get("cooldown_2_losses_hours", 1) # 2连亏暂停1小时
@@ -87,6 +90,11 @@ class CircuitBreaker:
         检查单日亏损是否触发熔断
         Returns: (passed, reason_if_failed)
         """
+        # 五级生存层前置检查
+        result = self._mc.check(equity=account_balance, positions=[])
+        if result.tier in (SurvivalTier.CRITICAL, SurvivalTier.PAUSED):
+            return False, f"[五级生存层] {result.reason}"
+
         if account_balance <= 0:
             return False, "账户余额为0"
 
@@ -102,6 +110,11 @@ class CircuitBreaker:
         检查总回撤是否触发熔断
         Returns: (passed, reason_if_failed)
         """
+        # 五级生存层前置检查
+        result = self._mc.check(equity=current_balance, positions=[])
+        if result.tier in (SurvivalTier.CRITICAL, SurvivalTier.PAUSED):
+            return False, f"[五级生存层] {result.reason}"
+
         if peak_balance <= 0:
             return False, "历史最高余额无效"
 
@@ -117,6 +130,12 @@ class CircuitBreaker:
         检查连续亏损是否触发冷却期
         Returns: (can_trade, reason_if_blocked, resume_time)
         """
+        # 五级生存层前置检查
+        # 使用account_balance占位（check_consecutive_losses不直接持有余额，从调用方传入）
+        result = self._mc.check(equity=0, positions=[])
+        if result.tier in (SurvivalTier.CRITICAL, SurvivalTier.PAUSED):
+            return False, f"[五级生存层] {result.reason}", None
+
         now = datetime.now()
 
         if loss_streak >= 3:

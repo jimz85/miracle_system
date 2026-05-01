@@ -1701,6 +1701,23 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     # 选最优 (过滤已有持仓)
     best, vetoed_pattern_keys = select_best(candidates, positions, local_trades)
 
+    # [Orchestrator接入] 验证选出的最优信号
+    if best and mode == 'live':
+        try:
+            from core.orchestrator import get_orchestrator
+            orch = get_orchestrator({"enable_memory": True})
+            decision = orch.decide({
+                "symbol": best.get("symbol", ""),
+                "signal": best,
+                "market_regime": regime if 'regime' in locals() else "unknown",
+                "equity": equity if 'equity' in locals() else 0,
+            })
+            if decision.get("decision") != "EXECUTE":
+                logger.info(f"Orchestrator否决: {decision.get('reasoning', '无理由')}")
+                best = None  # Orchestrator否决了
+        except Exception as e:
+            logger.warning(f"Orchestrator验证失败: {e}，使用规则引擎决策")
+
     # 仓位管理 (融合OKX实时+本地记录)
     position_decisions = []
 

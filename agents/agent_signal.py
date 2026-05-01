@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from core.ic_weights import get_weights as get_ic_weights
+from core.memory import get_memory_system
 
 # Core modules (extracted classes re-exported for backwards compatibility)
 from core.price_factors import PriceFactors
@@ -70,6 +71,9 @@ class SignalGenerator:
         
         # RegimeClassifier实例
         self._regime_classifier = RegimeClassifier()
+
+        # 初始化Memory系统（决策流接入）
+        self._memory = get_memory_system()
 
     def _load_ic_weights(self) -> None:
         """
@@ -375,6 +379,17 @@ class SignalGenerator:
         # === 1. 计算1H价格因子 ===
         factors = PriceFactors.calc_all(prices, highs, lows, timeframe="1H")
 
+        # === [Memory接入] 检索相关历史经验 ===
+        try:
+            memory_ctx = self._memory.retrieve_relevant_experiences(
+                f"{symbol} {self._get_direction_hint(factors)}", k=3
+            )
+            if memory_ctx:
+                factors["memory_context"] = memory_ctx
+                factors["confidence_boost"] = 1.05  # 有相关经验时微提置信度
+        except Exception:
+            pass  # Memory不可用时不影响决策
+
         # === 2. 趋势判断 ===
         trend_info = TrendDetector.detect_trend(prices, highs, lows)
         factors["trend"] = trend_info["trend"]
@@ -623,6 +638,17 @@ class SignalGenerator:
             }
         }
 
+        # === [Memory接入] 记录信号到Memory ===
+        try:
+            if signal["direction"] != "wait":
+                self._memory.add_experience(
+                    content=f"{symbol} {signal['direction']} signal, confidence={signal['confidence']:.2f}",
+                    memory_type="trade",
+                    metadata={"symbol": symbol, "direction": signal["direction"], "confidence": signal["confidence"]}
+                )
+        except Exception:
+            pass  # Memory不可用时不影响决策
+
         return signal
 
     def _wait_signal(self, symbol: str, reason: str) -> Dict:
@@ -650,6 +676,20 @@ class SignalGenerator:
             "reason": reason,
             "whitelist_passed": False
         }
+
+    def _get_direction_hint(self, factors: Dict) -> str:
+        """根据当前因子推断方向提示，供Memory检索使用"""
+        trend = factors.get("trend", "range")
+        if trend == "bull":
+            return "bullish"
+        elif trend == "bear":
+            return "bearish"
+        rsi = factors.get("rsi", 50)
+        if rsi > 65:
+            return "bearish"
+        elif rsi < 35:
+            return "bullish"
+        return "neutral"
 
     def _generate_reason(self, direction: str, scores: Dict,
                           factors: Dict, whitelist: Dict) -> str:

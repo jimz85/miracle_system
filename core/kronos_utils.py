@@ -189,6 +189,16 @@ def check_treasury_trade_allowed(equity: float, treasury_state: dict) -> Tuple[b
     
     Returns: (allowed, reason, details)
     """
+    # 0. 五级生存层检查（与core/circuit_breaker集成）
+    from core.circuit_breaker import MiracleCircuitBreaker, SurvivalTier
+    try:
+        mc = MiracleCircuitBreaker()
+        result = mc.check(equity=equity, positions=[])
+        if result.tier in (SurvivalTier.CRITICAL, SurvivalTier.PAUSED):
+            return False, f"[五级生存层] {result.reason}", {'tier': result.tier.value}
+    except Exception as e:
+        _logger.warning(f"MiracleCircuitBreaker检查失败: {e}")
+
     limits = TREASURY_LIMITS
     
     # 1. 最低权益检查

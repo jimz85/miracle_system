@@ -9,7 +9,7 @@
   },
   "position": {
     "base_position_pct": 2,
-    "max_position_pct": 15,
+    "max_position_pct": 13,
     "max_total_exposure": 40,
     "gradual_steps": {
       "enabled": true,
@@ -18,9 +18,21 @@
     }
   },
   "leverage": {
-    "strong_trend": {"min_adx": 35, "leverage": 3, "multiplier": 1.5},
-    "medium_trend": {"min_adx": 20, "leverage": 2, "multiplier": 1.0},
-    "weak_trend": {"min_adx": 0, "leverage": 1, "multiplier": 0.5}
+    "strong_trend": {
+      "min_adx": 35,
+      "leverage": 3,
+      "multiplier": 1.5
+    },
+    "medium_trend": {
+      "min_adx": 20,
+      "leverage": 2,
+      "multiplier": 1.0
+    },
+    "weak_trend": {
+      "min_adx": 0,
+      "leverage": 1,
+      "multiplier": 0.5
+    }
   },
   "risk": {
     "max_loss_per_trade_pct": 1,
@@ -31,15 +43,38 @@
     "total_drawdown_stop_pct": 20
   },
   "factors": {
-    "price_momentum": {"weight": 0.6, "indicators": ["rsi", "adx", "macd"]},
-    "news_sentiment": {"weight": 0.2},
-    "onchain": {"weight": 0.1, "metrics": ["exchange_flow", "large_transfer"]},
-    "wallet": {"weight": 0.1, "metrics": ["holder_concentration"]}
+    "price_momentum": {
+      "weight": 0.6,
+      "indicators": [
+        "rsi",
+        "adx",
+        "macd"
+      ]
+    },
+    "news_sentiment": {
+      "weight": 0.2
+    },
+    "onchain": {
+      "weight": 0.1,
+      "metrics": [
+        "exchange_flow",
+        "large_transfer"
+      ]
+    },
+    "wallet": {
+      "weight": 0.1,
+      "metrics": [
+        "holder_concentration"
+      ]
+    }
   },
   "feishu": {
     "enabled": true
   },
-  "exchanges": ["okx", "binance"],
+  "exchanges": [
+    "okx",
+    "binance"
+  ],
   "fee": {
     "maker": 0.0002,
     "taker": 0.0005,
