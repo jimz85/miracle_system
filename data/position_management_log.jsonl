@@ -189,3 +189,159 @@
 {"timestamp": "2026-04-30T15:49:04.185305+00:00", "equity": 66639.96638957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
 {"timestamp": "2026-04-30T15:49:05.230642+00:00", "equity": 66637.73638957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
 {"timestamp": "2026-04-30T15:49:27.555968+00:00", "equity": 66637.73638957119, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T15:55:10.699664+00:00", "equity": 66656.33238957118, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:02:58.743245+00:00", "equity": 66622.8069003215, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:03:39.463972+00:00", "equity": 66625.73690032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:15:04.986439+00:00", "equity": 66650.30590032152, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:17:24.010163+00:00", "equity": 66643.28890032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:17:24.009972+00:00", "equity": 66643.28890032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:17:51.506386+00:00", "equity": 66641.05890032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:22:30.917900+00:00", "equity": 66652.82490032152, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:22:31.906840+00:00", "equity": 66655.05490032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:33:16.640692+00:00", "equity": 66695.89490032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:33:33.463984+00:00", "equity": 66703.28490032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:35:11.327184+00:00", "equity": 66686.53490032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:37:31.129560+00:00", "equity": 66681.83190032151, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:39:59.595980+00:00", "equity": 66667.03490032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:52:30.112431+00:00", "equity": 66720.01790032152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:52:47.309378+00:00", "equity": 66725.17790032152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:53:56.631994+00:00", "equity": 66731.37690032151, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T16:59:45.742628+00:00", "equity": 66719.91690032152, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:01:42.599813+00:00", "equity": 66692.34390032152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:02:00.348301+00:00", "equity": 66692.34390032152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:15:27.232028+00:00", "equity": 66706.84836357152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:15:28.281108+00:00", "equity": 66709.07836357153, "btc_trend": "neutral", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:17:29.213172+00:00", "equity": 66762.59836357152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:17:23.159075+00:00", "equity": 66746.98836357152, "btc_trend": "bear", "open_count": 8, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:20:42.707138+00:00", "equity": 66738.41426357153, "btc_trend": "bear", "open_count": 7, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:22:43.345575+00:00", "equity": 66743.72726357152, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:36:08.748458+00:00", "equity": 66849.01526357152, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:36:57.509746+00:00", "equity": 66849.69526357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:39:21.163116+00:00", "equity": 66828.94526357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:41:12.712840+00:00", "equity": 66840.77526357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:47:15.172474+00:00", "equity": 66843.33926357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:47:34.888961+00:00", "equity": 66852.25926357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:48:44.265621+00:00", "equity": 66874.55926357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:50:47.238398+00:00", "equity": 66866.52626357152, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T17:51:03.087332+00:00", "equity": 66872.32926357152, "btc_trend": "neutral", "open_count": 9, "decisions": [{"action": "move_sl_to_cost", "coin": "DOGE", "direction": "SHORT", "reason": "盈利2.0% → SL移到成本0.1077", "entry": 0.1077, "old_sl": 0.11473, "new_sl": 0.1077, "pnl_pct": 0.02042711234911799, "mode": "live", "trade_id": null, "urgency": 7}], "warnings": []}
+{"timestamp": "2026-04-30T18:00:57.616192+00:00", "equity": 66863.81626357153, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:01:24.837191+00:00", "equity": 66860.90626357152, "btc_trend": "bear", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:09:46.143704+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:15:27.582978+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:15:32.259386+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:21:53.072245+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:32:20.834385+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:37:25.506486+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:42:46.608588+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:46:48.915640+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:50:35.010262+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T18:57:00.100891+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:00:59.263907+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:01:03.102713+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:08:18.745206+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:15:35.562610+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:23:47.384981+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:29:28.782987+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:31:56.464308+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:35:48.559970+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:43:58.602465+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:46:48.695705+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:50:05.437577+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T19:57:35.567136+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:03:34.274773+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:04:02.235562+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:16:24.595050+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:24:10.927679+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:30:19.737036+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:32:56.750080+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:37:16.406977+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:45:48.410678+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:46:04.618254+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-04-30T20:56:42.796516+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.164387921111111, "pnl_pct": 0.0, "reason": "持仓3.2h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:02:16.948452+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.2572079033333337, "pnl_pct": 0.0, "reason": "持仓3.3h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:02:35.345149+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.2623180969444445, "pnl_pct": 0.0, "reason": "持仓3.3h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:08:47.218962+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.3656163783333337, "pnl_pct": 0.0, "reason": "持仓3.4h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:15:22.220052+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.4753389033333333, "pnl_pct": 0.0, "reason": "持仓3.5h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:15:39.660650+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.480183513888889, "pnl_pct": 0.0, "reason": "持仓3.5h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:22:19.032504+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.59112014, "pnl_pct": 0.0, "reason": "持仓3.6h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:33:18.303348+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 3.77425093, "pnl_pct": 0.0, "reason": "持仓3.8h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:47:19.665218+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.007962560555556, "pnl_pct": 0.0, "reason": "持仓4.0h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:50:27.622331+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.060172869722223, "pnl_pct": 0.0, "reason": "持仓4.1h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T21:57:17.588368+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.174052324444444, "pnl_pct": 0.0, "reason": "持仓4.2h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:04:06.922701+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.287756305833333, "pnl_pct": 0.0, "reason": "持仓4.3h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:16:15.843845+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.490234401388888, "pnl_pct": 0.0, "reason": "持仓4.5h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:16:28.847016+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.4938463933333335, "pnl_pct": 0.0, "reason": "持仓4.5h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:21:23.808524+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.575780145555555, "pnl_pct": 0.0, "reason": "持仓4.6h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:28:49.900029+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.6996944525, "pnl_pct": 0.0, "reason": "持仓4.7h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:32:20.205245+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.758112568055556, "pnl_pct": 0.0, "reason": "持仓4.8h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:38:39.803637+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.863556565833334, "pnl_pct": 0.0, "reason": "持仓4.9h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:44:20.104429+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 4.958084563611111, "pnl_pct": 0.0, "reason": "持仓5.0h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:46:51.175555+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.0000487652777785, "pnl_pct": 0.0, "reason": "持仓5.0h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:50:52.874269+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.067187296944445, "pnl_pct": 0.0, "reason": "持仓5.1h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T22:58:11.635394+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.1890653872222225, "pnl_pct": 0.0, "reason": "持仓5.2h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T23:22:02.658760+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.586571877777778, "pnl_pct": 0.0, "reason": "持仓5.6h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T23:31:33.786064+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.745218351111111, "pnl_pct": 0.0, "reason": "持仓5.7h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T23:31:45.506121+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.7484739225, "pnl_pct": 0.0, "reason": "持仓5.7h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T23:44:55.522635+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 5.967922954166667, "pnl_pct": 0.0, "reason": "持仓6.0h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T23:48:19.156939+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.0244880386111115, "pnl_pct": 0.0, "reason": "持仓6.0h无盈利(0.0%)"}]}
+{"timestamp": "2026-04-30T23:56:31.965152+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.1613792088888895, "pnl_pct": 0.0, "reason": "持仓6.2h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T00:01:49.440598+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.249566832777778, "pnl_pct": 0.0, "reason": "持仓6.2h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T00:02:17.457967+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.257349435277777, "pnl_pct": 0.0, "reason": "持仓6.3h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T00:08:26.885433+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.359968175833333, "pnl_pct": 0.0, "reason": "持仓6.4h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T00:15:47.970280+00:00", "equity": 67000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.482491744444445, "pnl_pct": 0.0, "reason": "持仓6.5h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T00:15:52.540463+00:00", "equity": 100000, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 6.483761239722223, "pnl_pct": 0.0, "reason": "持仓6.5h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T00:21:38.515875+00:00", "equity": 66654.96173465368, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:21:41.552039+00:00", "equity": 66654.96173465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:23:31.084212+00:00", "equity": 66636.12473465367, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:26:53.805399+00:00", "equity": 66671.12473465367, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:29:59.366687+00:00", "equity": 66700.98473465367, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:32:09.091084+00:00", "equity": 66717.68873465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:32:18.962371+00:00", "equity": 66713.22873465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:37:09.225222+00:00", "equity": 66680.75773465369, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:39:07.451277+00:00", "equity": 66653.30073465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:42:39.316685+00:00", "equity": 66577.11773465367, "btc_trend": "neutral", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:48:14.607420+00:00", "equity": 66538.08473465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:50:51.986053+00:00", "equity": 66531.12373465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T00:56:22.409129+00:00", "equity": 66458.73273465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:01:14.743870+00:00", "equity": 66488.11573465368, "btc_trend": "neutral", "open_count": 9, "decisions": [{"action": "force_close", "coin": "DOGE", "direction": "SHORT", "reason": "持仓7.2h无盈利(-0.0%) → 强平", "entry": 0.1077, "current": 0.10775, "pnl_pct": -0.00046425255338899247, "mode": "live", "trade_id": null, "urgency": 9}], "warnings": []}
+{"timestamp": "2026-05-01T01:01:11.885626+00:00", "equity": 66482.97573465368, "btc_trend": "bull", "open_count": 9, "decisions": [], "warnings": [{"coin": "DOGE", "direction": "SHORT", "hold_hours": 7.239134896111111, "pnl_pct": 0.0, "reason": "持仓7.2h无盈利(0.0%)"}]}
+{"timestamp": "2026-05-01T01:01:21.004449+00:00", "equity": 66482.97573465368, "btc_trend": "bull", "open_count": 9, "decisions": [{"action": "force_close", "coin": "DOGE", "direction": "SHORT", "reason": "持仓7.2h无盈利(-0.0%) → 强平", "entry": 0.1077, "current": 0.10775, "pnl_pct": -0.00046425255338899247, "mode": "live", "trade_id": null, "urgency": 9}], "warnings": []}
+{"timestamp": "2026-05-01T01:04:03.231048+00:00", "equity": 66468.84160965368, "btc_trend": "bull", "open_count": 5, "decisions": [], "warnings": [{"coin": "BNB", "direction": "LONG", "hold_hours": 3.0156197355555556, "pnl_pct": -0.0006113754036032917, "reason": "持仓3.0h无盈利(-0.1%)"}]}
+{"timestamp": "2026-05-01T01:04:42.219247+00:00", "equity": 66465.94860965369, "btc_trend": "bull", "open_count": 5, "decisions": [], "warnings": [{"coin": "BNB", "direction": "LONG", "hold_hours": 3.0264497908333334, "pnl_pct": -0.0006113754036032917, "reason": "持仓3.0h无盈利(-0.1%)"}]}
+{"timestamp": "2026-05-01T01:08:26.572922+00:00", "equity": 66553.38460965367, "btc_trend": "neutral", "open_count": 5, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:12:58.702928+00:00", "equity": 66550.45760965368, "btc_trend": "bull", "open_count": 5, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:15:55.294344+00:00", "equity": 66585.39460965368, "btc_trend": "bull", "open_count": 5, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:15:56.964759+00:00", "equity": 66585.39460965368, "btc_trend": "bull", "open_count": 5, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:15:58.608389+00:00", "equity": 66576.66460965367, "btc_trend": "neutral", "open_count": 5, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:16:06.819677+00:00", "equity": 66576.66460965367, "btc_trend": "bull", "open_count": 5, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:22:10.595349+00:00", "equity": 66550.24500965368, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:31:02.202103+00:00", "equity": 66475.82700965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": [{"coin": "BNB", "direction": "LONG", "hold_hours": 3.4653339174999997, "pnl_pct": -0.0001241856288568061, "reason": "持仓3.5h无盈利(-0.0%)"}]}
+{"timestamp": "2026-05-01T01:31:01.496598+00:00", "equity": 66475.82700965367, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": [{"coin": "BNB", "direction": "LONG", "hold_hours": 3.4651379438888887, "pnl_pct": -0.0001241856288568061, "reason": "持仓3.5h无盈利(-0.0%)"}]}
+{"timestamp": "2026-05-01T01:31:12.061155+00:00", "equity": 66475.82700965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": [{"coin": "BNB", "direction": "LONG", "hold_hours": 3.4680725430555555, "pnl_pct": -0.0001241856288568061, "reason": "持仓3.5h无盈利(-0.0%)"}]}
+{"timestamp": "2026-05-01T01:33:33.654313+00:00", "equity": 66487.95300965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:35:48.865906+00:00", "equity": 66577.43400965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:44:28.739559+00:00", "equity": 66507.96900965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:47:20.601466+00:00", "equity": 66474.64900965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:47:32.802210+00:00", "equity": 66472.28600965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:47:46.072999+00:00", "equity": 66474.66600965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:51:29.674347+00:00", "equity": 66437.16000965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:57:12.706278+00:00", "equity": 66362.36400965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T01:58:39.701470+00:00", "equity": 66382.74, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:02:33.272877+00:00", "equity": 66402.81400965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:02:36.136442+00:00", "equity": 66402.81400965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:02:54.161104+00:00", "equity": 66405.19400965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:05:15.308388+00:00", "equity": 66371.84000965366, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:15:31.082873+00:00", "equity": 66333.72600965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:16:02.293209+00:00", "equity": 66338.48600965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:18:26.809486+00:00", "equity": 66355.16300965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:21:43.219809+00:00", "equity": 66356.14200965367, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:29:14.567633+00:00", "equity": 66440.26900965367, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:32:49.197462+00:00", "equity": 66467.80300965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:33:11.225206+00:00", "equity": 66467.80300965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:35:45.775487+00:00", "equity": 66472.03300965368, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:38:15.104522+00:00", "equity": 66460.40300965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:46:36.843059+00:00", "equity": 66489.26700965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:46:55.807030+00:00", "equity": 66489.26700965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:50:35.669328+00:00", "equity": 66465.48400965366, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:58:09.716442+00:00", "equity": 66464.63300965367, "btc_trend": "bull", "open_count": 10, "decisions": [], "warnings": []}
+{"timestamp": "2026-05-01T02:59:32.154824+00:00", "equity": 66462.55700965367, "btc_trend": "neutral", "open_count": 10, "decisions": [], "warnings": []}

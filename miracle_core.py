@@ -9,6 +9,7 @@ import copy
 import json
 import logging
 import math
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -291,6 +292,17 @@ def load_config(config_path: str = None) -> Dict:
         return json.load(f)
 
 CONFIG = load_config()
+_config_lock = threading.Lock()
+
+def get_config() -> Dict:
+    """线程安全地获取CONFIG"""
+    with _config_lock:
+        return CONFIG
+
+def update_config(key: str, value: Any) -> None:
+    """线程安全地更新CONFIG"""
+    with _config_lock:
+        CONFIG[key] = value
 
 # ===== 数据结构 =====
 

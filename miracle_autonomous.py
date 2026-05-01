@@ -36,16 +36,9 @@ import requests
 import numpy as np
 import pandas as pd
 
-# 配置路径
-_WORKSPACE = os.environ.get("MIRACLE_WORKSPACE", str(Path.home()))
-WORKSPACE = Path(_WORKSPACE)
-KRONOS_AUTORESEARCH_SRC = WORKSPACE / "kronos_autoresearch" / "src"
-if KRONOS_AUTORESEARCH_SRC.exists():
-    sys.path.insert(0, str(KRONOS_AUTORESEARCH_SRC))
-
-from backtest_engine import run_single_backtest, run_walkforward
-from data_loader import COINS, compute_indicators, load_timeframe_data
-from experiment_logger import (
+from autoresearch.backtest_engine import run_single_backtest, run_walkforward
+from autoresearch.data_loader import COINS, compute_indicators, load_timeframe_data
+from autoresearch.experiment_logger import (
     RESULTS_DIR,
     ExperimentRecord,
     ensure_dirs,
@@ -56,7 +49,11 @@ from experiment_logger import (
     print_summary,
     write_experiment,
 )
-from strategy_config import BacktestResult, StrategyConfig
+from autoresearch.strategy_config import BacktestResult, StrategyConfig
+from core.regime_classifier import RegimeClassifier
+
+# 工作目录
+WORKSPACE = Path(os.environ.get("MIRACLE_WORKSPACE", str(Path.home())))
 
 # ===== 日志配置 =====
 logging.basicConfig(
@@ -172,6 +169,7 @@ class DataCollector:
     def __init__(self, data_dir: Path = None):
         self.data_dir = data_dir or WORKSPACE / ".hermes" / "cron" / "output"
         self.cache: Dict[str, pd.DataFrame] = {}
+        self._regime_classifier = RegimeClassifier()
 
     def load_coin_data(self, coin: str, timeframe: str = "1h",
                        bear_only: bool = False) -> pd.DataFrame | None:
@@ -222,25 +220,27 @@ class DataCollector:
         return data
 
     def get_market_regime(self, data: Dict[str, pd.DataFrame]) -> str:
-        """分析市场状态 (基于BTC走势)"""
+        """分析市场状态 (基于BTC走势, 使用RegimeClassifier)"""
         if "BTC" not in data:
             return "unknown"
 
         btc_df = data["BTC"]
-        if len(btc_df) < 100:
+        if len(btc_df) < 50:
             return "unknown"
 
-        # 简单趋势判断: 比较最近20天 vs 前20天
-        recent = btc_df["close"].iloc[-20:].mean()
-        previous = btc_df["close"].iloc[-40:-20].mean()
-        change_pct = (recent - previous) / previous * 100
-
-        if change_pct > 5:
-            return "bull"
-        elif change_pct < -5:
-            return "bear"
-        else:
-            return "sideways"
+        # 使用RegimeClassifier进行ADX+DMI+ATR分析
+        try:
+            # 构建分类器需要的DataFrame (high, low, close)
+            regime_df = pd.DataFrame({
+                'high': btc_df['high'].values,
+                'low': btc_df['low'].values,
+                'close': btc_df['close'].values,
+            })
+            regime, confidence, metrics = self._regime_classifier.classify(regime_df)
+            return regime.value  # 'bull' / 'bear' / 'sideways'
+        except Exception as e:
+            logger.warning(f"[DataCollector] RegimeClassifier failed: {e}")
+            return "unknown"
 
 
 # ===== 假设生成器 =====

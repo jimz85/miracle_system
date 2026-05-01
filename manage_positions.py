@@ -45,8 +45,8 @@ def release_lock(fd):
         os.close(fd)
         try:
             LOCK_FILE.unlink()
-        except:
-            pass
+        except Exception:
+            pass  # silently ignore if lock file already removed
 
 # ===== 导入核心函数 =====
 # 从 miracle_kronos 导入所有需要的函数
