@@ -2141,6 +2141,128 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         'regime': regime,
     }
 
+# ===== 🧠 交易员AI分析引擎 =====
+def _build_trader_context(inst_id: str, closes: list, highs: list, lows: list,
+                          rsi_val: float, adx_val: float, entry_price: float,
+                          direction: str, pnl_pct: float, hold_hours: float) -> str:
+    """将OHLCV+指标转为交易员语言的市场上下文"""
+    if len(closes) < 10:
+        return "数据不足"
+    
+    current_price = closes[-1]
+    
+    # 价格行为描述
+    range_20 = max(highs[-20:]) - min(lows[-20:])
+    range_pct = range_20 / current_price * 100
+    price_trend = "上涨" if closes[-1] > closes[-10] else ("下跌" if closes[-1] < closes[-10] else "震荡")
+    
+    # 移动均线
+    ma7 = sum(closes[-7:]) / 7 if len(closes) >= 7 else current_price
+    ma25 = sum(closes[-25:]) / 25 if len(closes) >= 25 else current_price
+    ma99 = sum(closes[-99:]) / 99 if len(closes) >= 99 else current_price
+    short_trend = "上升" if ma7 > ma25 else "下降"
+    long_trend = "上升" if ma25 > ma99 else "下降"
+    
+    # 支撑/阻力（前低前高）
+    recent_low = min(lows[-20:])
+    recent_high = max(highs[-20:])
+    dist_to_support = (current_price - recent_low) / current_price * 100
+    dist_to_resist = (recent_high - current_price) / current_price * 100
+    
+    # 动量
+    rsi_trend = "偏强" if rsi_val > 55 else ("偏弱" if rsi_val < 45 else "中性")
+    adx_desc = "强趋势" if adx_val > 25 else ("弱趋势" if adx_val > 15 else "无趋势震荡")
+    
+    # 持仓方向文本
+    pos_desc = "做多" if direction in ('LONG', '做多', 'long') else "做空"
+    pnl_desc = f"盈利{pnl_pct:.1%}" if pnl_pct > 0 else f"亏损{pnl_pct:.1%}"
+    
+    # 修复: 变量名冲突，long_trend有两个用途，短趋势用short_trend
+    short_trend_str = "上升" if ma7 > ma25 else "下降"
+    long_trend_str = "上升" if ma25 > ma99 else "下降"
+    return (
+        f"[{inst_id}] "
+        + f"价格行为:最近20K区间{range_pct:.1f}%({price_trend}) "
+        + f"MA7={ma7:.4f}>{ma25:.4f}(短期{short_trend_str}),"
+        + f"MA25={ma25:.4f}vsMA99={ma99:.4f}(长期{long_trend_str}) "
+        + f"RSI={rsi_val:.0f}({rsi_trend}) ADX={adx_val:.0f}({adx_desc}) "
+        + f"支撑={recent_low:.4f}(距当前位置{dist_to_support:.1f}%),"
+        + f"阻力={recent_high:.4f}(距当前位置{dist_to_resist:.1f}%) "
+        + f"持仓:{pos_desc}@{entry_price:.4f}(当前{current_price:.4f},{pnl_desc},{hold_hours:.1f}h)"
+    )
+
+
+def _ai_trader_decision(coin: str, closes: list, highs: list, lows: list,
+                        rsi_val: float, adx_val: float, entry_price: float,
+                        direction: str, pnl_pct: float, hold_hours: float) -> dict:
+    """
+    用Qwen2.5-7B做交易员级持仓分析
+    后备方案：超时/失败→回退到Gemma4-2B简单投票
+    
+    Returns: {
+        'judgment': 'bullish' | 'bearish' | 'neutral',
+        'action': 'hold' | 'close' | 'partial_tp',
+        'sl_price': float or None,
+        'tp_price': float or None,
+        'reason': str,
+        'model': 'qwen' | 'gemma' | 'fallback'
+    }
+    """
+    inst_id = f"{coin}-USDT-SWAP"
+    context = _build_trader_context(inst_id, closes, highs, lows,
+                                    rsi_val, adx_val, entry_price,
+                                    direction, pnl_pct, hold_hours)
+    
+    if not context or context == "数据不足":
+        return {'judgment': 'neutral', 'action': 'hold', 'reason': '数据不足', 'model': 'fallback'}
+    
+    prompt = (
+        "你是一个有10年经验的加密货币交易员。仅基于以下市场数据给出持仓建议。\n"
+        "只输出JSON，不要其他任何内容。\n\n"
+        f"=== 市场上下文 ===\n{context}\n\n"
+        "=== 输出格式 ===\n"
+        '{"judgment":"bullish/bearish/neutral","action":"hold/close/partial_tp","sl_price":null或数字,"tp_price":null或数字,"reason":"一句话理由"}'
+    )
+    
+    # 主方案：Qwen2.5-7B
+    try:
+        import requests as _req
+        resp = _req.post('http://localhost:11434/api/generate', json={
+            'model': 'qwen2.5:7b',
+            'prompt': f"<think>{prompt}</think>",
+            'stream': False,
+            'options': {'num_predict': 80, 'temperature': 0.3}
+        }, timeout=15)
+        if resp.status_code == 200:
+            text = resp.json().get('response', '')
+            import json as _json
+            for line in text.strip().split('\n'):
+                line = line.strip()
+                if line.startswith('{') and line.endswith('}'):
+                    try:
+                        result = _json.loads(line)
+                        if 'judgment' in result:
+                            result['model'] = 'qwen'
+                            return result
+                    except:
+                        pass
+    except Exception:
+        pass
+    
+    # 后备：Gemma4-2B快速投票
+    try:
+        gemma_vote = _gemma_vote_cached(coin, rsi_val, adx_val, 50, closes[-1] if closes else 0, 0, 0)
+        gemma_signal = (gemma_vote - 0.5) * 2
+        if gemma_signal > 0.3:
+            return {'judgment': 'bullish', 'action': 'hold', 'reason': f'Gemma看多({gemma_signal:+.2f})', 'model': 'gemma'}
+        elif gemma_signal < -0.3:
+            return {'judgment': 'bearish', 'action': 'hold', 'reason': f'Gemma看空({gemma_signal:+.2f})', 'model': 'gemma'}
+        else:
+            return {'judgment': 'neutral', 'action': 'hold', 'reason': f'Gemma中立({gemma_signal:+.2f})', 'model': 'gemma'}
+    except Exception:
+        return {'judgment': 'neutral', 'action': 'hold', 'reason': 'AI不可用', 'model': 'fallback'}
+
+
 # ===== 主动持仓管理 =====
 def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') -> dict:
     """
@@ -2239,23 +2361,28 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 hold_hours = None
 
         # ═══════════════════════════════════════════════════════════
-        # 🧠 Gemini AI主动判断层 — 每个仓位每周期都问AI
+        # 🧠 AI交易员分析层 — 每仓位每周期用Qwen2.5-7B做完整分析
         # ═══════════════════════════════════════════════════════════
-        # 专业交易员原则：AI判断是主决策者，SL/TP是安全网
-        # 不允许机械地等价格碰线——要主动判断方向是否还正确
+        # 专业交易员原则：给AI完整市场上下文（多周期MA/支撑阻力/趋势动量）
+        # 让AI像10年交易员一样思考
+        # 后备：Qwen超时→Gemma快速投票
         
-        # 获取Gemma对该币种的实时方向判断
-        gemma_vote = _gemma_vote_cached(
-            coin, rsi_val if rsi_val else 50, adx_val, 50, current_price, 0, 0
+        ai_result = _ai_trader_decision(
+            coin, closes, highs, lows,
+            rsi_val, adx_val, entry_price,
+            direction, pnl_pct, hold_hours if hold_hours else 0
         )
-        gemma_signal = (gemma_vote - 0.5) * 2  # -1~+1: 负=看空, 正=看多
         
         direction_is_long = direction in ('LONG', '做多', 'long')
-        gemma_agrees = (direction_is_long and gemma_signal > 0) or \
-                       (not direction_is_long and gemma_signal < 0)
-        gemma_strength = abs(gemma_signal)
+        # 判断AI观点是否与持仓方向一致
+        ai_bullish = ai_result.get('judgment') == 'bullish'
+        ai_bearish = ai_result.get('judgment') == 'bearish'
+        ai_neutral = ai_result.get('judgment') == 'neutral'
+        ai_agrees = (direction_is_long and ai_bullish) or (not direction_is_long and ai_bearish)
+        ai_opposes = (direction_is_long and ai_bearish) or (not direction_is_long and ai_bullish)
+        ai_model = ai_result.get('model', '?')
         
-        # ── 止损安全网（最高优先级，不管Gemma怎么说） ──
+        # ── 止损安全网（最高优先级，不管AI怎么说） ──
         # 亏损>4% + 持仓>3h → 无条件止损（截断亏损）
         if hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= LOSS_WARN_PCT:
             decisions.append({
@@ -2273,7 +2400,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             summary_lines.append(f'🛑 {coin} {direction} 止损{pnl_pct:.1%}+{hold_hours:.1f}h')
         
         # ── 决策A: 🟢 Gemma强烈支持持仓方向 → AI确认正确，让利润奔跑 ──
-        elif gemma_strength >= 0.6 and gemma_agrees:
+        elif ai_agrees:
             # 全仓止盈
             if pnl_pct >= FULL_TP_PCT:
                 decisions.append({
@@ -2323,17 +2450,18 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             else:
                 pass  # 方向正确但有浮亏→继续持有，让时间换空间
         
-        # ── 决策B: 🔴 Gemma强烈反对持仓方向 → AI认为方向错了 ──
-        elif gemma_strength >= 0.6 and not gemma_agrees:
+        # ── 决策B: 🔴 AI反对持仓方向 → AI认为方向错了 ──
+        elif ai_opposes:
+            ai_reason = ai_result.get('reason', '')[:30]
             decisions.append({
                 'action': 'force_close', 'coin': coin, 'direction': direction,
-                'reason': f'AI看空({gemma_signal:+.2f})与持仓方向相反→立即平仓',
+                'reason': f'AI反对持仓→平仓({ai_reason})',
                 'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
                 'mode': mode, 'trade_id': trade_id, 'urgency': 9,
             })
-            summary_lines.append(f'🚨 {coin} {direction} AI反对(gemma={gemma_signal:+.2f})→平仓')
+            summary_lines.append(f'🚨 {coin} {direction} AI反对({ai_model})→平仓')
         
-        # ── 决策C: 🟡 Gemma中立 → 收紧风控，落袋为安 ──
+        # ── 决策C: 🟡 AI中立 → 收紧风控，落袋为安 ──
         else:
             # 亏损>3% + 持仓>3h → 止损（方向不明不能扛）
             if pnl_pct <= LOSS_WARN_PCT * 0.75 and hold_hours is not None and hold_hours >= HOLD_WARN_HOURS:
