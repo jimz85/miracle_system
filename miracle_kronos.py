@@ -30,7 +30,6 @@ import threading
 import time
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import partial
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -595,6 +594,13 @@ def save_whitelist(wl):
 
 _gemma_cache_lock = threading.Lock()
 Gemma4_TIMEOUT = 30  # gemma4超时30秒（系统内存紧张时加载模型需要时间），超时使用规则回退
+
+# P0 Fix: 模块级闭包变量用于_parallel_scan_wrapper传参
+_scan_equity = 0.0
+_scan_btc_trend = 'neutral'
+_scan_weights = {}
+_scan_coin_config = {}
+
 
 def _rule_based_vote(rsi, adx, bb_pos, di_plus=None, di_minus=None):
     """基于RSI/ADX/布林带的规则化方向投票（当Gemma不可用时使用）
@@ -1543,10 +1549,10 @@ def select_best(candidates, positions, local_trades=None):
         logger.info(f"模式历史调整: {best.get('pattern_key','?')} ×{adj:.2f} (分数 {best['score']:.3f}→{best['score']*adj:.3f})")
     return best, vetoed_pattern_keys
 
-def _parallel_scan_wrapper(instId, symbol, equity, btc_trend, weights, exchange=None, coin_config=None):
-    """并行扫描包装器"""
+def _parallel_scan_wrapper(instId, symbol, exchange=None):
+    """并行扫描包装器 — 通过闭包获取equity/btc_trend/weights/coin_config"""
     try:
-        return scan_coin(instId, symbol, equity, btc_trend, weights, exchange, coin_config)
+        return scan_coin(instId, symbol, _scan_equity, _scan_btc_trend, _scan_weights, exchange, _scan_coin_config)
     except Exception as e:
         logger.warning(f"扫描失败 {instId}: {e}")
         return None
@@ -1668,17 +1674,17 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         positions = get_positions()  # 重新获取最新状态
     
     # P0: 并发扫描所有币 (替代原有串行for循环)
-    # P0 Fix: 使用functools.partial绑定equity/btc_trend/weights参数
+    # P0 Fix: 使用模块级闭包变量传参，避免partial+positional冲突
     # 初始化exchange一次，避免每个coin创建新实例
     exchange = get_default_exchange()
     per_coin_cfg = load_per_coin_strategy().get("per_coin", {})
-    wrapped_scan = partial(
-        _parallel_scan_wrapper,
-        equity=equity, btc_trend=btc_trend, weights=weights,
-        coin_config=per_coin_cfg
-    )
+    global _scan_equity, _scan_btc_trend, _scan_weights, _scan_coin_config
+    _scan_equity = equity
+    _scan_btc_trend = btc_trend
+    _scan_weights = weights
+    _scan_coin_config = per_coin_cfg
     candidates = parallel_scan_coins(
-        scan_func=wrapped_scan,
+        scan_func=_parallel_scan_wrapper,
         coins=SCAN_COINS,
         max_workers=5,
         timeout=30.0,
@@ -1693,7 +1699,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         for c in candidates:
             c['score'] = c['score'] * memory_multiplier
         candidates.sort(key=lambda x: x['score'], reverse=True)
-        logger.info(f"Memory置信度乘数:{memory_multiplier:.2f},候选重排后top={candidates[0]['symbol'] if candidates else 'none'}@{candidates[0]['score']:.3f}")
+        logger.info(f"Memory置信度乘数:{memory_multiplier:.2f},候选重排后top={candidates[0]['symbol'] if candidates else 'none'}@{candidates[0]['score'] if candidates else 0:.3f}")
     else:
         logger.debug("Memory置信度乘数:1.0(无调整)")
 
@@ -1728,7 +1734,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             # 按调整后分数重新排序
             if regime != "neutral":
                 candidates.sort(key=lambda x: x['score'], reverse=True)
-                logger.info(f"市场状态={regime} | top={candidates[0]['symbol']}@{candidates[0]['score']:.3f}")
+                logger.info(f"市场状态={regime} | top={candidates[0]['symbol'] if candidates else 'none'}@{candidates[0]['score'] if candidates else 0:.3f}")
 
     # 加载本地OPEN交易 (必须在select_best前)
     local_trades = get_open_trades()
@@ -1936,6 +1942,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         if tier == 'caution':
             best['score'] *= 0.5
         
+        trade = None  # P0 Fix: audit模式初始化，防NameError
         if mode == 'live':
             # 计算仓位
             # P1 Fix: 使用OKX合约真实乘数计算张数

@@ -308,7 +308,12 @@ class Executor:
             position_size = risk_amount / stop_distance
             position_size = min(position_size, balance["available"] * leverage / current_price)
 
-        # Step 2b: 预检查（交易所状态/最小量/精度/持仓上限）
+        # Step 2b: 入场价解析（必须在预检查前定义）
+        planned_entry = approved_signal.get("entry_price", self.active_client.get_ticker(symbol))
+        if not planned_entry:
+            planned_entry = approved_signal.get("entry_price", 50000)
+        
+        # Step 2c: 预检查（交易所状态/最小量/精度/持仓上限）
         try:
             preflight_check_or_raise(
                 client=self.active_client,
@@ -323,7 +328,7 @@ class Executor:
             return None
         
         # Step 3: 市价单入场（优先尝试真实下单，失败时模拟）
-        planned_entry = approved_signal.get("entry_price", self.active_client.get_ticker(symbol))
+        # 已在上方解析 planned_entry
         if not planned_entry:
             planned_entry = approved_signal.get("entry_price", 50000)
 

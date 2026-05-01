@@ -465,7 +465,7 @@ def check_existing_oco_orders(instId: str) -> Tuple[bool, str]:
     """
     data = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={instId}&ordType=oco')
     if data.get('code') != '0':
-        logger.warning(f"check_existing_oco_orders: OKX API error for {instId}: {data.get('msg', data)}")
+        _logger.warning(f"check_existing_oco_orders: OKX API error for {instId}: {data.get('msg', data)}")
         # Return True (has active orders) to BLOCK new OCO placement when API is uncertain
         # This is safer than potentially creating duplicate OCOs
         return True, f"API_ERROR: {data.get('msg', 'unknown')}"
@@ -509,15 +509,26 @@ def parallel_scan_coins(
             for instId, symbol in coins
         }
         
-        for future in as_completed(future_to_coin, timeout=timeout):
-            future_to_coin[future]
-            try:
-                result = future.result(timeout=timeout)
-                if result is not None:
-                    results.append(result)
-            except Exception:
-                # 单币失败不影响整体
-                pass
+        try:
+            for future in as_completed(future_to_coin, timeout=timeout):
+                future_to_coin[future]
+                try:
+                    result = future.result(timeout=timeout)
+                    if result is not None:
+                        results.append(result)
+                except Exception:
+                    # 单币失败不影响整体
+                    pass
+        except TimeoutError:
+            # 部分币超时：收集已完成的结果
+            for future in future_to_coin:
+                if future.done():
+                    try:
+                        result = future.result(timeout=1)
+                        if result is not None:
+                            results.append(result)
+                    except Exception:
+                        pass
     
     return results
 

@@ -420,7 +420,7 @@ class OKXAdapter(ExchangeAdapter):
 
         data = self._request(
             "GET",
-            "/api/v5/market/funding-rate",
+            "/api/v5/public/funding-rate",
             params={"instId": symbol}
         )
 
@@ -451,7 +451,7 @@ class OKXAdapter(ExchangeAdapter):
 
         data = self._request(
             "GET",
-            "/api/v5/market/open-interest",
+            "/api/v5/public/open-interest",
             params={"instId": symbol}
         )
 

@@ -1123,9 +1123,9 @@ def get_recent_price_data(symbol: str, days: int = 30, interval: str = "1h") -> 
 
         return {"highs": highs, "lows": lows, "closes": closes}
     except DataFetchError as ed:
-        # HTTP层以下的异常（如网络超时/DNS），走Fallback
-        logger.warning(f"获取价格数据异常 [{symbol}]，使用Fallback数据: {ed}")
-        return _generate_fallback_price_data(symbol, days)
+        # HTTP层以下的异常 → 直接抛出（_generate_fallback_price_data同上抛DataFetchError）
+        logger.error(f"获取价格数据异常 [{symbol}]: {ed}")
+        raise
     except Exception as e:
         logger.warning(f"获取价格数据失败 [{symbol}]: {e}，使用Fallback数据")
         return _generate_fallback_price_data(symbol, days)
