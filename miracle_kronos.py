@@ -2308,6 +2308,9 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
     warnings   = []
     summary_lines = []
 
+    # ── 按币种去重缓存（避免19个仓位重复fetch K线+调Qwen） ──
+    _coin_cache = {}  # {coin: {klines, closes, highs, lows, rsi, adx, adx_data, current_price, ai_result}}
+
     for trade in open_trades:
         coin       = trade.get('coin', '')
         direction  = trade.get('direction', '')
@@ -2322,25 +2325,56 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
 
         inst_id = f'{coin}-USDT-SWAP'
 
-        # ── 当前价格 + 技术指标 ──
-        klines_1h = get_klines(inst_id, '1H', 50)
-        current_price = entry_price
-        rsi_val  = 50.0
-        adx_val  = 20.0
+        # ── 缓存命中检查 ──
+        if coin not in _coin_cache:
+            klines_1h = get_klines(inst_id, '1H', 50)
+            current_price = entry_price
+            rsi_val  = 50.0
+            adx_val  = 20.0
+            closes = []
+            highs  = []
+            lows   = []
+            di_plus = di_minus = 0
+            adx_data = None
 
-        if klines_1h and len(klines_1h) >= 20:
-            closes = [k['close'] for k in klines_1h]
-            highs  = [k['high']  for k in klines_1h]
-            lows   = [k['low']   for k in klines_1h]
-            current_price = closes[-1]
-            rsi_val  = calc_rsi(closes)
-            adx_data = calc_adx(highs, lows, closes)
-            if isinstance(adx_data, dict):
-                adx_val = adx_data["adx"]
-                di_plus = adx_data["plus_di"]
-                di_minus = adx_data["minus_di"]
-            else:
-                di_plus, di_minus, adx_val = adx_data
+            if klines_1h and len(klines_1h) >= 20:
+                closes = [k['close'] for k in klines_1h]
+                highs  = [k['high']  for k in klines_1h]
+                lows   = [k['low']   for k in klines_1h]
+                current_price = closes[-1]
+                rsi_val  = calc_rsi(closes)
+                adx_data = calc_adx(highs, lows, closes)
+                if isinstance(adx_data, dict):
+                    adx_val = adx_data["adx"]
+                    di_plus = adx_data["plus_di"]
+                    di_minus = adx_data["minus_di"]
+                else:
+                    di_plus, di_minus, adx_val = adx_data
+
+            # AI分析也缓存（每个币+方向只分析一次）
+            ai_result = _ai_trader_decision(
+                coin, closes, highs, lows,
+                rsi_val, adx_val, entry_price,
+                direction, 0, 0  # pnl和hold_hours占位，后面覆盖
+            )
+
+            _coin_cache[coin] = {
+                'current_price': current_price, 'rsi_val': rsi_val, 'adx_val': adx_val,
+                'adx_data': adx_data, 'di_plus': di_plus, 'di_minus': di_minus,
+                'closes': closes, 'highs': highs, 'lows': lows,
+                'ai_result': ai_result,
+            }
+        else:
+            cc = _coin_cache[coin]
+            current_price = cc['current_price']
+            rsi_val = cc['rsi_val']
+            adx_val = cc['adx_val']
+            adx_data = cc['adx_data']
+            di_plus = cc['di_plus']
+            di_minus = cc['di_minus']
+            closes = cc['closes']
+            highs = cc['highs']
+            lows = cc['lows']
 
         # ── 计算盈亏 ──
         if direction in ('LONG', '做多', 'long'):
@@ -2361,17 +2395,10 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 hold_hours = None
 
         # ═══════════════════════════════════════════════════════════
-        # 🧠 AI交易员分析层 — 每仓位每周期用Qwen2.5-7B做完整分析
+        # 🧠 AI交易员分析层 — 用缓存的结果（每币每周期只调一次Qwen）
         # ═══════════════════════════════════════════════════════════
-        # 专业交易员原则：给AI完整市场上下文（多周期MA/支撑阻力/趋势动量）
-        # 让AI像10年交易员一样思考
-        # 后备：Qwen超时→Gemma快速投票
         
-        ai_result = _ai_trader_decision(
-            coin, closes, highs, lows,
-            rsi_val, adx_val, entry_price,
-            direction, pnl_pct, hold_hours if hold_hours else 0
-        )
+        ai_result = _coin_cache[coin]['ai_result']
         
         direction_is_long = direction in ('LONG', '做多', 'long')
         # 判断AI观点是否与持仓方向一致
