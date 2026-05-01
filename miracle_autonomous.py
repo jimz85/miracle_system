@@ -735,7 +735,6 @@ class ReflectionImprover:
                 ic_data = json.load(f)
 
             weights = ic_data.get('weights', {})
-            dict(weights)
 
             # 读取最近实验结果
             results_path = RESULTS_DIR / "results.tsv"

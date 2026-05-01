@@ -407,6 +407,7 @@ class ExchangeClient:
             "slOrdPx": "-1",
             "tpTriggerPx": tp_trigger_px,
             "tpOrdPx": "-1",
+            "reduceOnly": True,
         }
 
         oco_result = self._make_request("POST", self.endpoints["algo_order"], data=oco_data, signed=True)
@@ -490,6 +491,7 @@ class ExchangeClient:
             "sz": str(int(size)),
             "tpTriggerPx": tp_trigger_px,
             "tpOrdPx": "-1",  # 市价平仓
+            "reduceOnly": True,
         }
 
         result = self._make_request("POST", self.endpoints["algo_order"], data=cond_data, signed=True)
@@ -570,6 +572,7 @@ class ExchangeClient:
             "sz": str(int(size)),
             "slTriggerPx": sl_trigger_px,
             "slOrdPx": "-1",  # 市价平仓
+            "reduceOnly": True,
         }
 
         result = self._make_request("POST", self.endpoints["algo_order"], data=cond_data, signed=True)
@@ -649,6 +652,7 @@ class ExchangeClient:
             "slOrdPx": "-1",
             "szAuto": "true",
             "callbackRate": str(callback_rate),
+            "reduceOnly": True,
         }
 
         result = self._make_request("POST", self.endpoints["algo_order"], data=trailing_data, signed=True)
@@ -783,14 +787,31 @@ class ExchangeClient:
         return None
 
     def _close_position_okx(self, symbol: str) -> Dict:
-        """OKX平仓"""
+        """OKX平仓（使用市价单+reduceOnly）"""
         inst_id = symbol.replace("-USDT", "-USDT-SWAP") if "-SWAP" not in symbol else symbol
 
-        result = self._make_request("POST", self.endpoints["close_position"], data={
-            "instId": inst_id,
-            "mgnMode": "cross"
-        }, signed=True)
+        # 先获取持仓信息（需要sz和方向）
+        positions = self.get_open_positions()
+        pos = next((p for p in positions if p["symbol"] == symbol), None)
 
+        if not pos:
+            return {"order_id": "", "symbol": symbol, "status": "no_position", "exchange": "okx"}
+
+        side = "sell" if pos["side"].upper() == "LONG" else "buy"
+        pos_side = "long" if pos["side"].upper() == "LONG" else "short"
+        sz = str(pos.get("size", 0))
+
+        data = {
+            "instId": inst_id,
+            "tdMode": "cross",
+            "side": side,
+            "posSide": pos_side,
+            "ordType": "market",
+            "sz": sz,
+            "reduceOnly": True,
+        }
+
+        result = self._make_request("POST", self.endpoints["order"], data=data, signed=True)
         data = result.get("data", [{}])[0]
         return {
             "order_id": data.get("ordId", ""),

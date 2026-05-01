@@ -33,7 +33,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import logging
 
 # NOTE: Heavy imports moved to lazy (local) imports inside functions:
 #   - core.kronos_utils (atomic_write_json, CONCENTRATION_LIMITS, TREASURY_LIMITS,
@@ -254,6 +253,8 @@ def record_pattern_outcome(pattern_key: str, won: bool, pnl_pct: float):
         avg_loss = abs(p.get('total_loss_pnl', 0)) / max(p['losses'], 1)
         p['expected_value'] = round(win_rate * avg_win - (1 - win_rate) * avg_loss, 4)
     save_pattern_history(history)
+    # Also update whitelist for self-learning feedback loop
+    update_whitelist(pattern_key, won)
 
 def get_pattern_adjustment(pattern_key: str) -> float:
     """根据历史胜率获取confidence调整系数
@@ -1257,7 +1258,7 @@ def fetch_contract_multiplier(coin: str) -> float:
         
         if data.get('code') == '0' and data.get('data'):
             # OKX returns contract multiplier in 'ctMult' field
-            ct_mult = data['data'][0].get('ctMult')
+            ct_mult = data['data'][0].get('ctVal')
             if ct_mult:
                 multiplier = safe_float(ct_mult, 1.0)
                 _contract_multiplier_cache[coin] = multiplier
@@ -2312,7 +2313,7 @@ def _ai_trader_decision(coin: str, closes: list, highs: list, lows: list,
                         if 'judgment' in result:
                             result['model'] = 'qwen-local'
                             return result
-                    except:
+                    except Exception:
                         pass
     except Exception:
         pass
@@ -2541,7 +2542,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
         
         # ── 新仓位保护：24h内不因AI反对而平仓 ──
         # 给新开仓位至少1天时间验证方向，避免系统自相矛盾
-        if ai_opposes and hold_hours is not None and hold_hours < 24:
+        elif ai_opposes and hold_hours is not None and hold_hours < 24:
             # 24h内AI反对→不执行force_close，让仓位有发展空间
             pass  # 新仓位宽限期内，跳过AI反对关闭
             
@@ -2786,10 +2787,45 @@ def _execute_management_decision(dec: dict, equity: float):
                     sz = int(pos.get('sz', 0))
                     direction = pos.get('posSide', 'long')
                     direction = 'long' if direction in ('long','net') else 'short'
-                    tp_pct = 0.0  # trailing只设SL，TP由后续规则管理
-                    place_oco(inst_id, direction, sz, entry, sl_pct, tp_pct,
-                             equity=equity, leverage=3)
-                    logger.info(f'追踪止损更新: {coin} SL@{new_sl:.4f}')
+                    # tp_pct=0会导致validate_oco_order失败(tp_pct<=0)，改用conditional SL-only
+                    # Cancel existing OCO and place SL-only conditional order
+                    from core.kronos_utils import check_existing_oco_orders
+                    has_active, order_info = check_existing_oco_orders(inst_id)
+                    if has_active:
+                        cancel_body = json.dumps([{
+                            'instId': inst_id,
+                            'algoId': order_info.get('algoId', '')
+                        }])
+                        okx_req('POST', '/api/v5/trade/cancel-algos', cancel_body)
+                    
+                    # Calculate SL price based on direction
+                    if direction == 'long':
+                        close_side = 'sell'
+                        sl_price_local = round(entry * (1 - sl_pct), 4)
+                        pos_side = 'long'
+                    else:
+                        close_side = 'buy'
+                        sl_price_local = round(entry * (1 + sl_pct), 4)
+                        pos_side = 'short'
+                    
+                    # Place SL-only conditional order (no TP)
+                    sl_body_dict = {
+                        'instId': inst_id,
+                        'tdMode': 'isolated',
+                        'side': close_side,
+                        'ordType': 'conditional',
+                        'sz': str(int(sz)),
+                        'reduceOnly': True,
+                        'triggerPx': str(sl_price_local),
+                        'ordPx': '-1',
+                    }
+                    if _pos_mode != 'net' and pos_side:
+                        sl_body_dict['posSide'] = pos_side
+                    sl_result = okx_req('POST', '/api/v5/trade/order-algo', json.dumps(sl_body_dict))
+                    if sl_result.get('code') == '0':
+                        logger.info(f'Trailing SL updated: {coin} SL@{sl_price_local:.4f}')
+                    else:
+                        logger.warning(f'Trailing SL failed {coin}: {sl_result.get("msg", "unknown")}')
         except Exception as e:
             logger.warning(f'追踪止损失败: {coin} {e}')
 
@@ -2968,7 +3004,8 @@ def main():
                     logger.info(f"连续盈利+1h: {treasury['consecutive_win_hours']}h (equity=${equity:.2f})")
                 else:
                     treasury['consecutive_win_hours'] = 0
-                treasury['consecutive_loss_hours'] = 0  # 重置亏损计数
+                    treasury['consecutive_loss_hours'] = treasury.get('consecutive_loss_hours', 0) + 1
+                    logger.info(f"连续亏损+1h: {treasury['consecutive_loss_hours']}h")
                 logger.debug(f"快照: hourly_snapshot={equity:.2f} (新{'天' if is_new_day else '小时'})")
             if is_new_day:
                 treasury['daily_snapshot'] = equity

@@ -163,7 +163,7 @@ def run_management_cycle(equity: float, btc_trend: str, dry_run: bool = False):
         elif action_type == 'partial_tp':
             close_data = close_position(coin, reason=f'{reason} [部分止盈]')
             if close_data.get('code') == '0':
-                _mark_trade_closed(coin, f'{reason} [部分止盈]', None, pnl_pct=pnl_pct)
+                logger.info(f'部分止盈成功: {coin} pnl_pct={pnl_pct}')
                 executed.append(f'部分止盈 {coin}: {reason}')
                 print(f"  🎯 部分止盈 {coin}: {reason}")
             else:
@@ -177,7 +177,11 @@ def run_management_cycle(equity: float, btc_trend: str, dry_run: bool = False):
                     cancel_body = json.dumps([{'algoId': str(algo['algoId']), 'instId': inst_id}])
                     okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
                 entry = dec.get('entry', 0)
-                sl_pct = abs(entry - dec.get('new_sl', entry * 0.95)) / entry if entry > 0 else 0.05
+                new_sl = dec.get('new_sl', entry * 0.95)
+                if entry > 0:
+                    sl_pct = abs(new_sl - entry) / entry
+                else:
+                    sl_pct = 0.05
                 pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
                 if pos:
                     sz = int(pos.get('sz', 0))

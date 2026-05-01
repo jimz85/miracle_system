@@ -68,9 +68,9 @@ def fetch_contract_multiplier(instId: str) -> float:
         data = resp.json()
 
         if data.get('code') == '0' and data.get('data'):
-            ct_mult = data['data'][0].get('ctMult')
-            if ct_mult:
-                multiplier = safe_float(ct_mult, 1.0)
+            ct_val = data['data'][0].get('ctVal')
+            if ct_val is not None:
+                multiplier = safe_float(ct_val, 1.0)
                 _contract_multiplier_cache[instId] = multiplier
                 _logger.info(f"OKX API contract multiplier for {instId}: {multiplier}")
                 return multiplier
