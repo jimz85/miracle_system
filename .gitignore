@@ -18,6 +18,7 @@ ENV/
 logs/*.json
 logs/*.csv
 data/*.json
+data/cache/
 data/*.csv
 !data/.gitkeep
 .trash/
