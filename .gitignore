@@ -13,6 +13,7 @@ venv/
 ENV/
 .env
 *.log
+*.jsonl
 logs/*.json
 logs/*.csv
 data/*.json
