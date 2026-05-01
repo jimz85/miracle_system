@@ -503,9 +503,11 @@ def parallel_scan_coins(
     """
     results = []
     
+    # NOTE: exchange对象不共享给线程，因为ccxt不是线程安全的
+    # 每个线程的scan_func内部会创建自己的exchange实例
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_coin = {
-            executor.submit(scan_func, instId, symbol, exchange): (instId, symbol)
+            executor.submit(scan_func, instId, symbol, None): (instId, symbol)
             for instId, symbol in coins
         }
         

@@ -170,6 +170,7 @@ class DataCollector:
         self.data_dir = data_dir or WORKSPACE / ".hermes" / "cron" / "output"
         self.cache: Dict[str, pd.DataFrame] = {}
         self._regime_classifier = RegimeClassifier()
+        self._bear_lookback_days = 180  # 熊市分析窗口长度（天）
 
     def load_coin_data(self, coin: str, timeframe: str = "1h",
                        bear_only: bool = False) -> pd.DataFrame | None:
@@ -757,6 +758,7 @@ class ReflectionImprover:
             if ret_col is None or sh_col is None:
                 logger.debug(f"TSV header缺少return/sharpe列，跳过IC权重更新")
                 return
+            shames, returns = [], []
             for line in lines[2:][-200:]:  # skip 2 header rows, use last 200 data rows
                 cols = line.split('\t')
                 if len(cols) <= max(ret_col, sh_col):
@@ -925,7 +927,7 @@ class AutonomousLoop:
 
         hypothesis = self.hyp_generator.generate(
             baseline_config, self.last_results, weak_metrics,
-            regime=self._regime if hasattr(self, '_regime') else "unknown", mode=mode
+            regime=self.state.market_regime, mode=mode
         )
 
         logger.info(f"[AutonomousLoop] Generated: {hypothesis.description} (confidence={hypothesis.confidence})")

@@ -1691,8 +1691,8 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
         scan_func=_parallel_scan_wrapper,
         coins=SCAN_COINS,
         max_workers=5,
-        timeout=30.0,
-        exchange=exchange
+        timeout=90.0,
+        exchange=None  # ccxt is not thread-safe, let each thread create its own
     )
     
     candidates.sort(key=lambda x: x['score'], reverse=True)

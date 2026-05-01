@@ -177,7 +177,7 @@ def run_management_cycle(equity: float, btc_trend: str, dry_run: bool = False):
                     cancel_body = json.dumps([{'algoId': str(algo['algoId']), 'instId': inst_id}])
                     okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
                 entry = dec.get('entry', 0)
-                sl_pct = abs(entry - dec['new_sl']) / entry if entry > 0 else 0.05
+                sl_pct = abs(entry - dec.get('new_sl', entry * 0.95)) / entry if entry > 0 else 0.05
                 pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
                 if pos:
                     sz = int(pos.get('sz', 0))
