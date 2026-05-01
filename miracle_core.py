@@ -340,48 +340,53 @@ class Trade:
 # calc_onchain_metrics / calc_wallet_metrics / calc_news_sentiment 为STUB，保留于本文件
 
 
-def calc_onchain_metrics() -> Dict[str, float]:
-    """
-    计算链上因子（STUB - 需对接真实API）
-
-    WARNING: 此函数为STUB实现，返回全零值。
-    当前权重贡献已被静默设为0，避免污染综合得分。
-    TODO: 对接链上数据API（OKX/Binance）
-    """
-    logger.warning("calc_onchain_metrics() called - STUB implementation returning zeros. Weight contribution disabled.")
-    return {
-        "exchange_flow": 0.0,   # 交易所净流量
-        "large_transfer": 0.0   # 大额转账标记
-    }
+# ---- 导入非STUB因子实现 ----
+# 替换原有的 calc_onchain_metrics / calc_wallet_metrics / calc_news_sentiment
+from core.data_feeds import (
+    calc_onchain_metrics as _real_onchain,
+    calc_wallet_metrics as _real_wallet,
+    calc_news_sentiment as _real_news,
+)
 
 
-def calc_wallet_metrics() -> Dict[str, float]:
+def calc_onchain_metrics(coin: str = "BTC") -> Dict[str, float]:
     """
-    计算钱包分布因子（STUB - 需对接真实API）
-
-    WARNING: 此函数为STUB实现，返回全零值。
-    当前权重贡献已被静默设为0，避免污染综合得分。
-    TODO: 对接区块链浏览器API
-    """
-    logger.warning("calc_wallet_metrics() called - STUB implementation returning zeros. Weight contribution disabled.")
-    return {
-        "holder_concentration": 0.5  # 持币地址集中度 (0.5 = 50 neutral)
-    }
-
-def calc_news_sentiment() -> float:
-    """
-    计算新闻情绪（STUB - 需对接新闻API）
+    计算链上因子 —— 真实数据实现 (非STUB)
     
-    WARNING: 此函数为STUB实现，返回零（中性）。
-    当前权重贡献已被静默设为0，避免污染综合得分。
-    TODO: 对接新闻情绪分析API
-    返回: 1.0=强烈利好, 0.0=中性, -1.0=强烈利空
+    对接 market_sentiment.json (Kronos定时写入):
+      - exchange_flow: CEX净流向
+      - large_transfer: Fear & Greed归一化
+    
+    降级: 数据不可用时返回中性值
     """
-    logger.warning("calc_news_sentiment() called - STUB implementation returning 0.0 (neutral). Weight contribution disabled.")
-    return 0.0
+    return _real_onchain(coin)
+
+
+def calc_wallet_metrics(coin: str = "BTC") -> Dict[str, float]:
+    """
+    计算钱包分布因子 —— 真实数据实现 (非STUB)
+    
+    对接 CoinGecko 免费API:
+      - holder_concentration: 持币集中度
+    
+    降级: API不可用时返回 0.5 (中性)
+    """
+    return _real_wallet(coin)
+
+
+def calc_news_sentiment(coin: str = "BTC") -> float:
+    """
+    计算新闻情绪 —— 真实数据实现 (非STUB)
+    
+    对接 CoinDesk/CoinTelegraph RSS + KeywordSentimentAnalyzer:
+      返回 -1.0(利空) ~ 1.0(利好)
+    
+    降级: 无相关新闻时返回 0.0 (中性)
+    """
+    return _real_news(coin)
 
 def calc_factors(price_data: Dict, onchain_data: Dict | None = None, 
-                 news_data: Dict | None = None) -> Dict[str, Any]:
+                 news_data: Dict | None = None, coin: str = "BTC") -> Dict[str, Any]:
     """
     计算所有因子值
     
@@ -417,18 +422,18 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
     
     price_score = (rsi_norm * 0.33 + adx_norm * 0.34 + macd_norm * 0.33)
     
-    # 新闻情绪因子 (20%)
-    news_sentiment = news_data.get("sentiment", 0.0) if news_data else calc_news_sentiment()
+    # 新闻情绪因子 (20%) — 非STUB: 从RSS获取币种关键词新闻
+    news_sentiment = news_data.get("sentiment", 0.0) if news_data else calc_news_sentiment(coin)
     news_score = (news_sentiment + 1) * 50  # -1~1 -> 0~100
     
-    # 链上因子 (10%)
-    onchain = onchain_data if onchain_data else calc_onchain_metrics()
+    # 链上因子 (10%) — 非STUB: 从market_sentiment.json读取CEX流向
+    onchain = onchain_data if onchain_data else calc_onchain_metrics(coin)
     exchange_flow = onchain.get("exchange_flow", 0.0)
     large_transfer = onchain.get("large_transfer", 0.0)
     onchain_score = 50 + (exchange_flow * 20 + large_transfer * 10)
     
-    # 钱包因子 (10%)
-    wallet = calc_wallet_metrics()
+    # 钱包因子 (10%) — 非STUB: 从CoinGecko获取持币集中度
+    wallet = calc_wallet_metrics(coin)
     holder_conc = wallet.get("holder_concentration", 0.5)
     wallet_score = holder_conc * 100
     
