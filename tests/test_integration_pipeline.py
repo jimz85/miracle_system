@@ -231,7 +231,6 @@ class TestIntegrationPipeline:
         mock_config,
         sample_trade_signal,
     ):
-        pytest.skip("TODO: 需要手动校准熔断阈值以匹配实际API")
         """
         Test that circuit breaker properly blocks trading when triggered:
         1. Equity drops significantly
@@ -255,7 +254,8 @@ class TestIntegrationPipeline:
         assert result.can_open is True
 
         # Step 3: 5% loss - CAUTION tier
-        result = cb.check(equity=9500.0, positions=[])
+        # Note: _determine_tier uses >=, so exact -5% (9500) is still NORMAL
+        result = cb.check(equity=9499.0, positions=[])
         assert result.tier == SurvivalTier.CAUTION
         assert result.max_position_pct == 0.50  # 50% position limit
 
@@ -264,7 +264,7 @@ class TestIntegrationPipeline:
         cb.record_outcome(pnl=-50.0)
 
         # Step 5: 10% loss - LOW tier
-        result = cb.check(equity=9000.0, positions=[])
+        result = cb.check(equity=8999.0, positions=[])
         assert result.tier == SurvivalTier.LOW
         assert result.max_position_pct == 0.25  # 25% position limit
 
@@ -273,13 +273,13 @@ class TestIntegrationPipeline:
         assert cb.cb.consecutive_losses == 3
 
         # Step 7: 20% loss - CRITICAL tier
-        result = cb.check(equity=8000.0, positions=[])
+        result = cb.check(equity=7999.0, positions=[])
         assert result.tier == SurvivalTier.CRITICAL
         assert result.can_open is False  # Blocked
         assert result.can_close is True  # Can still close
 
         # Step 8: 30% loss - PAUSED
-        result = cb.check(equity=7000.0, positions=[])
+        result = cb.check(equity=6999.0, positions=[])
         assert result.tier == SurvivalTier.PAUSED
         assert result.can_open is False
 
@@ -294,7 +294,6 @@ class TestIntegrationPipeline:
         mock_exchange_client,
         mock_config,
     ):
-        pytest.skip("TODO: OCO修复函数签名与测试不匹配")
         """
         Test OCO order balance repair scenario:
         1. Initial OCO order placed
@@ -306,7 +305,7 @@ class TestIntegrationPipeline:
 
         from core.order_manager import OrderManager
 
-        order_manager = OrderManager(mock_exchange_client)
+        order_manager = OrderManager(mock_exchange_client, mock_config)
 
         # Step 1: Place initial OCO order
         with patch.object(mock_exchange_client, "place_oco_order") as mock_oco:
@@ -392,7 +391,6 @@ class TestIntegrationPipeline:
         mock_exchange_client,
         mock_config,
     ):
-        pytest.skip("TODO: 持仓追踪逻辑需要适配实际PositionMonitor API")
         """
         Test position monitoring with ATR-based trailing stop:
         1. Position opened
@@ -429,9 +427,9 @@ class TestIntegrationPipeline:
         assert should_exit is False
         assert reason == "none"
 
-        # Step 3: Price drops to 50800 (below structure stop)
+        # Step 3: Price drops below structure stop 50750
         should_exit, reason = monitor.monitor(
-            trade, current_price=50800.0, atr=500.0
+            trade, current_price=50700.0, atr=500.0
         )
         assert should_exit is True
         assert reason == "structure"
@@ -449,7 +447,6 @@ class TestIntegrationPipeline:
         mock_exchange_cls,
         mock_exchange_client,
     ):
-        pytest.skip("TODO: 集中度检查错误消息格式需对齐实际代码")
         """
         Test concentration limits prevent overexposure:
         1. Check single coin limit
@@ -477,7 +474,7 @@ class TestIntegrationPipeline:
 
         # Should be blocked (20% > 15% single coin limit)
         assert allowed is False
-        assert "15%" in reason
+        assert "单币" in reason
 
         # Step 2: Try to add 40% more exposure when already at 20%
         current_positions = [
@@ -494,21 +491,23 @@ class TestIntegrationPipeline:
 
         # Should be blocked (60% > 50% total exposure limit)
         assert allowed is False
-        assert "50%" in reason
+        assert "总暴露" in reason and "限制" in reason
 
         # Step 3: Correlated group check (ETH + SOL in L1 group)
+        # ETH at 16% (under single coin limit for ETH), SOL at 15% (exactly at single coin limit)
+        # Combined: 16% + 15% = 31% > 30% L1 group limit → blocked at group level
         current_positions = [
-            {"instId": "ETH-USDT-SWAP", "notional": 1500.0},
+            {"instId": "ETH-USDT-SWAP", "notional": 1600.0},
         ]
 
         allowed, reason, details = check_concentration(
             symbol="SOL-USDT-SWAP",
-            new_trade_pct=0.20,
+            new_trade_pct=0.15,
             current_positions=current_positions,
             equity=equity,
         )
 
-        # Should be blocked (35% > 30% correlated group limit)
+        # Should be blocked (31% > 30% correlated group limit)
         assert allowed is False
         assert "L1" in reason
 
@@ -617,7 +616,6 @@ class TestIntegrationEdgeCases:
 
     @patch("core.exchange_client.ExchangeClient")
     def test_exchange_connection_failure(self, mock_exchange_cls):
-        pytest.skip("TODO: Connection failure测试需要微调mock_config fixture")
         """
         Test that system handles exchange connection failures gracefully
         """
