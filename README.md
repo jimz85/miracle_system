@@ -152,8 +152,11 @@ miracle_system/
 ├── miracle_autonomous.py         # 自主学习入口
 ├── miracle_core.py               # 核心计算
 ├── miracle_pilot.py              # 驾驶舱
-├── miracle_kronos.py             # Kronos兼容
-├── backtest.py                  # 回测引擎
+├── miracle_kronos.py             # 交易执行引擎
+├── backtest/                    # 回测引擎
+│   ├── backtest.py              #   主入口
+│   ├── engine.py                #   核心引擎
+│   └── walkforward.py           #   Walk-Forward验证
 │
 ├── core/                        # 核心模块
 │   ├── orchestrator.py         # 协调器（LLM大脑）
@@ -254,17 +257,20 @@ export FEISHU_WEBHOOK_URL=https://open.feishu.cn/...
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | Orchestrator | ✅ | `run_scan()` + LLM降级规则 |
-| LLM Provider | ✅ | Claude/GPT/Gemini/DeepSeek |
-| Memory System | ✅ | SQLite + IC权重追踪 + 遗忘机制 |
-| ExchangeClient | ✅ | OKX数据获取 |
-| AgentSignal | ✅ | 信号生成 + 多因子融合 |
-| CircuitBreaker | ✅ | 五级熔断机制 |
-| AgentExecutor | ✅ | OKX下单 + 动态止损 |
-| AgentLearner | ✅ | IC权重更新 + 模式黑名单 |
-| Autoresearch Loop | ✅ | Keep/Discard淘汰 |
-| OKX集成 | ✅ | 模拟盘+实盘 |
-| 飞书通知 | ✅ | 分级告警 |
+| LLM Provider | ✅ | Gemma4本地推理 + Claude/GPT/DeepSeek可选 |
+| Memory System | ✅ | SQLite + IC权重追踪 + FusionMemory |
+| ExchangeClient | ✅ | OKX数据获取与交易 |
+| AgentSignal | ✅ | 信号生成 + 多因子融合(ADX/RSI/MACD) |
+| CircuitBreaker | ✅ | 五级熔断(CAUTION→PAUSED→SUSPENDED) |
+| AgentExecutor | ✅ | OKX下单 + ATR动态止损 |
+| AgentLearner | ✅ | IC权重更新 + 模式黑名单 + 白名单 |
+| Autoresearch Loop | ✅ | Keep/Discard淘汰 + LLM假设生成 |
+| OKX集成 | ✅ | 模拟盘+实盘(OKX_FLAG切换) |
+| 飞书通知 | ✅ | 静默模式 + 熔断告警 |
 | 单元测试 | ✅ | 337个测试覆盖核心模块 |
+| RegimeClassifier | ✅ | ADX+DMI+ATR市场状态分类(4种) |
+| 每币种滑点配置 | ✅ | BTC 0.05% ~ BNT 0.8% |
+| 因子权重Disabled | ✅ | 可逐因子关闭，权重自动重归一化 |
 | ChromaDB向量记忆 | ⚠️ | 已切换为SQLite，Roadmap预留 |
 
 ---

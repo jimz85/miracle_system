@@ -449,12 +449,25 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
     holder_conc = wallet.get("holder_concentration", 0.5)
     wallet_score = holder_conc * 100
     
-    # 加权综合得分
-    factors = CONFIG["factors"]
-    price_weight = factors["price_momentum"]["weight"]
-    news_weight = factors["news_sentiment"]["weight"]
-    onchain_weight = factors["onchain"]["weight"]
-    wallet_weight = factors["wallet"]["weight"]
+    # 加权综合得分 — 只考虑启用的因子，权重重新归一化
+    factors_cfg = CONFIG["factors"]
+    
+    # 收集启用的因子及其权重
+    enabled_weights = {}
+    for name, cfg in factors_cfg.items():
+        if cfg.get("enabled", True):  # 默认启用
+            enabled_weights[name] = cfg.get("weight", 0)
+    
+    if enabled_weights:
+        total = sum(enabled_weights.values())
+        # 归一化权重 (使总和为1.0)
+        if total > 0:
+            enabled_weights = {k: v/total for k, v in enabled_weights.items()}
+    
+    price_weight = enabled_weights.get("price_momentum", 0)
+    news_weight = enabled_weights.get("news_sentiment", 0)
+    onchain_weight = enabled_weights.get("onchain", 0)
+    wallet_weight = enabled_weights.get("wallet", 0)
     
     composite = (
         price_score * price_weight +

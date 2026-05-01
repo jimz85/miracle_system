@@ -432,3 +432,35 @@ def get_stats() -> Dict[str, Any]:
         "ic_tracked_factors": ic_factors,
         "max_entries": MAX_ENTRIES
     }
+
+
+# ==================== 向后兼容别名 ====================
+
+class FusionMemoryLog:
+    """
+    FusionMemoryLog — 文档中描述的类名，实际委托给模块级函数。
+    
+    提供 store_decision / update_with_outcome / get_past_context / get_ic_feedback
+    四个方法, 与 MIRACLE_TRADINGAGENTS_FUSION_ARCHITECTURE.md 中的 API 描述兼容。
+    """
+    
+    @staticmethod
+    def store_decision(
+        ticker: str, bull_case: str, bear_case: str,
+        verdict: str, confidence: float,
+        factors: Dict[str, Any],
+        market_context: Dict[str, Any] | None = None
+    ) -> int:
+        return store_decision(ticker, bull_case, bear_case, verdict, confidence, factors, market_context)
+    
+    @staticmethod
+    def update_with_outcome(ticker: str, entry_time: datetime, outcome: str, pnl_pct: float) -> bool:
+        return update_with_outcome(ticker, entry_time, outcome, pnl_pct)
+    
+    @staticmethod
+    def get_past_context(ticker: str, limit: int = 5) -> List[Dict[str, Any]]:
+        return get_past_context(ticker, limit)
+    
+    @staticmethod
+    def get_ic_feedback(factor_name: str) -> float | None:
+        return get_ic_feedback(factor_name)

@@ -14,6 +14,7 @@ ENV/
 .env
 *.log
 *.jsonl
+*.lock
 logs/*.json
 logs/*.csv
 data/*.json

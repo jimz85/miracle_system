@@ -67,6 +67,7 @@ class BacktestConfig:
     initial_balance: float = 100000
     commission_rate: float = 0.0005
     slippage_rate: float = 0.0002
+    per_coin_slippage: Dict[str, float] = field(default_factory=dict)
     leverage: float = 2
     wf_train_days: int = 90
     wf_test_days: int = 30

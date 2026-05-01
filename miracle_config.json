@@ -44,6 +44,7 @@
   },
   "factors": {
     "price_momentum": {
+      "enabled": true,
       "weight": 0.6,
       "indicators": [
         "rsi",
@@ -52,9 +53,11 @@
       ]
     },
     "news_sentiment": {
+      "enabled": true,
       "weight": 0.2
     },
     "onchain": {
+      "enabled": true,
       "weight": 0.1,
       "metrics": [
         "exchange_flow",
@@ -62,6 +65,7 @@
       ]
     },
     "wallet": {
+      "enabled": true,
       "weight": 0.1,
       "metrics": [
         "holder_concentration"
@@ -78,6 +82,21 @@
   "fee": {
     "maker": 0.0002,
     "taker": 0.0005,
-    "estimated_slippage": 0.005
+    "estimated_slippage": 0.005,
+    "per_coin_slippage": {
+      "BTC": 0.0005,
+      "ETH": 0.0005,
+      "ADA": 0.0015,
+      "DOGE": 0.0010,
+      "AVAX": 0.0015,
+      "DOT": 0.0010,
+      "BCH": 0.0010,
+      "ETC": 0.0030,
+      "ALGO": 0.0030,
+      "CRO": 0.0050,
+      "BNT": 0.0080,
+      "CVC": 0.0050,
+      "GAS": 0.0050
+    }
   }
 }
