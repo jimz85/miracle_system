@@ -17,7 +17,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -155,6 +155,9 @@ class BacktestEngine:
                             "confidence": position.get("confidence", 0.5),
                         })
 
+                    # 平仓后清空position，避免后续bar重复平仓
+                    position = None
+
             # 生成信号
             if not position:
                 signal = signal_func(self.prices[:i], self.highs[:i], self.lows[:i], max(0, i - 1))
@@ -233,11 +236,15 @@ class BacktestEngine:
 
         # 时间止损（24小时）
         if isinstance(entry_time, (int, float)):
-            entry_dt = datetime.fromtimestamp(entry_time / 1000)
-            exit_dt = datetime.fromtimestamp(current_time / 1000)
+            entry_dt = datetime.fromtimestamp(entry_time / 1000, tz=timezone.utc)
+            exit_dt = datetime.fromtimestamp(current_time / 1000, tz=timezone.utc)
         else:
             entry_dt = datetime.fromisoformat(str(entry_time))
+            if entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
             exit_dt = datetime.fromisoformat(str(current_time))
+            if exit_dt.tzinfo is None:
+                exit_dt = exit_dt.replace(tzinfo=timezone.utc)
 
         if (exit_dt - entry_dt).total_seconds() > 24 * 3600:
             return True, "time"
@@ -281,11 +288,15 @@ class BacktestEngine:
         entry_time = position["entry_time"]
         current_time = self.timestamps[current_idx]
         if isinstance(entry_time, (int, float)):
-            entry_dt = datetime.fromtimestamp(entry_time / 1000)
-            exit_dt = datetime.fromtimestamp(current_time / 1000)
+            entry_dt = datetime.fromtimestamp(entry_time / 1000, tz=timezone.utc)
+            exit_dt = datetime.fromtimestamp(current_time / 1000, tz=timezone.utc)
         else:
             entry_dt = datetime.fromisoformat(str(entry_time))
+            if entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
             exit_dt = datetime.fromisoformat(str(current_time))
+            if exit_dt.tzinfo is None:
+                exit_dt = exit_dt.replace(tzinfo=timezone.utc)
         funding_hours = (exit_dt - entry_dt).total_seconds() / 3600.0
         # OKX funding每8小时结算，取整计算funding次数
         funding_periods = max(1, round(funding_hours / 8.0))

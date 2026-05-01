@@ -305,7 +305,9 @@ def get_coin_config(symbol: str) -> dict:
 
 def voting_vote(factors: dict, weights: dict) -> dict:
     """7因子投票: 每个因子投 +1/0/-1, 加权求和
-    核心修正: RSI极端值在强趋势(ADX>25)中不代表反转, 而是趋势持续.
+    核心修正: TREND_RSI — 趋势跟踪+RSI回调入场
+    - 多头: 价格>EMA200 + DI+>DI- + RSI回调<45
+    - 空头: 价格<EMA200 + DI->DI+ + RSI反弹>55
     """
     rsi = factors['rsi']
     adx = factors['adx']
@@ -313,32 +315,39 @@ def voting_vote(factors: dict, weights: dict) -> dict:
     macd_hist = factors['macd_hist']
     vol_ratio = factors['vol_ratio']
     btc_trend = factors.get('btc_trend', 'neutral')
+    di_plus = factors.get('_di_plus', 20)
+    di_minus = factors.get('_di_minus', 20)
+    ema200 = factors.get('_ema200', 0)
+    current_price = factors.get('_price', 0)
 
-    # ---- RSI因子: 分情况 ----
-    # 强趋势(ADX>25): RSI极端值=趋势确认, 不是反转信号
-    # 震荡(ADX<20): RSI极端值=均值回归信号
+    # 判断趋势方向
+    trend_long = current_price > ema200 and di_plus > di_minus  # 多头趋势
+    trend_short = current_price < ema200 and di_minus > di_plus  # 空头趋势
+    trend_neutral = not trend_long and not trend_short  # 无明确趋势
+
+    # ---- RSI因子: TREND_RSI 逻辑 ----
+    # 有趋势时: RSI回调到超卖区=顺势入场机会
+    # 无趋势时: 等待，不交易
     rsi_vote = 0
-    if adx > 25:
-        # 强趋势: RSI极端=趋势持续信号(反向回调即是入场机会)
-        if rsi < 25:       # 极度超卖 = 多头机会(回调触底)
+    if trend_long:
+        if rsi < 45:        # 回调到超卖区 → 顺势做多
             rsi_vote = 1
-        elif rsi > 75:     # 极度超买 = 空头机会(反弹触顶)
+        elif rsi < 50:      # 偏弱回调 → 弱做多
+            rsi_vote = 0.5
+        elif rsi > 70:      # 严重超买 → 可能回调，但趋势向上不逆势
+            rsi_vote = -0.3
+    elif trend_short:
+        if rsi > 55:        # 反弹到超买区 → 顺势做空
             rsi_vote = -1
-        elif rsi < 40:     # 偏超卖 = 多头略强
-            rsi_vote = 0.5
-        elif rsi > 60:     # 偏超买 = 空头略强
+        elif rsi > 50:      # 偏强反弹 → 弱做空
             rsi_vote = -0.5
-        # 中间区域40-60: 等待
-    else:
-        # 震荡/弱趋势: RSI极端值=均值回归
-        if rsi < 30:
-            rsi_vote = 1   # 超卖 → 反弹
-        elif rsi > 70:
-            rsi_vote = -1  # 超买 → 回调
-        elif rsi < 40:
-            rsi_vote = 0.5
-        elif rsi > 60:
-            rsi_vote = -0.5
+        elif rsi < 30:      # 严重超卖 → 可能反弹，但趋势向下不逆势
+            rsi_vote = 0.3
+    # trend_neutral: RSI极端值轻仓做反转
+    elif rsi < 25:
+        rsi_vote = 0.5       # 极端超卖
+    elif rsi > 75:
+        rsi_vote = -0.5      # 极端超买
 
     # ---- ADX因子 ----
     adx_vote = 0
@@ -1153,16 +1162,16 @@ SCAN_COINS = [
     ("ETH-USDT-SWAP", "ETH"),
     ("DOGE-USDT-SWAP", "DOGE"),
     ("BNB-USDT-SWAP", "BNB"),
-    # AVAX, ADA, SOL, XRP, LINK, DOT: inactive - no positive backtest validation
+    ("FIL-USDT-SWAP", "FIL"),        # TREND_RSI S=4.99 WF通过
+    ("AVAX-USDT-SWAP", "AVAX"),      # TREND_RSI S=4.21 WF通过
+    ("GRT-USDT-SWAP", "GRT"),        # TREND_RSI S=2.58 WF通过
 ]
 
 # OKX USDT永续合约乘数（每张合约对应的币数量）
-# 用于计算合约张数: sz = sz_dollar / (entry × multiplier)
-# BTC: 0.01 BTC/张, ETH: 0.1 ETH/张, DOGE: 1000 DOGE/张, SOL: 1 SOL/张, ADA: 100 ADA/张, XRP: 10 XRP/张
 CONTRACT_MULTIPLIER_FALLBACK = {
     'BTC': 0.01, 'ETH': 0.1, 'SOL': 1, 'DOGE': 1000,
     'ADA': 100, 'XRP': 10, 'BNB': 10, 'AVAX': 1,
-    'LINK': 1, 'DOT': 1,
+    'LINK': 1, 'DOT': 1, 'FIL': 1, 'GRT': 100,
 }
 _contract_multiplier_cache = {}
 
@@ -1171,7 +1180,7 @@ _fr_history = {}  # {coin: [funding_rate_values]}
 _oi_history = {}  # {coin: [oi_values]}
 
 MAX_POSITIONS = 3
-SL_PCT = 0.05  # 5%止损 (仅用于静态计算后备)
+SL_PCT = 0.03  # 3%止损 (TREND_RSI趋势跟踪)
 TP_PCT = 0.10  # 10%止盈 (仅用于静态计算后备)
 POSITION_SIZE_PCT = 0.02  # 每次2%仓位
 
@@ -1317,6 +1326,17 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None, coin_co
     highs_1h = [k['high'] for k in klines_1h]
     lows_1h = [k['low'] for k in klines_1h]
     
+    # TREND_RSI: 计算EMA200用于判断长期趋势
+    # 简单EMA计算（不使用外部模块，避免导入问题）
+    _ema200 = closes_1h[-1]
+    if len(closes_1h) >= 200:
+        _alpha = 2.0 / (200 + 1)
+        _ema200 = closes_1h[-200]
+        for _c in closes_1h[-199:]:
+            _ema200 = _c * _alpha + _ema200 * (1 - _alpha)
+    else:
+        _ema200 = sum(closes_1h) / len(closes_1h)
+    
     # 4H确认（趋势共振）
     btc_4h_confirmed = False
     if klines_4h and len(klines_4h) >= 30:
@@ -1386,6 +1406,9 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None, coin_co
         'gemma_health': treasury.get('gemma_health', 'healthy'),
         '_4h_direction': _4h_direction,
         '_4h_strength': _4h_strength,
+        # TREND_RSI 趋势跟踪因子
+        '_ema200': _ema200,
+        '_price': closes_1h[-1],
     }
     # ---- 市场状态自适应权重 ----
     # 震荡市(ADX<20)：增强均值回归因子(RSI/Bollinger)，削弱趋势因子(ADX/MACD/BTC)
