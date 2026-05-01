@@ -137,8 +137,11 @@ def test_close_position_hedge_mode_posside():
     import miracle_kronos
 
     with patch('miracle_kronos.okx_req') as mock_req:
-        mock_req.return_value = {'code': '0', 'data': [{'algoId': '123'}]}
-        # Set global _pos_mode directly (module imported at load time, not re-evaluated)
+        def mock_side_effect(method, path, body=''):
+            if path == '/api/v5/account/config':
+                return {'code': '0', 'data': [{'posMode': 'long_short_mode'}]}
+            return {'code': '0', 'data': [{'algoId': '123'}]}
+        mock_req.side_effect = mock_side_effect
         miracle_kronos._pos_mode = 'hedge'
 
         from miracle_kronos import close_position

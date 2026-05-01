@@ -90,10 +90,8 @@ def _detect_pos_mode():
     return _pos_mode
 
 # 模块加载时自动检测仓位模式
-try:
-    _detect_pos_mode()
-except Exception:
-    _pos_mode = 'net'
+# NOTE: 必须在get_positions()定义之后调用，否则fallback引用未定义函数
+# 实际调用移至 get_positions() 定义之后 (line ~534)
 
 # ===== 安全类型转换 =====
 def safe_float(val, default=0.0):
@@ -532,6 +530,12 @@ def get_positions():
             })
     return positions
 
+# 模块加载后初始化仓位模式检测（必须在get_positions定义之后）
+try:
+    _detect_pos_mode()
+except Exception:
+    _pos_mode = 'net'
+
 def get_ticker(instId):
     """获取当前价格"""
     data = okx_req('GET', f'/api/v5/market/ticker?instId={instId}')
@@ -816,6 +820,7 @@ confidence表示你对方向判断的确信程度：
                 except Exception as e:
                     logger.debug(f"gemma_cache_write: 读取现缓存失败: {e}")
             all_cache[symbol] = {'vote': vote, 'bucket': now_bucket, 'raw': output[:100]}
+            from core.kronos_utils import atomic_write_json
             atomic_write_json(cache_file, all_cache)
 
     return vote
@@ -915,6 +920,9 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
         tp_price = round(entry_price * (1 - tp_pct), 4)
         pos_side = 'short'
 
+    # P0 Fix: 确保仓位模式检测是最新的（影响后续posSide的添加）
+    _detect_pos_mode()
+
     # ── Step 1: 设置杠杆 ──
     leverage_body = json.dumps({
         'instId': instId,
@@ -989,17 +997,19 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
         }
 
 def close_position(symbol: str, reason: str = "signal",
-                   pos: dict = None) -> Dict:
+                   pos: dict = None, close_pct: float = 1.0) -> Dict:
     """
     平仓 - 根据symbol执行市价平仓
     P0修复: 使用 /api/v5/trade/order 而非 /api/v5/trade/close-position
            OKX close-position端点不支持mgnMode/ccy参数，会导致400错误
     pos: 可选，传入持仓数据 {sz, side} 以获取正确数量和方向
+    close_pct: 平仓比例，1.0=全平，0.5=半仓
     Returns: {'code': '0', 'data': [...]} or {'code': '99999', 'msg': ...}
     """
-    inst_id = f"{symbol}-USDT-SWAP"
+    # P0 Fix: 确保仓位模式检测是最新的（影响posSide的添加）
+    _detect_pos_mode()
 
-    # 获取持仓信息（如果没有传入）
+    inst_id = f"{symbol}-USDT-SWAP"
     if pos is None:
         all_pos = get_positions()
         pos = next((p for p in all_pos if p.get('instId', '').startswith(symbol)), None)
@@ -1008,7 +1018,7 @@ def close_position(symbol: str, reason: str = "signal",
         logger.warning(f"[{symbol}] 无持仓，跳过平仓")
         return {'code': '99999', 'msg': f'无持仓 {symbol}'}
 
-    sz = int(pos['sz'])
+    sz = max(1, int(int(pos['sz']) * close_pct))
     # 兼容OKX API字段('side')和本地历史记录('direction')
     pos_side = pos.get('side') or pos.get('direction', 'long')
     # 平多: side=sell, 平空: side=buy
@@ -1100,6 +1110,7 @@ def adjust_trailing_oco(inst_id, direction, entry, current, tp_distance_pct=0.05
             logger.warning(f"调整OCO: 取消异常 {inst_id}: {ex}")
 
     # 5. 挂新OCO（放宽TP到当前价附近，SL保本）
+    _detect_pos_mode()
     close_side = 'sell' if pos_side == 'long' else 'buy'
     oco_body = {
         'instId': inst_id,
@@ -2161,8 +2172,8 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
     HOLD_FORCE_HOURS  = 72       # 持仓>72h + 亏损 → 警告需要人工判断（不平仓）
     PROFIT_MOVE_SL    = 0.02     # 盈利>2% → SL上移到成本价（零风险持仓）
     TRAILING_ATR_MULT = 1.5      # 移动止损：1.5x ATR 追踪
-    PARTIAL_TP_PCT    = 0.12    # 盈利>12% → 部分止盈50%（锁定利润）
-    FULL_TP_PCT       = 0.25    # 盈利>25% → 全仓止盈（保护利润）
+    PARTIAL_TP_PCT    = 0.15    # 盈利>15% → 部分止盈50%（锁定利润，剩50%继续跑）
+    FULL_TP_PCT       = 0.30    # 盈利>30% → 全仓止盈（保护利润）
 
     all_trades = _load_open_trades_for_management()
     open_trades = [t for t in all_trades if t.get('status') == 'OPEN']
@@ -2492,12 +2503,16 @@ def _execute_management_decision(dec: dict, equity: float):
             logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
 
     elif action_type == 'partial_tp':
+        close_pct = dec.get('close_pct', 0.50)
         positions = get_positions()
         pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
         if pos:
-            close_data = close_position(coin, reason=reason)
+            close_data = close_position(coin, reason=reason, close_pct=close_pct)
             if close_data.get('code') == '0':
-                _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id, pnl_pct=pnl_pct)
+                if close_pct >= 1.0:
+                    _mark_trade_closed(coin, f'{reason} [部分止盈]', trade_id, pnl_pct=pnl_pct)
+                else:
+                    logger.info(f'部分止盈: {coin} 平{close_pct:.0%}仓')
                 logger.info(f'持仓管理部分止盈: {coin} {reason}')
             else:
                 logger.warning(f'部分止盈失败: {coin} {close_data.get("msg")}')
