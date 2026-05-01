@@ -28,7 +28,7 @@ from core.factor_calculations import (
 
 # IC动态权重（可选导入，失败时返回基准权重）
 try:
-    from core.ic_weights import MiracleICTracker
+    from core.ic_weights import ICWeightManager as MiracleICTracker
 except ImportError:
     MiracleICTracker = None
 
@@ -796,9 +796,10 @@ def check_stops(position: Dict, current_price: float,
     # ATR动态止损
     if atr is not None and atr > 0:
         atr_stop = entry_price * (1 - risk_config["atr_stop_multiplier"] * atr / entry_price)
+        atr_stop_short = entry_price * (1 + risk_config["atr_stop_multiplier"] * atr / entry_price)
         if direction == "long" and current_price <= atr_stop:
             return True, "atr"
-        elif direction == "short" and current_price >= atr_stop:
+        elif direction == "short" and current_price >= atr_stop_short:
             return True, "atr"
     
     # 动态结构止损: 当持仓超过4h后，使用ATR动态跟踪止损替代时间止损
@@ -943,6 +944,7 @@ def update_factor_weights(trade_history: List[Trade], use_ic: bool = True) -> Di
         # 检查是否有有效IC权重
         if ic_weights.get("price_momentum", 0) > 0:
             logger.info(f"使用IC动态权重: {ic_weights}")
+            update_config("factors", ic_weights)
             return ic_weights
     
     # 否则使用传统的胜率更新逻辑
@@ -979,6 +981,9 @@ def update_factor_weights(trade_history: List[Trade], use_ic: bool = True) -> Di
                 if "weight" in factors[key]:
                     factors[key]["weight"] /= total
         logger.info("Factor weights increased by 10% due to winning streak (capped at 1.0)")
+
+    # 将更新后的因子权重写回全局 CONFIG
+    update_config("factors", factors)
 
     return factors
 
