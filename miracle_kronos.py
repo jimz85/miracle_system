@@ -2154,11 +2154,15 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
     import time as _time_module
 
     # ── 规则参数 ──
-    LOSS_WARN_PCT     = -0.03    # 亏损>3% → 触发警告/平仓
-    HOLD_WARN_HOURS   = 3        # 持仓>3h无盈利 → 触发警告
-    HOLD_FORCE_HOURS  = 6        # 持仓>6h无盈利(亏损) → 强制平仓
-    PROFIT_MOVE_SL    = 0.02     # 盈利>2% → SL上移到成本价
-    PARTIAL_TP_PCT    = 0.12    # 盈利>12% → 部分止盈50%
+    # 职业操盘手原则：截断亏损，让利润奔跑
+    # 不允许用时间作为平仓理由——价格本身才是唯一信号
+    LOSS_WARN_PCT     = -0.04    # 亏损>4% → 强制平仓（给市场波动留空间）
+    HOLD_WARN_HOURS   = 3        # 持仓>3h无盈利 → 触发警告（仅警告，不平仓）
+    HOLD_FORCE_HOURS  = 72       # 持仓>72h + 亏损 → 警告需要人工判断（不平仓）
+    PROFIT_MOVE_SL    = 0.02     # 盈利>2% → SL上移到成本价（零风险持仓）
+    TRAILING_ATR_MULT = 1.5      # 移动止损：1.5x ATR 追踪
+    PARTIAL_TP_PCT    = 0.12    # 盈利>12% → 部分止盈50%（锁定利润）
+    FULL_TP_PCT       = 0.25    # 盈利>25% → 全仓止盈（保护利润）
 
     all_trades = _load_open_trades_for_management()
     open_trades = [t for t in all_trades if t.get('status') == 'OPEN']
@@ -2223,14 +2227,14 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             except Exception:
                 hold_hours = None
 
-        # ── 规则1: 强制平仓（最优先） ──
-        # 亏损>3% + 持仓>3h → 直接平
+        # ── 规则1: 止损（最优先） ──
+        # 亏损>4% + 持仓>3h → 直接平（截断亏损）
         if (hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= LOSS_WARN_PCT):
             decisions.append({
                 'action': 'force_close',
                 'coin': coin,
                 'direction': direction,
-                'reason': f'亏损{pnl_pct:.1%}+持仓{hold_hours:.1f}h → 强制平仓',
+                'reason': f'亏损{pnl_pct:.1%}+持仓{hold_hours:.1f}h → 止损',
                 'entry': entry_price,
                 'current': current_price,
                 'pnl_pct': pnl_pct,
@@ -2238,14 +2242,14 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'trade_id': trade_id,
                 'urgency': 9,
             })
-            summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+{hold_hours:.1f}h → 强平')
-        # 持仓>6h且亏损（非盈利） → 强制平
-        elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct < 0:
+            summary_lines.append(f'🛑 {coin} {direction} 亏损{pnl_pct:.1%}+{hold_hours:.1f}h → 止损')
+        # ── 规则2: 全仓止盈（盈利>25%） ──
+        elif pnl_pct >= FULL_TP_PCT:
             decisions.append({
                 'action': 'force_close',
                 'coin': coin,
                 'direction': direction,
-                'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%}) → 强平',
+                'reason': f'盈利{pnl_pct:.1%} → 全仓止盈',
                 'entry': entry_price,
                 'current': current_price,
                 'pnl_pct': pnl_pct,
@@ -2253,8 +2257,8 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'trade_id': trade_id,
                 'urgency': 9,
             })
-            summary_lines.append(f'🚨 {coin} {direction} {hold_hours:.1f}h无盈利 → 强平')
-        # ── 规则2: 部分止盈（盈利>12%，LONG+SHORT） ──
+            summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%} → 全仓止盈')
+        # ── 规则3: 部分止盈（盈利>12%） ──
         elif pnl_pct >= PARTIAL_TP_PCT:
             decisions.append({
                 'action': 'partial_tp',
@@ -2271,8 +2275,9 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'urgency': 8,
             })
             summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%} → 部分止盈')
-        # ── 规则3: 盈利保护（盈利>2% → SL移到成本） ──
-        elif pnl_pct >= PROFIT_MOVE_SL and sl_price > 0:
+        # ── 规则4: 移动止损保护（盈利>2% → SL移到成本价） ──
+        # 没有sl_price检查——即使初始SL未设，也强制移到成本保护利润
+        elif pnl_pct >= PROFIT_MOVE_SL:
             new_sl = entry_price
             decisions.append({
                 'action': 'move_sl_to_cost',
@@ -2288,7 +2293,30 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'urgency': 7,
             })
             summary_lines.append(f'🛡️  {coin} {direction} 盈利{pnl_pct:.1%} → SL移成本')
-        # ── 规则4: 反向信号覆盖（亏损>3%且RSI明确反向） ──
+        # ── 规则5: 追踪止损（盈利>5% → 开始ATR追踪） ──
+        elif pnl_pct >= PROFIT_MOVE_SL * 2.5:
+            atr = adx_data.get('atr', 0) if isinstance(adx_data, dict) else 500
+            if atr > 0 and hold_hours is not None and hold_hours >= 4:
+                trail_distance = atr * TRAILING_ATR_MULT / entry_price
+                if direction in ('LONG', '做多', 'long'):
+                    trail_sl = current_price * (1 - trail_distance)
+                else:
+                    trail_sl = current_price * (1 + trail_distance)
+                decisions.append({
+                    'action': 'trailing_stop',
+                    'coin': coin,
+                    'direction': direction,
+                    'reason': f'盈利{pnl_pct:.1%} → 追踪止损@{trail_sl:.4f}',
+                    'entry': entry_price,
+                    'current': current_price,
+                    'new_sl': trail_sl,
+                    'pnl_pct': pnl_pct,
+                    'mode': mode,
+                    'trade_id': trade_id,
+                    'urgency': 6,
+                })
+                summary_lines.append(f'🔒 {coin} {direction} 盈利{pnl_pct:.1%} → 追踪@{trail_sl:.4f}')
+        # ── 规则6: 反向信号覆盖（亏损+RSI/Gemma明确反向） ──
         elif pnl_pct <= LOSS_WARN_PCT:
             # ⭐ Gemma4 持仓评估（补充RSI规则）
             gemma_close = False
@@ -2346,7 +2374,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                         'rsi': rsi_val, 'mode': mode, 'trade_id': trade_id, 'urgency': 8,
                     })
                     summary_lines.append(f'🔄 {coin} 空头亏损{pnl_pct:.1%}+RSI超卖 → 平仓')
-        # ── 规则5: 持仓超时警告（>3h无盈利，未触发上面规则） ──
+        # ── 规则7: 持仓超时警告（仅警告，不平仓） ──
         elif hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= 0:
             warnings.append({
                 'coin': coin,
@@ -2356,6 +2384,16 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})',
             })
             summary_lines.append(f'⚠️  {coin} {direction} {hold_hours:.1f}h无盈利({pnl_pct:.1%})')
+        # ── 规则8: 持仓超72h警告（需要人工判断，不平仓） ──
+        elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct <= 0:
+            warnings.append({
+                'coin': coin,
+                'direction': direction,
+                'hold_hours': hold_hours,
+                'pnl_pct': pnl_pct,
+                'reason': f'持仓{hold_hours:.1f}h无盈利(>{HOLD_FORCE_HOURS}h) → 请人工判断',
+            })
+            summary_lines.append(f'⚠️⚠️ {coin} {direction} {hold_hours:.1f}h超时 → 请人工判断')
 
     # ── 写入决策日志 ──
     _write_management_journal({
@@ -2471,6 +2509,15 @@ def _execute_management_decision(dec: dict, equity: float):
     trade_id = dec.get('trade_id')
     pnl_pct = dec.get('pnl_pct', 0)
 
+    # ── 重复执行保护：5秒内不执行同一币种的force_close ──
+    if action_type in ('force_close', 'close_opposite_signal'):
+        now = time.time()
+        last_close = _last_close_time.get(coin, 0)
+        if now - last_close < 5:
+            logger.info(f'跳过重复关闭: {coin} (距离上次关闭{now-last_close:.1f}s)')
+            return
+        _last_close_time[coin] = now
+
     if action_type in ('force_close', 'close_opposite_signal'):
         close_data = close_position(coin, reason=reason)
         if close_data.get('code') == '0':
@@ -2517,6 +2564,35 @@ def _execute_management_decision(dec: dict, equity: float):
                 logger.info(f'SL上移到成本: {coin} @ {dec["new_sl"]:.4f}')
         except Exception as e:
             logger.warning(f'SL移动失败: {coin} {e}')
+
+    elif action_type == 'trailing_stop':
+        """追踪止损：取消旧OCO，用新SL重新挂单"""
+        try:
+            oco_query = okx_req('GET', f'/api/v5/trade/orders-algo-pending?instId={inst_id}&ordType=oco')
+            algo_list = oco_query.get('data', [])
+            for algo in algo_list:
+                cancel_body = json.dumps([{'algoId': str(algo['algoId']), 'instId': inst_id}])
+                okx_req('DELETE', '/api/v5/trade/cancel-algos', cancel_body)
+            entry = dec.get('entry', 0)
+            new_sl = dec.get('new_sl', 0)
+            if entry > 0 and new_sl > 0:
+                sl_pct = abs(entry - new_sl) / entry
+                positions = get_positions()
+                pos = next((p for p in positions if coin.upper() in p.get('instId','')), None)
+                if pos:
+                    sz = int(pos.get('sz', 0))
+                    direction = pos.get('posSide', 'long')
+                    direction = 'long' if direction in ('long','net') else 'short'
+                    tp_pct = 0.0  # trailing只设SL，TP由后续规则管理
+                    place_oco(inst_id, direction, sz, entry, sl_pct, tp_pct,
+                             equity=equity, leverage=3)
+                    logger.info(f'追踪止损更新: {coin} SL@{new_sl:.4f}')
+        except Exception as e:
+            logger.warning(f'追踪止损失败: {coin} {e}')
+
+
+# 重复关闭保护（秒级去重）
+_last_close_time: Dict[str, float] = {}
 
 
 # ═══════════════════════════════════════════════════════════
