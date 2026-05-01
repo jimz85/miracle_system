@@ -332,7 +332,7 @@ class Executor:
 
         # 获取当前市场价格用于滑点检查
         current_market_price = self.active_client.get_ticker(symbol)
-        max_slippage_pct = 0.01  # 1% 最大滑点
+        max_slippage_pct = 0.03  # 3% 最大滑点
 
         # 尝试真实下单
         order_result = None

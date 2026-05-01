@@ -957,8 +957,15 @@ def update_factor_weights(trade_history: List[Trade], use_ic: bool = True) -> Di
         # 检查是否有有效IC权重
         if ic_weights.get("price_momentum", 0) > 0:
             logger.info(f"使用IC动态权重: {ic_weights}")
-            update_config("factors", ic_weights)
-            return ic_weights
+            # ic_weights是扁平float字典，需要转换为嵌套结构
+            nested_weights = {
+                "price_momentum": {"enabled": True, "weight": ic_weights["price_momentum"]},
+                "news_sentiment": {"enabled": True, "weight": ic_weights["news_sentiment"]},
+                "onchain": {"enabled": True, "weight": ic_weights.get("onchain", 0.1)},
+                "wallet": {"enabled": True, "weight": ic_weights.get("wallet", 0.1)}
+            }
+            update_config("factors", nested_weights)
+            return nested_weights
     
     # 否则使用传统的胜率更新逻辑
     if len(trade_history) < 5:
@@ -1037,13 +1044,15 @@ def can_trade(trade_history: List[Dict], direction: str = None) -> Tuple[bool, s
         if len(recent_same_dir) >= trading["max_consecutive_same_direction"]:
             return False, "max_consecutive_same_direction"
     
-    # 检查连续亏损暂停
-    recent_losses = trade_history[-2:] if len(trade_history) >= 2 else []
-    if recent_losses and all(t["pnl"] < 0 for t in recent_losses):
-        last_loss_time = datetime.fromisoformat(recent_losses[-1]["exit_time"])
-        pause_hours = trading["consecutive_loss_pause_hours"]
-        if (datetime.now() - last_loss_time).total_seconds() / 3600 < pause_hours:
-            return False, "consecutive_loss_pause"
+    # 检查连续亏损暂停：验证最近2笔交易之间无盈利交易（确实是连续亏损）
+    if len(trade_history) >= 2:
+        recent_trades = trade_history[-2:]
+        # 只有当最后两笔都是亏损且之间没有盈利时才触发
+        if all(t["pnl"] < 0 for t in recent_trades):
+            last_loss_time = datetime.fromisoformat(recent_trades[-1]["exit_time"])
+            pause_hours = trading["consecutive_loss_pause_hours"]
+            if (datetime.now() - last_loss_time).total_seconds() / 3600 < pause_hours:
+                return False, "consecutive_loss_pause"
     
     return True, "ok"
 
@@ -1123,28 +1132,8 @@ def get_recent_price_data(symbol: str, days: int = 30, interval: str = "1h") -> 
 
 
 def _generate_fallback_price_data(symbol: str, days: int) -> Dict[str, List[float]]:
-    """
-    当API不可用时，使用随机游走生成伪K线数据（仅用于测试/演示）。
-    真实环境不应使用此数据。
-    """
-    import random
-    n = days * 24
-    base_price = {
-        "BTC": 95000, "ETH": 3500, "SOL": 145, "AVAX": 38,
-        "DOGE": 0.095, "DOT": 7.5, "LINK": 14.5, "ADA": 0.75,
-        "XRP": 2.2, "BNB": 580, "MATIC": 0.85, "ARB": 1.1,
-    }.get(symbol, 100.0)
-
-    random.seed(symbol.encode().__hash__() if symbol else 0)
-    import random as _r
-    closes = [base_price]
-    for _ in range(n - 1):
-        closes.append(closes[-1] * (1 + _r.gauss(0, 0.015)))  # 随机游走，μ=0，σ=1.5%/步
-    highs = [c * (1 + abs(_r.uniform(0, 0.008))) for c in closes]
-    lows = [c * (1 - abs(_r.uniform(0, 0.008))) for c in closes]
-    random.seed()
-
-    return {"highs": highs, "lows": lows, "closes": closes}
+    """当API不可用时，直接抛出异常，不返回随机数据"""
+    raise DataFetchError("API不可用，无法获取实时行情")
 
 
 # ===== 账户状态获取（OKX API）=====

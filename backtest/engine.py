@@ -219,16 +219,16 @@ class BacktestEngine:
         current_price = self.prices[current_idx]
         current_time = self.timestamps[current_idx]
 
-        # 止损检查
-        if direction == "long" and current_price <= stop_loss:
+        # 止损检查：多头用low，空头用high
+        if direction == "long" and self.lows[current_idx] <= stop_loss:
             return True, "sl"
-        if direction == "short" and current_price >= stop_loss:
+        if direction == "short" and self.highs[current_idx] >= stop_loss:
             return True, "sl"
 
-        # 止盈检查
-        if direction == "long" and current_price >= take_profit:
+        # 止盈检查：多头用high，空头用low
+        if direction == "long" and self.highs[current_idx] >= take_profit:
             return True, "tp"
-        if direction == "short" and current_price <= take_profit:
+        if direction == "short" and self.lows[current_idx] <= take_profit:
             return True, "tp"
 
         # 时间止损（24小时）
@@ -271,9 +271,9 @@ class BacktestEngine:
         leverage = position["leverage"]
         position_size = position["position_size"]
 
-        # 手续费: 开仓(maker) + 平仓(taker)
+        # 手续费: 开仓(taker) + 平仓(taker)
         commission = (
-            position_size * leverage * self.maker_commission_rate +  # 开仓 maker
+            position_size * leverage * self.taker_commission_rate +  # 开仓 taker
             position_size * leverage * self.taker_commission_rate    # 平仓 taker
         )
 

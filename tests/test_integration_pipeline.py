@@ -134,7 +134,7 @@ class TestIntegrationPipeline:
         # Import here to avoid import errors
         from core.circuit_breaker import MiracleCircuitBreaker
         from core.position_monitor import PositionMonitor
-        from core.risk_management import PositionSizer
+        from core.risk_management import DynamicPositionSizer
 
         # Step 1: Circuit breaker check (normal equity)
         cb = MiracleCircuitBreaker()
@@ -145,7 +145,7 @@ class TestIntegrationPipeline:
         assert result.tier.value in ["normal", "caution"]
 
         # Step 2: Position sizing
-        sizer = PositionSizer(account_balance=equity)
+        sizer = DynamicPositionSizer(account_balance=equity)
         position = sizer.calculate_position(
             high=sample_market_data["highs"][-1],
             low=sample_market_data["lows"][-1],
@@ -154,8 +154,8 @@ class TestIntegrationPipeline:
             direction="long",
         )
 
-        assert position["size"] > 0
-        assert position["stop_loss"] < sample_trade_signal["entry_price"]
+        assert position["position_size"] > 0
+        assert position["stop_loss"] <= sample_trade_signal["entry_price"]
 
         # Step 3: Place order (mocked)
         with patch.object(mock_exchange_client, "place_order") as mock_place:

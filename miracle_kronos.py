@@ -481,7 +481,13 @@ def get_4h_trend(instId):
     closes = [k['close'] for k in klines]
     highs = [k['high'] for k in klines]
     lows = [k['low'] for k in klines]
-    di_plus, di_minus, adx = calc_adx(highs, lows, closes)
+    adx_data = calc_adx(highs, lows, closes)
+    if isinstance(adx_data, dict):
+        adx = adx_data["adx"]
+        di_plus = adx_data["plus_di"]
+        di_minus = adx_data["minus_di"]
+    else:
+        di_plus, di_minus, adx = adx_data
     if adx < 20:
         return 'neutral', 0.0  # 无明确趋势
     direction = 'bull' if di_plus > di_minus else 'bear'
@@ -1296,14 +1302,26 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None, coin_co
         closes_4h = [k['close'] for k in klines_4h]
         highs_4h = [k['high'] for k in klines_4h]
         lows_4h = [k['low'] for k in klines_4h]
-        di_plus_4h, di_minus_4h, adx_4h = calc_adx(highs_4h, lows_4h, closes_4h)
+        adx_data_4h = calc_adx(highs_4h, lows_4h, closes_4h)
+        if isinstance(adx_data_4h, dict):
+            adx_4h = adx_data_4h["adx"]
+            di_plus_4h = adx_data_4h["plus_di"]
+            di_minus_4h = adx_data_4h["minus_di"]
+        else:
+            di_plus_4h, di_minus_4h, adx_4h = adx_data_4h
         btc_4h_confirmed = adx_4h > 20
     else:
         adx_4h = 20
     
     # 因子计算
     rsi = calc_rsi(closes_1h)
-    di_plus, di_minus, adx = calc_adx(highs_1h, lows_1h, closes_1h)
+    adx_data = calc_adx(highs_1h, lows_1h, closes_1h)
+    if isinstance(adx_data, dict):
+        adx = adx_data["adx"]
+        di_plus = adx_data["plus_di"]
+        di_minus = adx_data["minus_di"]
+    else:
+        di_plus, di_minus, adx = adx_data
     macd, signal, hist = calc_macd(closes_1h)
     bb_upper, bb_lower, bb_pos = calc_bollinger(closes_1h)
     
@@ -1710,14 +1728,15 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     # [Orchestrator接入] 验证选出的最优信号
     if best and mode == 'live':
         try:
+            import asyncio
             from core.orchestrator import get_orchestrator
             orch = get_orchestrator({"enable_memory": True})
-            decision = orch.decide({
+            decision = asyncio.get_event_loop().run_until_complete(orch.decide({
                 "symbol": best.get("symbol", ""),
                 "signal": best,
                 "market_regime": regime if 'regime' in locals() else "unknown",
                 "equity": equity if 'equity' in locals() else 0,
-            })
+            }))
             if decision.get("decision") != "EXECUTE":
                 logger.info(f"Orchestrator否决: {decision.get('reasoning', '无理由')}")
                 best = None  # Orchestrator否决了
@@ -2022,10 +2041,10 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     symbol=best['symbol'],
                     direction=best['direction'],
                     entry_price=entry,
-                    size=float(sz_dollar),
+                    size=float(notional_value),
                     timestamp=open_time_iso
                 )
-                
+
                 trade = {
                     'id': f"mk_{best['symbol']}_{int(time.time())}",
                     'coin': best['symbol'],
@@ -2033,7 +2052,7 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                     'entry_price': entry,
                     'sl_price': entry * (1 - best['sl']) if best['direction'] == 'long' else entry * (1 + best['sl']),
                     'tp_price': entry * (1 + best['tp']) if best['direction'] == 'long' else entry * (1 - best['tp']),
-                    'size_usd': sz_dollar,
+                    'size_usd': notional_value,
                     'score': best['score'],
                     'pattern_key': best['pattern_key'],
                     'open_time': open_time_iso,
@@ -2178,7 +2197,13 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             lows   = [k['low']   for k in klines_1h]
             current_price = closes[-1]
             rsi_val  = calc_rsi(closes)
-            di_plus, di_minus, adx_val = calc_adx(highs, lows, closes)
+            adx_data = calc_adx(highs, lows, closes)
+            if isinstance(adx_data, dict):
+                adx_val = adx_data["adx"]
+                di_plus = adx_data["plus_di"]
+                di_minus = adx_data["minus_di"]
+            else:
+                di_plus, di_minus, adx_val = adx_data
 
         # ── 计算盈亏 ──
         if direction in ('LONG', '做多', 'long'):
@@ -2271,7 +2296,13 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 klines = get_klines(inst_id, '1H', 50)
                 if klines and len(klines) >= 20:
                     closes = [k['close'] for k in klines]
-                    _, _, adx = calc_adx(highs, lows, closes)
+                    highs_g = [k['high'] for k in klines]
+                    lows_g = [k['low'] for k in klines]
+                    adx_data = calc_adx(highs_g, lows_g, closes)
+                    if isinstance(adx_data, dict):
+                        adx = adx_data["adx"]
+                    else:
+                        _, _, adx = adx_data
                     gemma_vote = _gemma_vote_cached(coin, rsi_val if rsi_val else 50, adx, 50, current_price, 0, 0)
                     gemma_signal = (gemma_vote - 0.5) * 2
                     if direction in ('LONG', '做多', 'long') and gemma_signal < -0.5:
