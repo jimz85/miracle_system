@@ -1164,7 +1164,6 @@ SCAN_COINS = [
     ("BNB-USDT-SWAP", "BNB"),
     ("FIL-USDT-SWAP", "FIL"),        # TREND_RSI S=4.99 WF通过
     ("AVAX-USDT-SWAP", "AVAX"),      # TREND_RSI S=4.21 WF通过
-    ("GRT-USDT-SWAP", "GRT"),        # TREND_RSI S=2.58 WF通过
 ]
 
 # OKX USDT永续合约乘数（每张合约对应的币数量）
@@ -2895,6 +2894,7 @@ def main():
     vetoed_keys = result.get('vetoed_pattern_keys', [])
     if vetoed_keys:
         try:
+            from agents.agent_learner import AgentLearner
             learner = AgentLearner(str(STATE_DIR))
             for vk in vetoed_keys:
                 if vk:
