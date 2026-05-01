@@ -89,6 +89,12 @@ def _detect_pos_mode():
         _pos_mode = 'net'  # 空仓且API失败，默认net
     return _pos_mode
 
+# 模块加载时自动检测仓位模式
+try:
+    _detect_pos_mode()
+except Exception:
+    _pos_mode = 'net'
+
 # ===== 安全类型转换 =====
 def safe_float(val, default=0.0):
     """Safely convert OKX API value to float - handles None, '', 'null'"""
@@ -2141,7 +2147,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
     if not open_trades:
         return {'action': 'no_open_positions', 'decisions': [], 'warnings': [], 'summary': '无OPEN持仓'}
 
-    now_ts = datetime.now(timezone.utc)
+    now_ts = datetime.now()
     decisions  = []
     warnings   = []
     summary_lines = []
@@ -2187,7 +2193,7 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
         if open_time_str:
             try:
                 open_dt_str = open_time_str.replace('+08:00', '').replace('Z', '')
-                open_dt = datetime.fromisoformat(open_dt_str[:19]).replace(tzinfo=timezone.utc)
+                open_dt = datetime.fromisoformat(open_dt_str[:19])
                 hold_hours = (now_ts - open_dt).total_seconds() / 3600
             except Exception:
                 hold_hours = None

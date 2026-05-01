@@ -229,7 +229,7 @@ export FEISHU_WEBHOOK_URL=https://open.feishu.cn/...
   "min_rr": 2.0,
   "min_confidence": 0.6,
   "max_trades_per_day": 5,
-  "max_position_pct": 15,
+  "max_position_pct": 13,
   "leverage": 3,
   "llm_provider": "claude",
   "enable_autoresearch": true,
