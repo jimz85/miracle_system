@@ -846,6 +846,9 @@ class AutonomousLoop:
         self.data_dir = data_dir or WORKSPACE / ".hermes" / "cron" / "output"
         self.wf_mode = wf_mode
 
+        # 从coin_params.json加载启用状态，过滤掉被禁用的币种
+        self._apply_coin_params_filter()
+
         # 初始化组件
         self.data_collector = DataCollector(self.data_dir)
         self.hyp_generator = HypothesisGenerator()
@@ -860,7 +863,31 @@ class AutonomousLoop:
         # 配置
         ensure_dirs()
         init_results_tsv()
-
+    
+    def _apply_coin_params_filter(self) -> None:
+        """从coin_params.json加载enabled状态，过滤掉被禁用的币种"""
+        try:
+            cp_path = Path(__file__).parent / "coin_params.json"
+            if not cp_path.exists():
+                return
+            with open(cp_path) as f:
+                data = json.load(f)
+            coins_list = data.get("coins", [])
+            # 收集enabled=true的币种
+            enabled_symbols = {c["symbol"].upper() for c in coins_list if c.get("enabled", True)}
+            if not enabled_symbols:
+                return
+            # 记录被过滤的币种
+            filtered = [c for c in self.coins if c.upper() not in enabled_symbols]
+            self.coins = [c for c in self.coins if c.upper() in enabled_symbols]
+            if filtered:
+                logger.info(f"[AutonomousLoop] coin_params过滤: {filtered} 被禁用(enabled=false), 已从交易列表移除")
+            if not self.coins:
+                logger.warning("[AutonomousLoop] 所有币种均被禁用! 使用DEFAULT_COINS")
+                self.coins = DEFAULT_COINS
+        except Exception as e:
+            logger.warning(f"[AutonomousLoop] 加载coin_params.json失败: {e}")
+    
     def _load_data(self) -> bool:
         """阶段1: 数据收集"""
         logger.info("[Stage 1/4] DATA COLLECTION")

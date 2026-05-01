@@ -119,6 +119,10 @@ class BacktestRunner:
         self.results: Dict[str, CoinResult] = {}
         self.batch_result: BatchResult | None = None
         
+        # 如果per_coin_slippage未传入，从miracle_config.json自动加载
+        if not self.config.per_coin_slippage:
+            self._load_per_coin_slippage()
+        
         # 延迟导入walkforward模块，避免循环导入
         from backtest.walkforward import WalkForwardValidator
         
@@ -127,12 +131,27 @@ class BacktestRunner:
             "train_days": self.config.wf_train_days,
             "test_days": self.config.wf_test_days,
             "step_days": self.config.wf_step_days,
+            "slippage_rate": self.config.slippage_rate,
         }
         self.validator = WalkForwardValidator(wf_config)
         
         # 确保输出目录存在
         self.output_dir = os.path.expanduser(self.config.output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
+    
+    def _load_per_coin_slippage(self) -> None:
+        """从miracle_config.json加载每币种滑点配置"""
+        try:
+            cfg_path = Path(__file__).parent.parent / "miracle_config.json"
+            if cfg_path.exists():
+                with open(cfg_path) as f:
+                    cfg = json.load(f)
+                per_coin = cfg.get("fee", {}).get("per_coin_slippage", {})
+                if per_coin:
+                    self.config.per_coin_slippage = per_coin
+                    logger.info(f"加载了 {len(per_coin)} 个币种的专属滑点配置")
+        except Exception as e:
+            logger.warning(f"加载per_coin_slippage失败: {e}")
     
     def load_data(self, symbol: str, klines: List[Dict]) -> None:
         """加载单个币种数据"""
@@ -228,6 +247,14 @@ class BacktestRunner:
         
         klines = self.data[symbol]
         leverage = leverage or self.config.leverage
+
+        # 按币种覆盖滑点率(优先使用per_coin_slippage配置)
+        coin_slippage = self.config.per_coin_slippage.get(symbol.upper())
+        if coin_slippage is not None:
+            self.validator.slippage_rate = coin_slippage
+            logger.info(f"  {symbol}: 使用币种专属滑点 {coin_slippage:.4f} ({coin_slippage*100:.2f}%)")
+        else:
+            self.validator.slippage_rate = self.config.slippage_rate
         
         logger.info(f"运行 Walk-Forward: {symbol} ({strategy})")
         

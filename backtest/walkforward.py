@@ -46,6 +46,7 @@ DEFAULT_CONFIG = {
     "min_train_trades": 10, # 最少训练期交易次数
     "min_test_trades": 5,   # 最少测试期交易次数
     "warmup_bars": 50,      # 预热K线数(计算指标用)
+    "slippage_rate": 0.0002 # 滑点率 (可被per_coin_slippage覆盖)
 }
 
 # 均值回归参数空间
@@ -191,6 +192,7 @@ class WalkForwardValidator:
         self.min_train_trades = self.config["min_train_trades"]
         self.min_test_trades = self.config["min_test_trades"]
         self.warmup_bars = self.config["warmup_bars"]
+        self.slippage_rate = self.config.get("slippage_rate", 0.0002)
         
         self.windows: List[WalkForwardWindow] = []
         self.results: List[WindowResult] = []
@@ -772,7 +774,7 @@ class WalkForwardValidator:
         """获取退出价格"""
         current_price = closes[idx]
         direction = position["direction"]
-        slippage_rate = 0.0002  # 0.02%
+        slippage_rate = self.slippage_rate
         
         if reason == "sl":
             if direction == "long":
