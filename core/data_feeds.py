@@ -113,17 +113,76 @@ def _fetch_rss_news(coin: str, max_items: int = 5, timeout: int = 10) -> List[Di
     return news
 
 
+# ============================================================
+# CryptoPanic 情绪API (可选: 比RSS关键词分析更可靠)
+# ============================================================
+
+CRYPTOPANIC_API = "https://cryptopanic.com/api/v1/posts/"
+CRYPTOPANIC_TOKEN = os.environ.get("CRYPTOPANIC_TOKEN", "")
+
+def _fetch_cryptopanic_sentiment(coin: str) -> Optional[float]:
+    """
+    从CryptoPanic获取bullish/bearish投票情绪。
+    
+    比RSS关键词分析更直接: 统计社区bullish/bearish投票比例。
+    
+    Returns:
+        -1.0(极端悲观) ~ 1.0(极端乐观), None(API不可用)
+    """
+    if not CRYPTOPANIC_TOKEN:
+        return None
+    
+    try:
+        params = {
+            "auth_token": CRYPTOPANIC_TOKEN,
+            "currencies": coin.upper(),
+            "limit": 20,
+        }
+        resp = requests.get(CRYPTOPANIC_API, params=params, timeout=10)
+        if resp.status_code != 200:
+            return None
+        
+        data = resp.json()
+        posts = data.get("results", [])
+        if not posts:
+            return None
+        
+        bull = sum(1 for p in posts if p.get("votes", {}).get("positive", 0) > 0)
+        bear = sum(1 for p in posts if p.get("votes", {}).get("negative", 0) > 0)
+        total = bull + bear
+        
+        if total == 0:
+            return 0.0
+        
+        score = (bull - bear) / total
+        logger.info(
+            "%s CryptoPanic情绪: bull=%d bear=%d score=%.2f",
+            coin, bull, bear, score
+        )
+        return round(max(-1.0, min(1.0, score)), 4)
+    
+    except Exception as e:
+        logger.warning("CryptoPanic API失败 [%s]: %s", coin, e)
+        return None
+
+
 def calc_news_sentiment(coin: str = "BTC") -> float:
     """
     计算指定币种的新闻情绪 (替换STUB)
     
     流程:
-      1. 从RSS抓取相关新闻
-      2. 用 KeywordSentimentAnalyzer 分析情绪
+      1. 优先尝试 CryptoPanic API (投票制情绪, 更直接)
+      2. fallback: RSS抓取 + KeywordSentimentAnalyzer
       3. 返回 -1.0(强烈利空) ~ 1.0(强烈利好)
     
     降级: 无新闻或失败时返回 0.0 (中性)
     """
+    # 优先使用 CryptoPanic (vote-based sentiment, 更可靠)
+    cp_score = _fetch_cryptopanic_sentiment(coin)
+    if cp_score is not None:
+        return cp_score
+    
+    # fallback: RSS关键词分析
     try:
         news_items = _fetch_rss_news(coin, max_items=5)
         if not news_items:
