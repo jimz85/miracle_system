@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 import traceback
@@ -29,6 +30,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+import requests
 
 import numpy as np
 import pandas as pd
@@ -237,10 +240,170 @@ class DataCollector:
 
 # ===== 假设生成器 =====
 class HypothesisGenerator:
-    """智能假设生成器 - 基于历史表现趋势外推"""
+    """智能假设生成器 - LLM推理 + 历史趋势 + 定向优化"""
 
     def __init__(self, search_space: Dict = SEARCH_SPACE):
         self.search_space = search_space
+        self._llm_available = None  # lazy check
+
+    def _check_ollama(self) -> bool:
+        """检查Ollama是否可用"""
+        if self._llm_available is not None:
+            return self._llm_available
+        try:
+            r = requests.get("http://localhost:11434/api/tags", timeout=3)
+            self._llm_available = r.status_code == 200
+            return self._llm_available
+        except Exception:
+            self._llm_available = False
+            return False
+
+    def _ollama_invoke(self, prompt: str, model: str = "gemma4-2b-heretic:latest",
+                       max_tokens: int = 512) -> Optional[str]:
+        """调用Ollama模型"""
+        try:
+            resp = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"num_predict": max_tokens, "temperature": 0.7},
+                },
+                timeout=60,
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            return data.get("response", "")
+        except Exception as e:
+            logger.warning("Ollama调用失败: %s", e)
+            return None
+
+    def _extract_json_from_response(self, text: str) -> Optional[Dict]:
+        """从模型响应中提取JSON（处理thinking模型输出格式）"""
+        # 尝试先找```json ... ```块
+        json_block = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if json_block:
+            try:
+                return json.loads(json_block.group(1))
+            except json.JSONDecodeError:
+                pass
+        # 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # 尝试找{...}块
+        brace_block = re.search(r"\{[^{}]*\}", text, re.DOTALL)
+        if brace_block:
+            try:
+                return json.loads(brace_block.group(0))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    def generate_llm_hypothesis(self, base_config: StrategyConfig,
+                                 last_results: List[ExperimentRecord] = None,
+                                 weak_metrics: Dict[str, float] = None,
+                                 regime: str = "unknown") -> Optional[Hypothesis]:
+        """
+        LLM驱动的策略假设生成。
+        
+        使用本地Gemma4模型分析当前策略表现 + 市场状态，
+        推理出有逻辑依据的参数调整建议，而非随机扰动。
+        """
+        if not self._check_ollama():
+            logger.info("Ollama不可用，回退到参数微调")
+            return None
+
+        config_dict = base_config.to_dict()
+
+        # 构建提示词
+        prompt_parts = [
+            "你是一位加密货币量化交易策略专家。分析当前策略表现并提出改进方案。",
+            "",
+            "## 当前策略参数",
+        ]
+        for k, v in sorted(config_dict.items()):
+            space = self.search_space.get(k)
+            if space:
+                prompt_parts.append(f"  {k} = {v} (范围: {space['min']}~{space['max']})")
+
+        if last_results:
+            prompt_parts.extend(["\n## 最近实验结果"])
+            for r in last_results[-5:]:
+                if r.status == "keep":
+                    prompt_parts.append(f"  ✅ KEEP: sharpe={r.sharpe:.2f} return={r.total_return:.1f}% "
+                                        f"win_rate={r.win_rate:.1%} dd={r.max_drawdown:.1f}%")
+                else:
+                    prompt_parts.append(f"  ❌ DISCARD: sharpe={r.sharpe:.2f} return={r.total_return:.1f}%")
+
+        if weak_metrics:
+            prompt_parts.extend(["\n## 弱项指标"])
+            for k, v in weak_metrics.items():
+                prompt_parts.append(f"  {k} = {v}")
+
+        prompt_parts.extend([
+            f"\n## 市场状态: {regime}",
+            "",
+            "## 任务",
+            "分析上述信息，找出策略弱点，最多修改3个参数。",
+            "返回JSON格式：",
+            """{
+                "reasoning": "你的分析逻辑...",
+                "mutations": {"参数名": 新数值},
+                "confidence": 0.0-1.0,
+                "estimated_impact": "你的预期效果"
+            }""",
+            "只返回JSON，不要其他内容。"
+        ])
+        prompt = "\n".join(prompt_parts)
+
+        response = self._ollama_invoke(prompt)
+        if not response:
+            return None
+
+        result = self._extract_json_from_response(response)
+        if not result:
+            logger.warning("LLM响应解析失败: %s...", response[:100])
+            return None
+
+        mutations = result.get("mutations", {})
+        if not mutations:
+            return None
+
+        # 验证并裁剪突变
+        valid_mutations = {}
+        for k, v in mutations.items():
+            space = self.search_space.get(k)
+            if space:
+                if space["type"] == "float":
+                    v = round(max(space["min"], min(space["max"], float(v))), 2)
+                elif space["type"] == "int":
+                    v = int(max(space["min"], min(space["max"], int(v))))
+                valid_mutations[k] = v
+
+        if not valid_mutations:
+            return None
+
+        # 应用突变
+        new_config = config_dict.copy()
+        for k, v in valid_mutations.items():
+            new_config[k] = v
+
+        reasoning = result.get("reasoning", "LLM分析")[:120]
+        confidence = max(0.3, min(0.95, result.get("confidence", 0.5)))
+        hyp_id = f"hyp_{datetime.now().strftime('%m%d%H%M%S')}_{random.randint(1000,9999)}"
+
+        logger.info("LLM假设: %s | 突变: %s | 置信度: %.2f", reasoning, valid_mutations, confidence)
+        return Hypothesis(
+            id=hyp_id,
+            description=f"llm_analysis({reasoning})",
+            mutations=valid_mutations,
+            confidence=confidence,
+            source="llm"
+        )
 
     def generate_random_mutation(self, base_config: StrategyConfig,
                                   n_mutations: int = None) -> Hypothesis:
@@ -395,17 +558,25 @@ class HypothesisGenerator:
     def generate(self, base_config: StrategyConfig,
                  last_results: List[ExperimentRecord] = None,
                  weak_metrics: Dict[str, float] = None,
+                 regime: str = "unknown",
                  mode: str = "mixed") -> Hypothesis:
         """
         生成假设
 
         mode:
+        - llm: LLM推理分析（需要Ollama）
         - random: 完全随机
         - trend: 趋势外推
         - focused: 聚焦优化
-        - mixed: 混合模式 (70% trend + 30% random)
+        - mixed: 混合模式 (40% trend + 30% focused + 20% LLM + 10% random)
         """
-        if mode == "random":
+        if mode == "llm":
+            llm_hyp = self.generate_llm_hypothesis(base_config, last_results, weak_metrics, regime)
+            if llm_hyp:
+                return llm_hyp
+            logger.info("LLM假设生成失败，回退到trend")
+            return self.generate_trend_mutation(base_config, last_results)
+        elif mode == "random":
             return self.generate_random_mutation(base_config)
         elif mode == "trend":
             return self.generate_trend_mutation(base_config, last_results)
@@ -413,10 +584,17 @@ class HypothesisGenerator:
             return self.generate_focused_mutation(base_config, weak_metrics)
         else:  # mixed
             r = random.random()
-            if r < 0.7:
+            if r < 0.4:
                 return self.generate_trend_mutation(base_config, last_results)
-            elif r < 0.9:
+            elif r < 0.7:
                 return self.generate_focused_mutation(base_config, weak_metrics)
+            elif r < 0.9:
+                # LLM推理(20%)
+                llm_hyp = self.generate_llm_hypothesis(base_config, last_results, weak_metrics, regime)
+                if llm_hyp:
+                    return llm_hyp
+                # LLM失败时回退到trend
+                return self.generate_trend_mutation(base_config, last_results)
             else:
                 return self.generate_random_mutation(base_config)
 
@@ -714,7 +892,8 @@ class AutonomousLoop:
             mode = "focused"  # 有弱指标时聚焦优化
 
         hypothesis = self.hyp_generator.generate(
-            baseline_config, self.last_results, weak_metrics, mode
+            baseline_config, self.last_results, weak_metrics,
+            regime=self._regime if hasattr(self, '_regime') else "unknown", mode=mode
         )
 
         logger.info(f"[AutonomousLoop] Generated: {hypothesis.description} (confidence={hypothesis.confidence})")
