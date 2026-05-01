@@ -2227,14 +2227,31 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             except Exception:
                 hold_hours = None
 
-        # ── 规则1: 止损（最优先） ──
-        # 亏损>4% + 持仓>3h → 直接平（截断亏损）
-        if (hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= LOSS_WARN_PCT):
+        # ═══════════════════════════════════════════════════════════
+        # 🧠 Gemini AI主动判断层 — 每个仓位每周期都问AI
+        # ═══════════════════════════════════════════════════════════
+        # 专业交易员原则：AI判断是主决策者，SL/TP是安全网
+        # 不允许机械地等价格碰线——要主动判断方向是否还正确
+        
+        # 获取Gemma对该币种的实时方向判断
+        gemma_vote = _gemma_vote_cached(
+            coin, rsi_val if rsi_val else 50, adx_val, 50, current_price, 0, 0
+        )
+        gemma_signal = (gemma_vote - 0.5) * 2  # -1~+1: 负=看空, 正=看多
+        
+        direction_is_long = direction in ('LONG', '做多', 'long')
+        gemma_agrees = (direction_is_long and gemma_signal > 0) or \
+                       (not direction_is_long and gemma_signal < 0)
+        gemma_strength = abs(gemma_signal)
+        
+        # ── 止损安全网（最高优先级，不管Gemma怎么说） ──
+        # 亏损>4% + 持仓>3h → 无条件止损（截断亏损）
+        if hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= LOSS_WARN_PCT:
             decisions.append({
                 'action': 'force_close',
                 'coin': coin,
                 'direction': direction,
-                'reason': f'亏损{pnl_pct:.1%}+持仓{hold_hours:.1f}h → 止损',
+                'reason': f'止损{pnl_pct:.1%}+{hold_hours:.1f}h',
                 'entry': entry_price,
                 'current': current_price,
                 'pnl_pct': pnl_pct,
@@ -2242,158 +2259,106 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 'trade_id': trade_id,
                 'urgency': 9,
             })
-            summary_lines.append(f'🛑 {coin} {direction} 亏损{pnl_pct:.1%}+{hold_hours:.1f}h → 止损')
-        # ── 规则2: 全仓止盈（盈利>25%） ──
-        elif pnl_pct >= FULL_TP_PCT:
-            decisions.append({
-                'action': 'force_close',
-                'coin': coin,
-                'direction': direction,
-                'reason': f'盈利{pnl_pct:.1%} → 全仓止盈',
-                'entry': entry_price,
-                'current': current_price,
-                'pnl_pct': pnl_pct,
-                'mode': mode,
-                'trade_id': trade_id,
-                'urgency': 9,
-            })
-            summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%} → 全仓止盈')
-        # ── 规则3: 部分止盈（盈利>12%） ──
-        elif pnl_pct >= PARTIAL_TP_PCT:
-            decisions.append({
-                'action': 'partial_tp',
-                'coin': coin,
-                'direction': direction,
-                'reason': f'盈利{pnl_pct:.1%} → 部分止盈50%',
-                'entry': entry_price,
-                'current': current_price,
-                'tp_price': tp_price,
-                'pnl_pct': pnl_pct,
-                'close_pct': 0.50,
-                'mode': mode,
-                'trade_id': trade_id,
-                'urgency': 8,
-            })
-            summary_lines.append(f'🎯 {coin} {direction} 盈利{pnl_pct:.1%} → 部分止盈')
-        # ── 规则4: 移动止损保护（盈利>2% → SL移到成本价） ──
-        # 没有sl_price检查——即使初始SL未设，也强制移到成本保护利润
-        elif pnl_pct >= PROFIT_MOVE_SL:
-            new_sl = entry_price
-            decisions.append({
-                'action': 'move_sl_to_cost',
-                'coin': coin,
-                'direction': direction,
-                'reason': f'盈利{pnl_pct:.1%} → SL移到成本{new_sl:.4f}',
-                'entry': entry_price,
-                'old_sl': sl_price,
-                'new_sl': new_sl,
-                'pnl_pct': pnl_pct,
-                'mode': mode,
-                'trade_id': trade_id,
-                'urgency': 7,
-            })
-            summary_lines.append(f'🛡️  {coin} {direction} 盈利{pnl_pct:.1%} → SL移成本')
-        # ── 规则5: 追踪止损（盈利>5% → 开始ATR追踪） ──
-        elif pnl_pct >= PROFIT_MOVE_SL * 2.5:
-            atr = adx_data.get('atr', 0) if isinstance(adx_data, dict) else 500
-            if atr > 0 and hold_hours is not None and hold_hours >= 4:
-                trail_distance = atr * TRAILING_ATR_MULT / entry_price
-                if direction in ('LONG', '做多', 'long'):
-                    trail_sl = current_price * (1 - trail_distance)
-                else:
-                    trail_sl = current_price * (1 + trail_distance)
+            summary_lines.append(f'🛑 {coin} {direction} 止损{pnl_pct:.1%}+{hold_hours:.1f}h')
+        
+        # ── 决策A: 🟢 Gemma强烈支持持仓方向 → AI确认正确，让利润奔跑 ──
+        elif gemma_strength >= 0.6 and gemma_agrees:
+            # 全仓止盈
+            if pnl_pct >= FULL_TP_PCT:
                 decisions.append({
-                    'action': 'trailing_stop',
-                    'coin': coin,
-                    'direction': direction,
-                    'reason': f'盈利{pnl_pct:.1%} → 追踪止损@{trail_sl:.4f}',
-                    'entry': entry_price,
-                    'current': current_price,
-                    'new_sl': trail_sl,
-                    'pnl_pct': pnl_pct,
-                    'mode': mode,
-                    'trade_id': trade_id,
-                    'urgency': 6,
+                    'action': 'force_close', 'coin': coin, 'direction': direction,
+                    'reason': f'AI确认看多+盈利{pnl_pct:.1%}→全仓止盈',
+                    'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
+                    'mode': mode, 'trade_id': trade_id, 'urgency': 9,
                 })
-                summary_lines.append(f'🔒 {coin} {direction} 盈利{pnl_pct:.1%} → 追踪@{trail_sl:.4f}')
-        # ── 规则6: 反向信号覆盖（亏损+RSI/Gemma明确反向） ──
-        elif pnl_pct <= LOSS_WARN_PCT:
-            # ⭐ Gemma4 持仓评估（补充RSI规则）
-            gemma_close = False
-            try:
-                klines = get_klines(inst_id, '1H', 50)
-                if klines and len(klines) >= 20:
-                    closes = [k['close'] for k in klines]
-                    highs_g = [k['high'] for k in klines]
-                    lows_g = [k['low'] for k in klines]
-                    adx_data = calc_adx(highs_g, lows_g, closes)
-                    if isinstance(adx_data, dict):
-                        adx = adx_data["adx"]
+                summary_lines.append(f'🎯 {coin} {direction} AI确认+盈利{pnl_pct:.1%}→全仓止盈')
+            # 部分止盈
+            elif pnl_pct >= PARTIAL_TP_PCT:
+                decisions.append({
+                    'action': 'partial_tp', 'coin': coin, 'direction': direction,
+                    'reason': f'AI确认看多+盈利{pnl_pct:.1%}→部分止盈50%',
+                    'entry': entry_price, 'current': current_price,
+                    'tp_price': tp_price, 'pnl_pct': pnl_pct, 'close_pct': 0.50,
+                    'mode': mode, 'trade_id': trade_id, 'urgency': 8,
+                })
+                summary_lines.append(f'🎯 {coin} {direction} AI确认+盈利{pnl_pct:.1%}→部分止盈')
+            # 追踪止损（盈利>5% → ATR跟随）
+            elif pnl_pct >= PROFIT_MOVE_SL * 2.5:
+                atr_val = adx_data.get('atr', 0) if isinstance(adx_data, dict) else 500
+                if atr_val > 0 and hold_hours is not None and hold_hours >= 4:
+                    trail_dist = atr_val * TRAILING_ATR_MULT / entry_price if entry_price > 0 else 0.05
+                    if direction_is_long:
+                        trail_sl = current_price * (1 - trail_dist)
                     else:
-                        _, _, adx = adx_data
-                    gemma_vote = _gemma_vote_cached(coin, rsi_val if rsi_val else 50, adx, 50, current_price, 0, 0)
-                    gemma_signal = (gemma_vote - 0.5) * 2
-                    if direction in ('LONG', '做多', 'long') and gemma_signal < -0.5:
-                        decisions.append({
-                            'action': 'force_close', 'coin': coin, 'direction': direction,
-                            'reason': f'亏损{pnl_pct:.1%}+Gemma看空({gemma_signal:+.2f})',
-                            'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
-                            'mode': mode, 'trade_id': trade_id, 'urgency': 9,
-                        })
-                        summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+Gemma看空 → 强平')
-                        gemma_close = True
-                    elif direction in ('SHORT', '做空', 'short') and gemma_signal > 0.5:
-                        decisions.append({
-                            'action': 'force_close', 'coin': coin, 'direction': direction,
-                            'reason': f'亏损{pnl_pct:.1%}+Gemma看多({gemma_signal:+.2f})',
-                            'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
-                            'mode': mode, 'trade_id': trade_id, 'urgency': 9,
-                        })
-                        summary_lines.append(f'🚨 {coin} {direction} 亏损{pnl_pct:.1%}+Gemma看多 → 强平')
-                        gemma_close = True
-            except Exception as ex:
-                logger.debug(f"Gemma持仓评估失败 {coin}: {ex}")
-            
-            # RSI规则（Gemma未触发时使用）
-            if not gemma_close:
-                if direction in ('LONG', '做多', 'long') and rsi_val > 65:
+                        trail_sl = current_price * (1 + trail_dist)
                     decisions.append({
-                        'action': 'close_opposite_signal',
-                        'coin': coin, 'direction': direction,
-                        'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}>65 → 平仓',
+                        'action': 'trailing_stop', 'coin': coin, 'direction': direction,
+                        'reason': f'AI确认+盈利{pnl_pct:.1%}→追踪@{trail_sl:.4f}',
                         'entry': entry_price, 'current': current_price,
-                        'rsi': rsi_val, 'mode': mode, 'trade_id': trade_id, 'urgency': 8,
+                        'new_sl': trail_sl, 'pnl_pct': pnl_pct,
+                        'mode': mode, 'trade_id': trade_id, 'urgency': 6,
                     })
-                    summary_lines.append(f'🔄 {coin} 多头亏损{pnl_pct:.1%}+RSI超买 → 平仓')
-                elif direction in ('SHORT', '做空', 'short') and rsi_val < 35:
-                    decisions.append({
-                        'action': 'close_opposite_signal',
-                        'coin': coin, 'direction': direction,
-                        'reason': f'亏损{pnl_pct:.1%}+RSI={rsi_val:.0f}<35 → 平仓',
-                        'entry': entry_price, 'current': current_price,
-                        'rsi': rsi_val, 'mode': mode, 'trade_id': trade_id, 'urgency': 8,
-                    })
-                    summary_lines.append(f'🔄 {coin} 空头亏损{pnl_pct:.1%}+RSI超卖 → 平仓')
-        # ── 规则7: 持仓超时警告（仅警告，不平仓） ──
-        elif hold_hours is not None and hold_hours >= HOLD_WARN_HOURS and pnl_pct <= 0:
-            warnings.append({
-                'coin': coin,
-                'direction': direction,
-                'hold_hours': hold_hours,
-                'pnl_pct': pnl_pct,
-                'reason': f'持仓{hold_hours:.1f}h无盈利({pnl_pct:.1%})',
+                    summary_lines.append(f'🔒 {coin} {direction} AI确认+盈利{pnl_pct:.1%}→追踪')
+            # 移SL到成本（盈利>2% → 零风险持仓）
+            elif pnl_pct >= PROFIT_MOVE_SL:
+                decisions.append({
+                    'action': 'move_sl_to_cost', 'coin': coin, 'direction': direction,
+                    'reason': f'AI确认+盈利{pnl_pct:.1%}→SL移成本',
+                    'entry': entry_price, 'old_sl': sl_price, 'new_sl': entry_price,
+                    'pnl_pct': pnl_pct, 'mode': mode, 'trade_id': trade_id, 'urgency': 7,
+                })
+                summary_lines.append(f'🛡️  {coin} {direction} AI确认+盈利{pnl_pct:.1%}→SL移成本')
+            # 亏损但AI确认方向对→继续持有
+            else:
+                pass  # 方向正确但有浮亏→继续持有，让时间换空间
+        
+        # ── 决策B: 🔴 Gemma强烈反对持仓方向 → AI认为方向错了 ──
+        elif gemma_strength >= 0.6 and not gemma_agrees:
+            decisions.append({
+                'action': 'force_close', 'coin': coin, 'direction': direction,
+                'reason': f'AI看空({gemma_signal:+.2f})与持仓方向相反→立即平仓',
+                'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
+                'mode': mode, 'trade_id': trade_id, 'urgency': 9,
             })
-            summary_lines.append(f'⚠️  {coin} {direction} {hold_hours:.1f}h无盈利({pnl_pct:.1%})')
-        # ── 规则8: 持仓超72h警告（需要人工判断，不平仓） ──
-        elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct <= 0:
-            warnings.append({
-                'coin': coin,
-                'direction': direction,
-                'hold_hours': hold_hours,
-                'pnl_pct': pnl_pct,
-                'reason': f'持仓{hold_hours:.1f}h无盈利(>{HOLD_FORCE_HOURS}h) → 请人工判断',
-            })
-            summary_lines.append(f'⚠️⚠️ {coin} {direction} {hold_hours:.1f}h超时 → 请人工判断')
+            summary_lines.append(f'🚨 {coin} {direction} AI反对(gemma={gemma_signal:+.2f})→平仓')
+        
+        # ── 决策C: 🟡 Gemma中立 → 收紧风控，落袋为安 ──
+        else:
+            # 亏损>3% + 持仓>3h → 止损（方向不明不能扛）
+            if pnl_pct <= LOSS_WARN_PCT * 0.75 and hold_hours is not None and hold_hours >= HOLD_WARN_HOURS:
+                decisions.append({
+                    'action': 'force_close', 'coin': coin, 'direction': direction,
+                    'reason': f'AI中立+亏损{pnl_pct:.1%}+{hold_hours:.1f}h→止损',
+                    'entry': entry_price, 'current': current_price, 'pnl_pct': pnl_pct,
+                    'mode': mode, 'trade_id': trade_id, 'urgency': 9,
+                })
+                summary_lines.append(f'🔄 {coin} {direction} AI中立+亏损{pnl_pct:.1%}→止损')
+            # 盈利>8% → 部分止盈（方向不明先锁定）
+            elif pnl_pct >= PARTIAL_TP_PCT * 0.67:
+                decisions.append({
+                    'action': 'partial_tp', 'coin': coin, 'direction': direction,
+                    'reason': f'AI中立+盈利{pnl_pct:.1%}→部分止盈50%',
+                    'entry': entry_price, 'current': current_price,
+                    'tp_price': tp_price, 'pnl_pct': pnl_pct, 'close_pct': 0.50,
+                    'mode': mode, 'trade_id': trade_id, 'urgency': 8,
+                })
+                summary_lines.append(f'🎯 {coin} {direction} AI中立+盈利{pnl_pct:.1%}→部分止盈')
+            # 持仓>24h无盈利 → 警告（AI中立=没方向，长时间亏损不正常）
+            elif hold_hours is not None and hold_hours >= 24 and pnl_pct <= 0:
+                warnings.append({
+                    'coin': coin, 'direction': direction,
+                    'hold_hours': hold_hours, 'pnl_pct': pnl_pct,
+                    'reason': f'AI中立+持仓{hold_hours:.1f}h无盈利→考虑退出',
+                })
+                summary_lines.append(f'⚠️  {coin} {direction} AI中立+{hold_hours:.1f}h无盈利')
+            # 持仓>72h警告（需要人工判断）
+            elif hold_hours is not None and hold_hours >= HOLD_FORCE_HOURS and pnl_pct <= 0:
+                warnings.append({
+                    'coin': coin, 'direction': direction,
+                    'hold_hours': hold_hours, 'pnl_pct': pnl_pct,
+                    'reason': f'持仓{hold_hours:.1f}h无盈利(>{HOLD_FORCE_HOURS}h)→请人工判断',
+                })
+                summary_lines.append(f'⚠️⚠️ {coin} {direction} {hold_hours:.1f}h超时→请人工判断')
 
     # ── 写入决策日志 ──
     _write_management_journal({
