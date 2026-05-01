@@ -58,7 +58,28 @@ def save_trades(trades):
 
 def record_trade(trade):
     trades = load_trades()
-    trades.append(trade)
+    # 去重：检查是否有同币种+同方向的OPEN仓位
+    # 如果有，更新已有记录而不是追加（避免每次scan都追加一条）
+    coin = trade.get('coin', '')
+    direction = trade.get('direction', '')
+    existing_idx = None
+    for i, t in enumerate(trades):
+        if t.get('status') == 'OPEN' and t.get('coin', '').upper() == coin.upper():
+            # 方向匹配：忽略 做多/LONG/long 等格式差异
+            t_dir = str(t.get('direction', '')).upper()
+            n_dir = str(direction).upper()
+            if ('LONG' in t_dir and 'LONG' in n_dir) or ('SHORT' in t_dir and 'SHORT' in n_dir) or ('做多' in t_dir and '做多' in n_dir) or ('做空' in t_dir and '做空' in n_dir):
+                existing_idx = i
+                break
+    if existing_idx is not None:
+        # 更新已有记录：合并新数据但不覆盖基础字段
+        old_trade = trades[existing_idx]
+        old_trade.update(trade)
+        old_trade['status'] = 'OPEN'  # 确保仍是OPEN状态
+        old_trade['duplicate_count'] = old_trade.get('duplicate_count', 1) + 1
+    else:
+        trade['duplicate_count'] = 1
+        trades.append(trade)
     if len(trades) > 1000:
         trades = trades[-500:]
     save_trades(trades)

@@ -2517,6 +2517,12 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             else:
                 pass  # 方向正确但有浮亏→继续持有，让时间换空间
         
+        # ── 新仓位保护：24h内不因AI反对而平仓 ──
+        # 给新开仓位至少1天时间验证方向，避免系统自相矛盾
+        if ai_opposes and hold_hours is not None and hold_hours < 24:
+            # 24h内AI反对→不执行force_close，让仓位有发展空间
+            pass  # 新仓位宽限期内，跳过AI反对关闭
+            
         # ── 决策B: 🔴 AI反对持仓方向 → AI认为方向错了 ──
         elif ai_opposes:
             ai_reason = ai_result.get('reason', '')[:30]
