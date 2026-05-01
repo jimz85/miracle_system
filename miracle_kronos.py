@@ -2224,7 +2224,42 @@ def _ai_trader_decision(coin: str, closes: list, highs: list, lows: list,
         '{"judgment":"bullish/bearish/neutral","action":"hold/close/partial_tp","sl_price":null或数字,"tp_price":null或数字,"reason":"一句话理由"}'
     )
     
-    # 主方案：Qwen2.5-7B
+    # 主方案：NVIDIA API — Qwen3 Next 80B (免费，速度3s，质量最高)
+    try:
+        _NVIDIA_KEY = os.environ.get('NVIDIA_API_KEY', '')
+        if not _NVIDIA_KEY:
+            # 回退本地Qwen2.5-7B
+            raise Exception("NVIDIA_API_KEY not set")
+        import requests as _req
+        resp = _req.post(
+            'https://integrate.api.nvidia.com/v1/chat/completions',
+            headers={
+                "Authorization": f"Bearer {_NVIDIA_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "qwen/qwen3-next-80b-a3b-instruct",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 150,
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            text = resp.json()['choices'][0]['message']['content'].strip()
+            import re as _re, json as _json
+            # 处理可能的markdown代码块包裹
+            clean = _re.sub(r'```(?:json)?\s*', '', text).strip()
+            start, end = clean.find('{'), clean.rfind('}')
+            if start >= 0 and end > start:
+                result = _json.loads(clean[start:end+1])
+                if 'judgment' in result and 'action' in result:
+                    result['model'] = 'qwen3-nvidia'
+                    return result
+    except Exception:
+        pass
+
+    # 后备方案1: 本地Qwen2.5-7B (Ollama)
     try:
         import requests as _req
         resp = _req.post('http://localhost:11434/api/generate', json={
@@ -2242,14 +2277,14 @@ def _ai_trader_decision(coin: str, closes: list, highs: list, lows: list,
                     try:
                         result = _json.loads(line)
                         if 'judgment' in result:
-                            result['model'] = 'qwen'
+                            result['model'] = 'qwen-local'
                             return result
                     except:
                         pass
     except Exception:
         pass
     
-    # 后备：Gemma4-2B快速投票
+    # 后备方案2: Gemma4-2B快速投票
     try:
         gemma_vote = _gemma_vote_cached(coin, rsi_val, adx_val, 50, closes[-1] if closes else 0, 0, 0)
         gemma_signal = (gemma_vote - 0.5) * 2
