@@ -32,7 +32,7 @@ import sys
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Dict, List, Optional, Tuple
-from scipy.stats import spearmanr, pearsonr
+
 
 # 确保项目根目录在path中 (用于直接运行此脚本时)
 # Python会自动将脚本所在目录加入sys.path[0],这会遮挡真正的memory/目录
@@ -347,6 +347,8 @@ class ICWeightManager:
             return 0.0
 
         # scipy spearmanr returns (correlation, p-value)
+        # 延迟导入(spearmanr)避免冷启动耗时 ~7-18s
+        from scipy.stats import spearmanr
         corr, _ = spearmanr(signals, outcomes)
         ic = corr if corr is not None else 0.0
         logger.debug(f"[IC] {factor_name}: rank_ic={ic:.3f} (n={len(signals)})")
@@ -371,6 +373,8 @@ class ICWeightManager:
             logger.debug(f"[IC] {factor_name} pearson_ic 样本不足: {len(signals)} < {MIN_SAMPLES}")
             return 0.0
 
+        # 延迟导入(pearsonr)避免冷启动耗时 ~7-18s
+        from scipy.stats import pearsonr
         corr, _ = pearsonr(signals, outcomes)
         ic = corr if corr is not None else 0.0
         logger.debug(f"[IC] {factor_name}: pearson_ic={ic:.3f} (n={len(signals)})")

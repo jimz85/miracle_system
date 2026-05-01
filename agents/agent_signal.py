@@ -23,8 +23,6 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
-
 from core.ic_weights import get_weights as get_ic_weights
 from core.memory import get_memory_system
 
@@ -400,6 +398,8 @@ class SignalGenerator:
         regime_result = {"regime": "sideways", "confidence": 0.5, "metrics": None}
         try:
             if len(prices) >= 50:
+                # 延迟导入(pandas)避免冷启动耗时 ~3-18s
+                import pandas as pd
                 # 构建DataFrame供RegimeClassifier使用
                 regime_df = pd.DataFrame({
                     'high': highs[-100:] if len(highs) >= 100 else highs,
