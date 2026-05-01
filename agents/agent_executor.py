@@ -162,7 +162,8 @@ class Executor:
                         logging.critical(f"🚨 紧急停止文件内容: {data}")
                         return True
                 except Exception:
-                    pass
+                    # 读取紧急停止文件失败，忽略（fail-open设计，不阻止交易）
+                    logging.warning("读取紧急停止文件失败，忽略")
         
         # 2. 检查状态文件（由emergency_stop_api.py创建）
         state_file = Path(PROJECT_ROOT) / "data" / ".emergency_stop_state"
@@ -175,8 +176,9 @@ class Executor:
                     logging.critical(f"🚨 紧急停止状态: {reason}")
                     return True
             except Exception:
-                pass
-        
+                # 读取紧急停止状态文件失败，忽略（fail-open设计，不阻止交易）
+                logging.warning("读取紧急停止状态文件失败，忽略")
+
         # 3. 尝试连接远程紧急停止API（如果配置了）
         emergency_api_url = os.getenv("EMERGENCY_STOP_API_URL")
         if emergency_api_url:
@@ -189,8 +191,9 @@ class Executor:
                         logging.critical(f"🚨 远程紧急停止: {state.get('reason', 'Unknown')}")
                         return True
             except Exception:
-                pass  # API不可用，不阻止交易（fail-open设计）
-        
+                # 远程紧急停止API不可用，忽略（fail-open设计，不阻止交易）
+                logging.warning("远程紧急停止API检查失败，fail-open继续交易")
+
         return False
     
     def trigger_emergency_stop(self, reason: str = "Manual stop"):
@@ -220,7 +223,14 @@ class Executor:
                 self.order_manager.remove_pending_order(order_id)
                 logging.info(f"已移除待处理订单: {order_id}")
         except Exception as e:
-            logging.error(f"取消订单时出错: {e}")
+            # 取消订单失败可能是网络问题或权限问题
+            # 权限错误应该raise，因为需要人工介入
+            error_str = str(e).lower()
+            if "auth" in error_str or "permission" in error_str or "signature" in error_str or "401" in error_str or "403" in error_str:
+                logging.error(f"取消订单权限错误，必须处理: {e}")
+                raise  # 致命异常，必须抛出
+            # 网络超时等可恢复异常记录日志即可
+            logging.warning(f"取消订单时出错(可恢复): {e}")
 
     def register_callback(self, event: str, callback: Callable):
         """注册回调函数"""
@@ -232,7 +242,9 @@ class Executor:
             try:
                 self._callbacks[event](*args, **kwargs)
             except Exception as e:
-                logging.error(f"回调执行失败 [{event}]: {e}")
+                # 回调执行失败通常是用户代码问题，不应阻止主流程
+                # 但如果涉及关键回调（如 on_exit），可能需要调查
+                logging.warning(f"回调执行失败 [{event}]: {e}")
 
     def execute_signal(self, approved_signal: Dict) -> Dict | None:
         """
@@ -318,6 +330,10 @@ class Executor:
         sl_price = approved_signal.get("stop_loss", 0)
         tp_price = approved_signal.get("take_profit", 0)
 
+        # 获取当前市场价格用于滑点检查
+        current_market_price = self.active_client.get_ticker(symbol)
+        max_slippage_pct = 0.01  # 1% 最大滑点
+
         # 尝试真实下单
         order_result = None
         try:
@@ -344,6 +360,27 @@ class Executor:
         except Exception as e:
             logging.warning(f"真实下单异常: {e}，切换到模拟模式")
             order_result = None
+
+        # Step 3b: 市价单滑点保护检查
+        if order_result and current_market_price and current_market_price > 0:
+            actual_fill_price = order_result.get("price", planned_entry)
+            if actual_fill_price and actual_fill_price > 0:
+                slippage_pct = abs(actual_fill_price - current_market_price) / current_market_price
+                if slippage_pct > max_slippage_pct:
+                    # 滑点超过阈值，取消订单
+                    logging.error(
+                        f"🚨 市价单滑点过大: {slippage_pct:.2%} (阈值: {max_slippage_pct:.2%}), "
+                        f"成交价={actual_fill_price}, 当前价={current_market_price}"
+                    )
+                    # 尝试取消订单
+                    try:
+                        order_id = order_result.get("order_id") or order_result.get("ordId")
+                        if order_id:
+                            self.active_client.cancel_order(symbol, order_id)
+                            logging.info(f"已取消滑点过大的订单: {order_id}")
+                    except Exception as cancel_err:
+                        logging.warning(f"取消订单失败: {cancel_err}")
+                    return None
 
         # 如果真实下单失败，使用模拟订单
         if not order_result:
@@ -558,7 +595,9 @@ class Executor:
             try:
                 self.monitor_positions()
             except Exception as e:
-                logging.error(f"监控循环异常: {e}")
+                # 监控循环异常（网络错误、价格获取失败等），保持运行
+                # 这是可恢复异常，不应停止整个监控循环
+                logging.warning(f"监控循环异常(可恢复): {e}")
 
             time.sleep(self.config.monitor_interval)
 

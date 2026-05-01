@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -65,15 +66,18 @@ class ATRCalculator:
 class DynamicPositionSizer:
     """
     动态仓位计算器
-    
+
     公式: Position Size = (Account × Risk%) / (ATR × Stop Multiplier)
-    
+
     特点:
     - 高波动 → 自动减仓
     - 低波动 → 可以适当加仓
     - 自动限制最大/最小仓位
     """
-    
+
+    MAX_HISTORY_SIZE: int = 1000
+    ARCHIVE_DIR: Path = Path("data")
+
     def __init__(
         self,
         account_balance: float = 10000,
@@ -89,7 +93,37 @@ class DynamicPositionSizer:
         self.max_position_percent = max_position_percent
         self.min_position_percent = min_position_percent
         self.atr_calculator = ATRCalculator(period=atr_period)
-        self.position_history = []
+        self.position_history: List[dict] = []
+        self.ARCHIVE_DIR = Path("data")
+        self.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _archive_to_disk(self, history_type: str, data: List[dict]) -> None:
+        """归档历史数据到磁盘"""
+        if not data:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_file = self.ARCHIVE_DIR / f"archived_{history_type}_history_{timestamp}.jsonl"
+        try:
+            with open(archive_file, "w", encoding="utf-8") as f:
+                for item in data:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
+        """修剪历史记录，超出上限时归档到磁盘"""
+        if len(history) > max_size:
+            to_archive = history[:-max_size]
+            self._archive_to_disk(history_type, to_archive)
+            del history[:-max_size]
+
+    def add_position_record(self, position_data: dict) -> None:
+        """添加仓位记录"""
+        self.position_history.append({
+            **position_data,
+            "timestamp": datetime.now().isoformat()
+        })
+        self._trim_history(self.position_history, self.MAX_HISTORY_SIZE, "position_sizer")
     
     def calculate_position(
         self,
@@ -375,14 +409,17 @@ class Position:
 class CrossCurrencyRiskMonitor:
     """
     跨币种风险敞口监控
-    
+
     功能:
     - 实时追踪所有持仓
     - 计算总风险敞口
     - 检测超额敞口
     - 资产相关性分析
     """
-    
+
+    MAX_HISTORY_SIZE: int = 1000
+    ARCHIVE_DIR: Path = Path("data")
+
     def __init__(
         self,
         max_total_exposure: float = 1.0,      # 最大总敞口 (账户的倍数)
@@ -397,6 +434,40 @@ class CrossCurrencyRiskMonitor:
         self.positions: Dict[str, Position] = {}
         self.position_history: List[Dict] = []
         self.correlation_matrix: Dict[str, Dict[str, float]] = {}
+        self.ARCHIVE_DIR = Path("data")
+        self.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _archive_to_disk(self, history_type: str, data: List[dict]) -> None:
+        """归档历史数据到磁盘"""
+        if not data:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_file = self.ARCHIVE_DIR / f"archived_{history_type}_history_{timestamp}.jsonl"
+        try:
+            with open(archive_file, "w", encoding="utf-8") as f:
+                for item in data:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
+        """修剪历史记录，超出上限时归档到磁盘"""
+        if len(history) > max_size:
+            to_archive = history[:-max_size]
+            self._archive_to_disk(history_type, to_archive)
+            del history[:-max_size]
+
+    def _record_history(self, action: str, position: Position) -> None:
+        """记录持仓历史"""
+        self.position_history.append({
+            "action": action,
+            "symbol": position.symbol,
+            "side": position.side,
+            "size": position.size,
+            "entry_price": position.entry_price,
+            "timestamp": datetime.now().isoformat()
+        })
+        self._trim_history(self.position_history, self.MAX_HISTORY_SIZE, "cross_currency")
     
     def add_position(self, position: Position) -> None:
         """添加持仓"""
@@ -561,14 +632,17 @@ class CrossCurrencyRiskMonitor:
 class SlippageFeeSimulator:
     """
     滑点和手续费模拟器
-    
+
     功能:
     - 订单簿深度模拟
     - maker/taker费率
     - 实时滑点计算
     - 回测成本修正
     """
-    
+
+    MAX_HISTORY_SIZE: int = 1000
+    ARCHIVE_DIR: Path = Path("data")
+
     def __init__(
         self,
         maker_fee: float = 0.001,     # 0.1% maker手续费
@@ -582,7 +656,29 @@ class SlippageFeeSimulator:
         self.base_slippage = base_slippage
         self.orderbook_depth = orderbook_depth
         self.slippage_model = slippage_model
-        self.trade_history = []
+        self.trade_history: List[dict] = []
+        self.ARCHIVE_DIR = Path("data")
+        self.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _archive_to_disk(self, history_type: str, data: List[dict]) -> None:
+        """归档历史数据到磁盘"""
+        if not data:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_file = self.ARCHIVE_DIR / f"archived_{history_type}_history_{timestamp}.jsonl"
+        try:
+            with open(archive_file, "w", encoding="utf-8") as f:
+                for item in data:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
+        """修剪历史记录，超出上限时归档到磁盘"""
+        if len(history) > max_size:
+            to_archive = history[:-max_size]
+            self._archive_to_disk(history_type, to_archive)
+            del history[:-max_size]
     
     def simulate_trade(
         self,
@@ -636,6 +732,7 @@ class SlippageFeeSimulator:
         }
         
         self.trade_history.append(result)
+        self._trim_history(self.trade_history, self.MAX_HISTORY_SIZE, "slippage")
         return result
     
     def _calculate_slippage(self, size: float, price: float) -> float:

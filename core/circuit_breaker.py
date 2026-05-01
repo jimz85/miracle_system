@@ -26,7 +26,11 @@ Miracle Circuit Breaker - 熔断机制封装
 
 from dataclasses import dataclass, field
 from enum import Enum
+import json
+import os
 import threading
+from datetime import datetime
+from pathlib import Path
 
 try:
     from enum import StrEnum
@@ -90,17 +94,125 @@ class EquitySnapshot:
     daily_snapshot: float = 0.0  # 日初权益快照
     daily_snapshot_date: str = ""  # YYYY-MM-DD格式
     snapshots: List[float] = field(default_factory=list)
+    position_history: List[dict] = field(default_factory=list)  # 持仓历史
+    trade_history: List[dict] = field(default_factory=list)  # 交易历史
+
+    # 类级别常量
+    MAX_HISTORY_SIZE: int = 1000  # 保留最近1000条
+    ARCHIVE_DIR: Path = Path("data")
+
+    def __post_init__(self):
+        """初始化归档目录"""
+        self.ARCHIVE_DIR = Path("data")
+        self.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _archive_to_disk(self, history_type: str, data: List[dict]) -> None:
+        """归档历史数据到磁盘
+
+        Args:
+            history_type: "position" 或 "trade"
+            data: 要归档的数据列表
+        """
+        if not data:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_file = self.ARCHIVE_DIR / f"archived_{history_type}_history_{timestamp}.jsonl"
+        try:
+            with open(archive_file, "w", encoding="utf-8") as f:
+                for item in data:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # 归档失败不影响主流程
+
+    def _load_from_archive(self, history_type: str) -> List[dict]:
+        """从磁盘加载归档数据
+
+        Args:
+            history_type: "position" 或 "trade"
+
+        Returns:
+            从归档文件加载的数据列表
+        """
+        archived_data = []
+        try:
+            archive_files = sorted(
+                self.ARCHIVE_DIR.glob(f"archived_{history_type}_history_*.jsonl"),
+                key=lambda f: f.name,
+                reverse=True
+            )
+            # 只读取最新的归档文件
+            if archive_files:
+                latest_archive = archive_files[0]
+                with open(latest_archive, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                archived_data.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+        except Exception:
+            pass  # 加载失败返回空列表
+        return archived_data
+
+    def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
+        """修剪历史记录，超出上限时归档到磁盘
+
+        Args:
+            history: 历史记录列表
+            max_size: 最大保留条数
+            history_type: "position" 或 "trade"
+        """
+        if len(history) > max_size:
+            # 将超出部分归档到磁盘
+            to_archive = history[:-max_size]
+            self._archive_to_disk(history_type, to_archive)
+            # 保留最近max_size条
+            del history[:-max_size]
+
+    def add_position(self, position_data: dict) -> None:
+        """添加持仓记录
+
+        Args:
+            position_data: 持仓数据字典
+        """
+        self.position_history.append({
+            **position_data,
+            "timestamp": datetime.now().isoformat()
+        })
+        self._trim_history(self.position_history, self.MAX_HISTORY_SIZE, "position")
+
+    def add_trade(self, trade_data: dict) -> None:
+        """添加交易记录
+
+        Args:
+            trade_data: 交易数据字典
+        """
+        self.trade_history.append({
+            **trade_data,
+            "timestamp": datetime.now().isoformat()
+        })
+        self._trim_history(self.trade_history, self.MAX_HISTORY_SIZE, "trade")
+
+    def get_all_positions(self) -> List[dict]:
+        """获取所有持仓历史（内存+归档）"""
+        # 内存中的数据已经是最近的数据
+        return self.position_history.copy()
+
+    def get_all_trades(self) -> List[dict]:
+        """获取所有交易历史（内存+归档）"""
+        return self.trade_history.copy()
 
     def update(self, current_equity: float, lock=None) -> None:
         """更新权益快照
-        
+
         Args:
             current_equity: 当前权益
             lock: 可选的线程锁，用于保护快照列表的并发访问
         """
         from datetime import date
         today = str(date.today())
-        
+
         def _do_update():
             if self.initial_equity == 0.0:
                 self.initial_equity = current_equity
@@ -122,9 +234,8 @@ class EquitySnapshot:
                     self.daily_snapshot = current_equity
 
             # 保持最近1000个快照
-            if len(self.snapshots) > 1000:
-                self.snapshots.pop(0)
-        
+            self._trim_history(self.snapshots, self.MAX_HISTORY_SIZE, "snapshot")
+
         if lock is not None:
             with lock:
                 _do_update()
@@ -138,11 +249,11 @@ class EquitySnapshot:
     def get_peak(self) -> float:
         """获取历史最高权益"""
         return self.peak_equity
-    
+
     def get_daily_snapshot(self) -> float:
         """获取日初权益快照"""
         return self.daily_snapshot if self.daily_snapshot > 0 else self.initial_equity
-    
+
     def get_recovery_pct(self, current_equity: float) -> float:
         """获取相对日初快照的恢复百分比"""
         daily_snap = self.get_daily_snapshot()
@@ -207,6 +318,7 @@ class CircuitBreaker:
         self.last_trade_time: float | None = None
         self._last_recovery_check_equity: float = 0.0  # 上次检查时的权益
         self._cooldown_end_time: float = 0.0  # 冷却结束时间戳
+        self._tier_entered_at: float = 0.0  # 进入当前层级的时间戳
         self._lock = threading.RLock()  # 线程安全锁
 
     def check_treasury_limits(
@@ -253,6 +365,10 @@ class CircuitBreaker:
             # 4. 渐进恢复检查
             if new_tier == SurvivalTier.NORMAL and self.current_tier != SurvivalTier.NORMAL:
                 new_tier = self._check_recovery(current_equity)
+
+            # 4b. 层级变化时更新时间戳
+            if self.current_tier != new_tier:
+                self._tier_entered_at = _time.time()
 
             self.current_tier = new_tier
 
@@ -338,29 +454,46 @@ class CircuitBreaker:
     def _check_recovery(self, current_equity: float) -> SurvivalTier:
         """
         检查是否可以从当前层级恢复
-        
+
         恢复条件:
         1. 连亏计数必须为0
         2. 净值必须比日初快照回升>=3%
-        
+
+        时间衰减机制:
+        - 如果处于CAUTION/LOW超过48小时且consecutive_losses==0，允许自动降级到下一个层级
+
         Args:
             current_equity: 当前权益
-            
+
         Returns:
             SurvivalTier: 恢复后的层级
         """
+        import time as _time
+
         # 条件1: 连亏计数必须为0
         if self.consecutive_losses != 0:
             return self.current_tier
-        
+
         # 条件2: 净值必须比日初快照回升>=3%
         recovery_pct = self.equity_snapshot.get_recovery_pct(current_equity)
-        if recovery_pct < self.MIN_RECOVERY_PCT:
-            # 不能恢复，保持当前层级
-            return self.current_tier
-        
-        # 满足所有条件，恢复到NORMAL
-        return SurvivalTier.NORMAL
+        if recovery_pct >= self.MIN_RECOVERY_PCT:
+            # 满足所有条件，恢复到NORMAL
+            return SurvivalTier.NORMAL
+
+        # 时间衰减机制: 如果处于CAUTION/LOW超过48小时，自动降级
+        if self.current_tier in [SurvivalTier.CAUTION, SurvivalTier.LOW]:
+            hours_in_tier = (_time.time() - self._tier_entered_at) / 3600
+            if hours_in_tier >= 48:
+                # 自动降级逻辑
+                if self.current_tier == SurvivalTier.CAUTION:
+                    # CAUTION -> NORMAL
+                    return SurvivalTier.NORMAL
+                elif self.current_tier == SurvivalTier.LOW:
+                    # LOW -> CAUTION
+                    return SurvivalTier.CAUTION
+
+        # 不能恢复，保持当前层级
+        return self.current_tier
 
     def _get_tier_reason(self, tier: SurvivalTier, drawdown_pct: float) -> str:
         """获取层级的描述原因"""

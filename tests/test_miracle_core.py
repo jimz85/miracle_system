@@ -180,9 +180,9 @@ class TestADX:
         closes = [100, 101]
         result = calc_adx(highs, lows, closes)
         assert isinstance(result, dict)
-        assert result["adx"] == 25.0
-        assert result["plus_di"] == 25.0
-        assert result["minus_di"] == 25.0
+        assert result["adx"] == 0.0
+        assert result["plus_di"] == 0.0
+        assert result["minus_di"] == 0.0
 
     def test_adx_calculation_consistency(self):
         """ADX calculation should be consistent for same input"""

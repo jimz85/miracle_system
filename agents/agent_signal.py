@@ -21,7 +21,7 @@ import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.ic_weights import get_weights as get_ic_weights
 from core.memory import get_memory_system
@@ -72,6 +72,9 @@ class SignalGenerator:
 
         # 初始化Memory系统（决策流接入）
         self._memory = get_memory_system()
+
+        # 加载pattern历史数据用于置信度调整
+        self._pattern_history = self._load_pattern_history()
 
     def _load_ic_weights(self) -> None:
         """
@@ -132,6 +135,44 @@ class SignalGenerator:
             }
             logger = logging.getLogger(__name__)
             logger.warning(f"[SignalGenerator] IC权重加载失败，使用默认权重: {e}")
+
+    def _load_pattern_history(self) -> Dict[str, Any]:
+        """从pattern_history.json加载历史胜率数据"""
+        import os
+        import json
+        history_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "data", "pattern_history.json"
+        )
+        try:
+            if os.path.exists(history_path):
+                with open(history_path, 'r') as f:
+                    data = json.load(f)
+                    return data.get("patterns", {})
+        except Exception:
+            pass
+        return {}
+
+    def _get_pattern_win_rate(self, pattern_key: str) -> Tuple[float, bool]:
+        """
+        获取pattern的历史胜率
+
+        Returns:
+            (win_rate, has_history): 胜率 和 是否有历史数据
+            如果无历史数据，返回 (0.0, False)
+        """
+        if not pattern_key or pattern_key not in self._pattern_history:
+            return 0.0, False
+
+        pattern_data = self._pattern_history[pattern_key]
+        entries = pattern_data.get("entries", 0)
+        wins = pattern_data.get("wins", 0)
+
+        if entries == 0:
+            return 0.0, False
+
+        win_rate = wins / entries
+        return win_rate, True
 
     def calc_price_score(self, factors: Dict) -> float:
         """
@@ -441,11 +482,26 @@ class SignalGenerator:
         # === 5. 白名单过滤 ===
         whitelist_result = self.whitelist.check(scores, factors)
         confidence_modifier = whitelist_result["confidence_modifier"]
+        pattern_key = whitelist_result.get("pattern_key", "")
+
+        # === 5b. Pattern历史胜率置信度调整 ===
+        # 基于该pattern历史胜率调整置信度
+        pattern_win_rate, has_pattern_history = self._get_pattern_win_rate(pattern_key)
+        signal_score = abs(combined_score)  # 使用综合得分绝对值作为信号强度指标
+        if has_pattern_history:
+            # 有历史数据：根据胜率调整置信度
+            # 胜率映射到 [0.5, 1.5] 范围
+            history_confidence_factor = 0.5 + pattern_win_rate
+            signal_score = signal_score * history_confidence_factor
+        else:
+            # 无历史数据：降低置信度
+            history_confidence_factor = 0.5
+            signal_score = signal_score * 0.5
 
         # === 6. 计算基础置信度 ===
-        # 基础置信度 = 趋势强度 + 综合得分
-        base_confidence = (trend_info["strength"] / 100 * 0.5 +
-                          (combined_score + 1) / 2 * 0.5)
+        # 基础置信度 = 趋势强度 + 信号得分（已根据历史调整）
+        base_confidence = (trend_info["strength"] / 100 * 0.4 +
+                          signal_score * 0.6)
         # 成交量惩罚（缩量突破降低置信度）
         volume_penalty = volume_filter_result["confidence_penalty"]
         # 真实数据接入程度因子（未接入API时降低置信度）

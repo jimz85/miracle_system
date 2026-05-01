@@ -77,9 +77,9 @@ class PriceFactors:
 
     @staticmethod
     def calc_adx(highs: List[float], lows: List[float], closes: List[float],
-                  period: int = 14) -> Dict[str, float]:
+                  period: int = 14) -> Dict[str, Any]:
         if len(closes) < 2 * period + 1:
-            return {"adx": 25.0, "plus_di": 25.0, "minus_di": 25.0}
+            return {"adx": 0.0, "plus_di": 0.0, "minus_di": 0.0, "insufficient_data": True}
 
         # Try talib first (fastest, C-level)
         if HAS_TALIB:
@@ -118,7 +118,7 @@ class PriceFactors:
         alpha = 1.0 / period_int
 
         if n < period_int + 1:
-            return {"adx": 25.0, "plus_di": 25.0, "minus_di": 25.0}
+            return {"adx": 0.0, "plus_di": 0.0, "minus_di": 0.0, "insufficient_data": True}
 
         # Use pandas ewm for vectorized smoothing (Wilder's smoothing via span=period, adjust=False)
         if HAS_PANDAS:
@@ -325,6 +325,7 @@ class PriceFactors:
             "adx": adx_data["adx"],
             "plus_di": adx_data["plus_di"],
             "minus_di": adx_data["minus_di"],
+            "adx_insufficient_data": adx_data.get("insufficient_data", False),
             "macd": macd_data["macd"],
             "macd_signal": macd_data["signal"],
             "macd_histogram": macd_data["histogram"],
@@ -367,6 +368,7 @@ class PriceFactors:
             "adx": adx_data["adx"],
             "plus_di": adx_data["plus_di"],
             "minus_di": adx_data["minus_di"],
+            "adx_insufficient_data": adx_data.get("insufficient_data", False),
             "macd": macd_data["macd"],
             "macd_signal": macd_data["signal"],
             "macd_histogram": macd_data["histogram"],

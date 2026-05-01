@@ -123,9 +123,9 @@ class TestADXCalculation:
 
         result = PriceFactors.calc_adx(highs, lows, closes, period=14)
 
-        assert result["adx"] == 25.0
-        assert result["plus_di"] == 25.0
-        assert result["minus_di"] == 25.0
+        assert result["adx"] == 0.0
+        assert result["plus_di"] == 0.0
+        assert result["minus_di"] == 0.0
 
     def test_adx_strong_uptrend(self):
         """ADX should be high (>25) in strong trending market"""

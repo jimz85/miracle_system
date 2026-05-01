@@ -294,6 +294,11 @@ CORRELATED_GROUPS = {
     'L1': ['ETH', 'SOL', 'AVAX', 'ADA', 'DOT', 'LINK'],  # L1公链
     'MEME': ['DOGE', 'SHIB'],  # Meme币
     'BTC_ECOSYSTEM': ['BTC', 'BNB'],  # BTC生态
+    'DeFi': ['UNI', 'AAVE', 'MKR', 'COMP', 'CRV'],  # DeFi
+    'AI_Data': ['FET', 'AGIX', 'OCEAN', 'RNDR', 'NEAR'],  # AI/Data
+    'GameFi': ['SAND', 'MANA', 'AXS', 'GALA', 'ENJ'],  # GameFi
+    'L2': ['ARB', 'OP', 'MATIC', 'IMX'],  # L2
+    'Restaking': ['EIGEN', 'LDO', 'SSV', 'RPL'],  # Restaking
 }
 
 def check_concentration(
