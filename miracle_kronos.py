@@ -578,7 +578,7 @@ def save_whitelist(wl):
     })
 
 _gemma_cache_lock = threading.Lock()
-Gemma4_TIMEOUT = 10  # gemma4超时10秒，超时使用规则回退
+Gemma4_TIMEOUT = 30  # gemma4超时30秒（系统内存紧张时加载模型需要时间），超时使用规则回退
 
 def _rule_based_vote(rsi, adx, bb_pos, di_plus=None, di_minus=None):
     """基于RSI/ADX/布林带的规则化方向投票（当Gemma不可用时使用）
@@ -2614,16 +2614,20 @@ def main():
     treasury = load_treasury()
     treasury['equity'] = equity
     now = datetime.now()
+    today_str = str(now.date())
     last_update = treasury.get('last_update', '')
     if last_update:
         try:
             from datetime import datetime as dt
             last_dt = dt.fromisoformat(last_update)
-            if now.hour != last_dt.hour:
+            # P0-1 Fix: 跨天+跨小时检测，避免 same-hour-different-day 漏重置
+            is_new_hour = now.hour != last_dt.hour or now.date() != last_dt.date()
+            is_new_day = now.date() != last_dt.date()
+            if is_new_hour:
                 # 新的一小时：检查上一小时是否盈利
                 prev_hourly_snapshot = treasury.get('hourly_snapshot', equity)
                 treasury['hourly_snapshot'] = equity
-                treasury['hourly_snapshot_time'] = treasury.get('last_update', '')[:10]
+                treasury['hourly_snapshot_time'] = today_str
                 # V6-3: 追踪连续盈利小时数用于tier降级
                 if equity > prev_hourly_snapshot:
                     treasury['consecutive_win_hours'] = treasury.get('consecutive_win_hours', 0) + 1
@@ -2631,9 +2635,10 @@ def main():
                 else:
                     treasury['consecutive_win_hours'] = 0
                 treasury['consecutive_loss_hours'] = 0  # 重置亏损计数
-            if now.date() != last_dt.date():
+                logger.debug(f"快照: hourly_snapshot={equity:.2f} (新{'天' if is_new_day else '小时'})")
+            if is_new_day:
                 treasury['daily_snapshot'] = equity
-                treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
+                treasury['daily_snapshot_time'] = today_str
                 # session_start: 每日起始equity，用于每日20%回撤熔断（非跨日Session追踪）
                 # P1-6: 每日重置是故意设计——每个交易日独立风控，坏日子不蔓延到下一天
                 treasury['session_start'] = equity
@@ -2644,12 +2649,14 @@ def main():
             logger.debug(f"更新treasury快照失败: {ex}")
             treasury['hourly_snapshot'] = equity
             treasury['daily_snapshot'] = equity
-            treasury['hourly_snapshot_time'] = treasury.get('last_update', '')[:10]
-            treasury['daily_snapshot_time'] = treasury.get('last_update', '')[:10]
+            treasury['hourly_snapshot_time'] = today_str
+            treasury['daily_snapshot_time'] = today_str
     else:
         treasury['hourly_snapshot'] = equity
         treasury['daily_snapshot'] = equity
         treasury['session_start'] = equity
+        treasury['hourly_snapshot_time'] = today_str
+        treasury['daily_snapshot_time'] = today_str
     treasury['last_update'] = now.isoformat()
     # 追踪权益峰值（用于回撤计算）
     peak = treasury.get('peak_equity', equity)

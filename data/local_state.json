@@ -1,32 +1,32 @@
 {
   "XRP-USDT-SWAP": {
     "direction": "long",
-    "entry_price": 1.373,
-    "contracts": 293.0,
-    "stop_loss": null,
-    "take_profit": null,
-    "algo_id": null,
+    "entry_price": 1.362,
+    "contracts": 291.0,
+    "stop_loss": 1.2938,
+    "take_profit": 1.4642,
+    "algo_id": "3525466639183466496",
     "opened_at": null,
-    "status": "zombie_imported"
+    "status": "active"
   },
   "DOGE-USDT-SWAP": {
     "direction": "short",
     "entry_price": 0.1077,
     "contracts": 223.0,
-    "stop_loss": null,
-    "take_profit": null,
-    "algo_id": null,
+    "stop_loss": 0.1147,
+    "take_profit": 0.0972,
+    "algo_id": "3524557915237470208",
     "opened_at": null,
-    "status": "zombie_imported"
+    "status": "active"
   },
   "BNB-USDT-SWAP": {
     "direction": "long",
     "entry_price": 615.78,
     "contracts": 17.0,
-    "stop_loss": null,
-    "take_profit": null,
-    "algo_id": null,
+    "stop_loss": 590.6,
+    "take_profit": 653.4,
+    "algo_id": "3525073851103137792",
     "opened_at": null,
-    "status": "zombie_imported"
+    "status": "active"
   }
 }

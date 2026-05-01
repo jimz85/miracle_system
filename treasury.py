@@ -23,8 +23,7 @@ TREASURY_FILE = STATE_DIR / 'miracle_treasury.json'
 def load_treasury():
     if TREASURY_FILE.exists():
         try:
-            with open(TREASURY_FILE) as f:
-                return json.load(f)
+            return json.load(TREASURY_FILE.open())
         except Exception as ex:
             logger.debug(f"load_treasury: 读取失败，使用默认状态: {ex}")
     from datetime import date, datetime
@@ -39,13 +38,25 @@ def load_treasury():
     }
 
 def save_treasury(state):
-    # P0 Fix: 确保 daily_snapshot 在新的一天被重置
+    # P0-1 Fix: 跨天重置 hourly_snapshot 和 daily_snapshot
     from datetime import date as date_cls
     today = str(date_cls.today())
+    equity = state.get('equity', 0)
+
+    # hourly_snapshot 跨天重置
+    hs_time = state.get('hourly_snapshot_time', '')
+    if hs_time and not hs_time.startswith(today):
+        state['hourly_snapshot'] = equity
+        state['hourly_snapshot_time'] = today
+        logger.info(f"跨天重置hourly_snapshot: {equity:.2f}")
+
+    # daily_snapshot 跨天重置
     ds_time = state.get('daily_snapshot_time', '')
     if ds_time and not ds_time.startswith(today):
-        state['daily_snapshot'] = state.get('equity', state.get('daily_snapshot'))
-        state['daily_snapshot_time'] = state.get('last_update', '')[:10]
+        state['daily_snapshot'] = equity
+        state['daily_snapshot_time'] = today
+        state['session_start'] = equity
+        logger.info(f"跨天重置daily_snapshot: {equity:.2f}")
 
     # V6-3 Fix: Treasury tier 降级机制——连续盈利时逐步降级
     current_tier = state.get('tier', 'normal')

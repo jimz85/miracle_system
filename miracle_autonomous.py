@@ -186,10 +186,15 @@ class DataCollector:
             return None
 
         # 熊市过滤 (仅 bear_only=True 时启用)
+        # 使用动态滚动窗口，避免硬编码日期导致的数据窥视(data snooping)
         if bear_only:
             df["datetime_utc"] = pd.to_datetime(df["datetime_utc"])
-            dynamic_end = df["datetime_utc"].max().strftime("%Y-%m-%d")
-            mask = (df["datetime_utc"] >= "2025-08-01") & (df["datetime_utc"] <= dynamic_end)
+            dynamic_end = df["datetime_utc"].max()
+            # 用数据末尾向前滚动 N 天作为分析窗口
+            # 旧代码硬编码了 "2025-08-01"，导致数据窥视偏差
+            dynamic_start = dynamic_end - timedelta(days=self._bear_lookback_days)
+            mask = (df["datetime_utc"] >= dynamic_start.strftime("%Y-%m-%d")) & \
+                   (df["datetime_utc"] <= dynamic_end.strftime("%Y-%m-%d"))
             df = df[mask].copy()
         else:
             df["datetime_utc"] = pd.to_datetime(df["datetime_utc"])
