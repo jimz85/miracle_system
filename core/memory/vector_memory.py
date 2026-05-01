@@ -210,8 +210,34 @@ class VectorMemory:
         # 确保目录存在
         os.makedirs(self.persist_directory, exist_ok=True)
         
+        # P2 Fix: 每日自动备份SQLite
+        self._auto_backup()
+
         # 初始化数据库连接
         self._conn = _get_connection(self.persist_directory)
+    
+    def _auto_backup(self) -> None:
+        """P2 Fix: 每日自动备份SQLite文件（保留最近7天）"""
+        import shutil
+        backup_dir = os.path.join(self.persist_directory, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        db_path = os.path.join(self.persist_directory, self.DB_NAME)
+        if not os.path.exists(db_path):
+            return
+        today = datetime.now().strftime("%Y%m%d")
+        backup_file = os.path.join(backup_dir, f"miracle_memories_{today}.db")
+        if os.path.exists(backup_file):
+            return  # 今日已备份
+        try:
+            shutil.copy2(db_path, backup_file)
+            # 清理7天前的备份
+            cutoff = (datetime.now().timestamp() - 7 * 86400)
+            for f in os.listdir(backup_dir):
+                fp = os.path.join(backup_dir, f)
+                if os.path.isfile(fp) and os.path.getmtime(fp) < cutoff:
+                    os.remove(fp)
+        except Exception:
+            pass  # 备份失败不阻塞主流程
     
     def _row_to_memory(self, row: sqlite3.Row) -> Dict[str, Any]:
         """将数据库行转换为内存字典"""

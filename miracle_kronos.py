@@ -865,9 +865,13 @@ def update_whitelist(entry_key, won: bool):
     # 黑名单降级（7天TTL）
     if stats['count'] >= 10 and stats['win_rate'] < 0.35:
         import time
+        # P2 Fix: 黑名单上限1000条，超限时移除最旧条目
+        if len(wl['blacklist']) >= 1000:
+            oldest_key = min(wl['blacklist'], key=lambda k: wl['blacklist'][k])
+            del wl['blacklist'][oldest_key]
         wl['blacklist'][entry_key] = int(time.time())
-    save_whitelist(wl)
-
+        save_whitelist(wl)
+        return True
 # ===== 交易日志 =====
 
 # ===== 交易日志 (from trade_journal.py) =====
@@ -2331,7 +2335,8 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
     # ── 规则参数 ──
     # 职业操盘手原则：截断亏损，让利润奔跑
     # 不允许用时间作为平仓理由——价格本身才是唯一信号
-    LOSS_WARN_PCT     = -0.04    # 亏损>4% → 强制平仓（给市场波动留空间）
+    DEFAULT_LEVERAGE  = 3        # 默认杠杆倍率（实际从OKX获取）
+    LOSS_WARN_PCT     = -0.04 / DEFAULT_LEVERAGE  # 价格变动-1.33% → 账户-4%（考虑3x杠杆）
     HOLD_WARN_HOURS   = 3        # 持仓>3h无盈利 → 触发警告（仅警告，不平仓）
     HOLD_FORCE_HOURS  = 72       # 持仓>72h + 亏损 → 警告需要人工判断（不平仓）
     PROFIT_MOVE_SL    = 0.02     # 盈利>2% → SL上移到成本价（零风险持仓）
@@ -2367,8 +2372,9 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
 
         inst_id = f'{coin}-USDT-SWAP'
 
-        # ── 缓存命中检查 ──
-        if coin not in _coin_cache:
+        # ── 缓存命中检查（按币种，AI分析不依赖pnl） ──
+        cache_key = coin
+        if cache_key not in _coin_cache:
             klines_1h = get_klines(inst_id, '1H', 50)
             current_price = entry_price
             rsi_val  = 50.0
@@ -2400,14 +2406,14 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
                 direction, 0, 0  # pnl和hold_hours占位，后面覆盖
             )
 
-            _coin_cache[coin] = {
+            _coin_cache[cache_key] = {
                 'current_price': current_price, 'rsi_val': rsi_val, 'adx_val': adx_val,
                 'adx_data': adx_data, 'di_plus': di_plus, 'di_minus': di_minus,
                 'closes': closes, 'highs': highs, 'lows': lows,
                 'ai_result': ai_result,
             }
         else:
-            cc = _coin_cache[coin]
+            cc = _coin_cache[cache_key]
             current_price = cc['current_price']
             rsi_val = cc['rsi_val']
             adx_val = cc['adx_val']
@@ -2439,8 +2445,8 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
         # ═══════════════════════════════════════════════════════════
         # 🧠 AI交易员分析层 — 用缓存的结果（每币每周期只调一次Qwen）
         # ═══════════════════════════════════════════════════════════
-        
-        ai_result = _coin_cache[coin]['ai_result']
+
+        ai_result = _coin_cache[cache_key]['ai_result']
         
         direction_is_long = direction in ('LONG', '做多', 'long')
         # 判断AI观点是否与持仓方向一致
