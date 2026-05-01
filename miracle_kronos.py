@@ -2371,41 +2371,49 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
             continue
 
         inst_id = f'{coin}-USDT-SWAP'
+        # ── 先获取K线和当前价格 ──
+        klines_1h = get_klines(inst_id, '1H', 50)
+        current_price = entry_price
+        rsi_val  = 50.0
+        adx_val  = 20.0
+        closes = []
+        highs  = []
+        lows   = []
+        di_plus = di_minus = 0
+        adx_data = None
 
-        # ── 缓存命中检查（按币种，AI分析不依赖pnl） ──
-        cache_key = coin
+        if klines_1h and len(klines_1h) >= 20:
+            closes = [k['close'] for k in klines_1h]
+            highs  = [k['high']  for k in klines_1h]
+            lows   = [k['low']   for k in klines_1h]
+            current_price = closes[-1]
+            rsi_val  = calc_rsi(closes)
+            adx_data = calc_adx(highs, lows, closes)
+            if isinstance(adx_data, dict):
+                adx_val = adx_data["adx"]
+                di_plus = adx_data["plus_di"]
+                di_minus = adx_data["minus_di"]
+            else:
+                di_plus, di_minus, adx_val = adx_data
+
+        # ── 计算盈亏（先于缓存key） ──
+        if direction in ('LONG', '做多', 'long'):
+            pnl_pct = (current_price - entry_price) / entry_price
+        elif direction in ('SHORT', '做空', 'short'):
+            pnl_pct = (entry_price - current_price) / entry_price
+        else:
+            pnl_pct = 0.0
+
+        # ── 缓存命中检查（含pnl分段，避免不同盈亏用相同AI分析） ──
+        pnl_bucket = 'profit' if pnl_pct > 0.05 else ('loss' if pnl_pct < -0.03 else 'flat')
+        cache_key = f'{coin}_{pnl_bucket}'
         if cache_key not in _coin_cache:
-            klines_1h = get_klines(inst_id, '1H', 50)
-            current_price = entry_price
-            rsi_val  = 50.0
-            adx_val  = 20.0
-            closes = []
-            highs  = []
-            lows   = []
-            di_plus = di_minus = 0
-            adx_data = None
-
-            if klines_1h and len(klines_1h) >= 20:
-                closes = [k['close'] for k in klines_1h]
-                highs  = [k['high']  for k in klines_1h]
-                lows   = [k['low']   for k in klines_1h]
-                current_price = closes[-1]
-                rsi_val  = calc_rsi(closes)
-                adx_data = calc_adx(highs, lows, closes)
-                if isinstance(adx_data, dict):
-                    adx_val = adx_data["adx"]
-                    di_plus = adx_data["plus_di"]
-                    di_minus = adx_data["minus_di"]
-                else:
-                    di_plus, di_minus, adx_val = adx_data
-
-            # AI分析也缓存（每个币+方向只分析一次）
+            # AI分析缓存（每个币+盈亏分段只分析一次）
             ai_result = _ai_trader_decision(
                 coin, closes, highs, lows,
                 rsi_val, adx_val, entry_price,
                 direction, 0, 0  # pnl和hold_hours占位，后面覆盖
             )
-
             _coin_cache[cache_key] = {
                 'current_price': current_price, 'rsi_val': rsi_val, 'adx_val': adx_val,
                 'adx_data': adx_data, 'di_plus': di_plus, 'di_minus': di_minus,
@@ -2415,22 +2423,6 @@ def run_position_management(equity: float, btc_trend: str, mode: str = 'audit') 
         else:
             cc = _coin_cache[cache_key]
             current_price = cc['current_price']
-            rsi_val = cc['rsi_val']
-            adx_val = cc['adx_val']
-            adx_data = cc['adx_data']
-            di_plus = cc['di_plus']
-            di_minus = cc['di_minus']
-            closes = cc['closes']
-            highs = cc['highs']
-            lows = cc['lows']
-
-        # ── 计算盈亏 ──
-        if direction in ('LONG', '做多', 'long'):
-            pnl_pct = (current_price - entry_price) / entry_price
-        elif direction in ('SHORT', '做空', 'short'):
-            pnl_pct = (entry_price - current_price) / entry_price
-        else:
-            pnl_pct = 0.0
 
         # ── 持仓时间计算 ──
         hold_hours = None
