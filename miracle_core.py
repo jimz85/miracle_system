@@ -831,25 +831,52 @@ def check_stops(position: Dict, current_price: float,
         if direction == "long":
             # 多头：结构止损 = 最高价 - 1.5*ATR（追踪高点，只跟踪不回头）
             highest = position.get("highest_price", entry_price)
-            if current_price > highest:
+            wm_key = f"{position.get('instId','')}_long"
+            persisted = _get_watermark(wm_key, highest)
+            if current_price > persisted or persisted == entry_price:
                 position["highest_price"] = current_price
+                _set_watermark(wm_key, "highest", current_price)
                 highest = current_price
+            else:
+                highest = persisted
+                position["highest_price"] = persisted
             struct_stop = highest - atr_stop_distance
-            if struct_stop > stop_loss:  # 只跟踪不回头
+            if struct_stop > stop_loss:
                 if current_price <= struct_stop:
                     return True, "structure"
-        else:  # short
-            # 空头：结构止损 = 最低价 + 1.5*ATR（追踪低点，只跟踪不回头）
+        else:
             lowest = position.get("lowest_price", entry_price)
-            if current_price < lowest:
+            wm_key = f"{position.get('instId','')}_short"
+            persisted = _get_watermark(wm_key, lowest)
+            if current_price < persisted or persisted == entry_price:
                 position["lowest_price"] = current_price
+                _set_watermark(wm_key, "lowest", current_price)
                 lowest = current_price
+            else:
+                lowest = persisted
+                position["lowest_price"] = persisted
             struct_stop = lowest + atr_stop_distance
-            if struct_stop < stop_loss:  # 只跟踪不回头
+            if struct_stop < stop_loss:
                 if current_price >= struct_stop:
                     return True, "structure"
     
     return False, "none"
+
+
+# P1 Fix: 结构止损水位线持久化（跨API调用）
+_WATERMARK_STORE: Dict[str, Dict] = {}  # {instId_or_key: {"highest": float, "lowest": float}}
+
+
+def _get_watermark(pos_id: str, default: float) -> float:
+    """获取持久化的结构止损水位线"""
+    return _WATERMARK_STORE.get(pos_id, {}).get("highest" if "highest" in str(default) else "lowest", default)
+
+
+def _set_watermark(pos_id: str, key: str, value: float) -> None:
+    """设置持久化的结构止损水位线"""
+    if pos_id not in _WATERMARK_STORE:
+        _WATERMARK_STORE[pos_id] = {}
+    _WATERMARK_STORE[pos_id][key] = value
 
 # ===== 交易信号格式化 =====
 
