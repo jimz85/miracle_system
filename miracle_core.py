@@ -832,7 +832,7 @@ def check_stops(position: Dict, current_price: float,
             # 多头：结构止损 = 最高价 - 1.5*ATR（追踪高点，只跟踪不回头）
             highest = position.get("highest_price", entry_price)
             wm_key = f"{position.get('instId','')}_long"
-            persisted = _get_watermark(wm_key, highest)
+            persisted = _get_watermark(wm_key, "highest", highest)
             if current_price > persisted or persisted == entry_price:
                 position["highest_price"] = current_price
                 _set_watermark(wm_key, "highest", current_price)
@@ -847,7 +847,7 @@ def check_stops(position: Dict, current_price: float,
         else:
             lowest = position.get("lowest_price", entry_price)
             wm_key = f"{position.get('instId','')}_short"
-            persisted = _get_watermark(wm_key, lowest)
+            persisted = _get_watermark(wm_key, "lowest", lowest)
             if current_price < persisted or persisted == entry_price:
                 position["lowest_price"] = current_price
                 _set_watermark(wm_key, "lowest", current_price)
@@ -867,9 +867,9 @@ def check_stops(position: Dict, current_price: float,
 _WATERMARK_STORE: Dict[str, Dict] = {}  # {instId_or_key: {"highest": float, "lowest": float}}
 
 
-def _get_watermark(pos_id: str, default: float) -> float:
+def _get_watermark(pos_id: str, key: str, default: float) -> float:
     """获取持久化的结构止损水位线"""
-    return _WATERMARK_STORE.get(pos_id, {}).get("highest" if "highest" in str(default) else "lowest", default)
+    return _WATERMARK_STORE.get(pos_id, {}).get(key, default)
 
 
 def _set_watermark(pos_id: str, key: str, value: float) -> None:
@@ -1136,13 +1136,13 @@ def get_recent_price_data(symbol: str, days: int = 30, interval: str = "1h") -> 
         params = {"symbol": binance_sym, "interval": interval_binance, "limit": limit}
         resp = requests.get(url, params=params, timeout=10)
         if resp.status_code != 200:
-            logger.warning(f"获取价格数据失败 [{symbol}]: HTTP {resp.status_code}，使用Fallback数据")
-            return _generate_fallback_price_data(symbol, days)
+            logger.warning(f"获取价格数据失败 [{symbol}]: HTTP {resp.status_code}")
+            return None
 
         klines = resp.json()
         if not klines:
-            logger.warning(f"获取价格数据失败 [{symbol}]: 空数据，使用Fallback数据")
-            return _generate_fallback_price_data(symbol, days)
+            logger.warning(f"获取价格数据失败 [{symbol}]: 空数据")
+            return None
 
         highs = [float(k[2]) for k in klines]   # High
         lows = [float(k[3]) for k in klines]   # Low
@@ -1154,8 +1154,8 @@ def get_recent_price_data(symbol: str, days: int = 30, interval: str = "1h") -> 
         logger.error(f"获取价格数据异常 [{symbol}]: {ed}")
         raise
     except Exception as e:
-        logger.warning(f"获取价格数据失败 [{symbol}]: {e}，使用Fallback数据")
-        return _generate_fallback_price_data(symbol, days)
+        logger.warning(f"获取价格数据失败 [{symbol}]: {e}")
+        return None
 
 
 def _generate_fallback_price_data(symbol: str, days: int) -> Dict[str, List[float]]:
