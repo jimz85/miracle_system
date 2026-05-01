@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+
+## [2.0.2] - 2026-05-01
+
+### Fixed
+- **P0: SHORT ATR止损方向错误** — `check_stops()` 中SHORT的ATR止损改为入场价上方(`atr_stop_short`)
+- **P0: ICWeightManager类名不匹配** — `MiracleICTracker` 不存在导致IC系统降级为硬编码
+- **P0: 因子权重Disabled机制** — 配置加 `enabled` 字段，禁用后权重自动重归一化
+- **P1: check_stops() fixed stop direction** — `format_trade_signal()` SHORT止损方向正确
+
+### Changed
+- **性能优化** — `agent_signal.py` 延迟导入 pandas/scipy，冷启动 27s→2.8s
+- **配置矛盾** — `max_position_pct` 从15%降至13%（13%×3x=39%<40%）
+- **配置局限** — `max_total_exposure` 40%保留，多仓叠加检查后续强化
+
+### Added
+- **每币种滑点配置** — 13个币种独立滑点（BTC 0.05% ~ BNT 0.8%）
+- **FusionMemoryLog** — 别名类使文档API与实际代码兼容
+- **熔断五级生存层** — MiracleCircuitBreaker接入AgentRisk决策流
+- **Memory/Orchestrator** — 记忆系统接入信号生成+评分调整+Orchestrator验证
+- **autoresearch硬编码修复** — bear_only 2025-08-01→动态滚动窗口
+
+### Removed
+- **文档清理** — 18份→7份核心文档，11份旧审计/设计文档移至`docs/archive/`
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2.0.1] - 2026-04-27
