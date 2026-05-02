@@ -978,6 +978,35 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
         return {'code': open_result.get('code', '99999'),
                 'msg': f'开仓失败: {open_result.get("msg")}'}
 
+    # ── Step 2b: 确认成交价 — 用于SL/TP基准价 ──
+    fill_entry = entry_price  # 默认回退信号价
+    try:
+        oid = open_result.get('data', [{}])[0].get('ordId', '')
+        if oid:
+            for _ in range(3):
+                time.sleep(0.5)
+                chk = okx_req('GET', f'/api/v5/trade/order?instId={instId}&ordId={oid}')
+                st = chk.get('data', [{}])[0]
+                if st.get('state') in ('filled',):
+                    fp = float(st.get('fillPx', 0))
+                    if fp > 0:
+                        fill_entry = fp
+                        break
+    except Exception:
+        pass
+
+    # 如果成交价与信号价偏离>0.1%，重算SL/TP
+    if fill_entry != entry_price:
+        diff_pct = abs(fill_entry - entry_price) / entry_price
+        logger.info(f"成交价确认: {instId} fillPx={fill_entry} (diff={diff_pct:.3%}, src={entry_price})")
+        if diff_pct > 0.001:
+            if side == 'buy':  # long
+                sl_price = round(fill_entry * (1 - sl_pct), 4)
+                tp_price = round(fill_entry * (1 + tp_pct), 4)
+            else:  # short
+                sl_price = round(fill_entry * (1 + sl_pct), 4)
+                tp_price = round(fill_entry * (1 - tp_pct), 4)
+
     # ── Step 3: 挂OCO Bracket（止损+止盈，保护已有仓位） ──
     # reduceOnly=True确保只平仓不开新仓
     oco_body = {
@@ -1000,7 +1029,7 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
 
     # 汇总结果
     if oco_result.get('code') == '0':
-        logger.info(f"开仓+OCO成功 {instId} {side} {sz}张 @ {entry_price}, SL={sl_price}, TP={tp_price}")
+        logger.info(f"开仓+OCO成功 {instId} {side} {sz}张 @ {fill_entry}, SL={sl_price}, TP={tp_price}")
         return {
             'code': '0',
             'open': open_result,
@@ -1009,17 +1038,30 @@ def place_oco(instId, side, sz, entry_price, sl_pct, tp_pct, equity: float = 0, 
     else:
         # OCO失败，但仓位已开！立即平仓防风险
         logger.warning(f"OCO挂单失败，已平仓防风险 {instId}: {oco_result.get('msg')}")
-        
-        # 提取symbol并平仓
+
+        # 提取symbol并平仓（含重试）
         symbol = instId.replace('-USDT-SWAP', '')
-        close_result = close_position(symbol, reason="OCO失败自动平仓")
-        
+        close_retries = 0
+        close_ok = False
+        while close_retries < 3:
+            close_result = close_position(symbol, reason="OCO失败自动平仓")
+            if close_result and close_result.get('code') == '0':
+                close_ok = True
+                break
+            close_retries += 1
+            time.sleep(0.5 * (close_retries + 1))  # 退避: 1s, 1.5s, 2s
+
+        if close_ok:
+            logger.info(f"OCO失败后平仓成功 {instId} ({close_retries+1}次尝试)")
+        else:
+            logger.error(f"OCO失败后平仓失败 {instId} — 仓位裸奔！需人工干预")
+
         return {
             'code': oco_result.get('code', '99999'),
             'msg': f'OCO挂单失败，已平仓防风险: {oco_result.get("msg")}',
             'open_success': True,
             'open': open_result,
-            'close_result': close_result,
+            'close_result': close_result if 'close_result' in dir() else {},
         }
 
 def close_position(symbol: str, reason: str = "signal",
@@ -1063,9 +1105,16 @@ def close_position(symbol: str, reason: str = "signal",
     if _pos_mode != 'net' and pos_side:
         body['posSide'] = pos_side
     body = json.dumps(body)
-    data = okx_req('POST', '/api/v5/trade/order', body)
+    # close_position重试：最多3次，退避等待
+    for retry in range(3):
+        data = okx_req('POST', '/api/v5/trade/order', body)
+        if data.get('code') == '0':
+            break
+        if retry < 2:
+            logger.warning(f"[{symbol}] 平仓尝试{retry+1}失败，重试中: {data.get('msg', 'unknown')}")
+            time.sleep(1.0 * (retry + 1))
     if data.get('code') == '0':
-        logger.info(f"[{symbol}] 平仓成功 ({reason})")
+        logger.info(f"[{symbol}] 平仓成功 ({reason})" + (f" (retried {retry}x)" if retry > 0 else ""))
 
         # P0 Fix: Cancel any active OCO orders for this symbol after closing position
         try:
@@ -1263,10 +1312,11 @@ def fetch_contract_multiplier(coin: str) -> float:
         data = resp.json()
         
         if data.get('code') == '0' and data.get('data'):
-            # OKX returns contract multiplier in 'ctMult' field
-            ct_mult = data['data'][0].get('ctVal')
-            if ct_mult:
-                multiplier = safe_float(ct_mult, 1.0)
+            # OKX USDT永续合约使用ctVal（合约面值）计算名义价值
+            # ctMult始终为1，不适用
+            ct_val = data['data'][0].get('ctVal')
+            if ct_val:
+                multiplier = safe_float(ct_val, 1.0)
                 _contract_multiplier_cache[coin] = multiplier
                 logger.info(f"OKX API contract multiplier for {coin}: {multiplier}")
                 return multiplier
@@ -1863,44 +1913,54 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             open_dt = dt.fromisoformat(open_time)
             age_hours = (dt.now() - open_dt).total_seconds() / 3600
             trade['age_hours'] = round(age_hours, 1)
-            if age_hours > 24:
-                # ATR-based time stop: if price hasn't moved at least 0.5×ATR in 24h, it's consolidating - exit
-                klines_1h = get_klines(inst_id, '1H', 100)
-                if klines_1h and len(klines_1h) >= 30:
-                    highs_1h = [k['high'] for k in klines_1h]
-                    lows_1h = [k['low'] for k in klines_1h]
-                    closes_1h = [k['close'] for k in klines_1h]
-                    atr = calc_atr(highs_1h, lows_1h, closes_1h)
-                    if atr > 0 and entry > 0:
-                        atr_pct = atr / entry
-                        price_moved_pct = abs(current - entry) / entry
-                        if price_moved_pct < atr_pct * 0.5:
-                            position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损(24h+ATR确认震荡)', 'urgency': 7, 'pnl_pct': pnl_pct})
-                else:
-                    # Fallback to fixed time stop if no klines
-                    position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
         except Exception as ex:
             logger.debug(f"run_scan: 计算持仓时长失败: {ex}")
             trade['age_hours'] = 0
+
+        # ── ATR计算（共用：时间止损 + 移动止损） ──
+        atr_pct = 0.0
+        try:
+            klines_1h = get_klines(inst_id, '1H', 100)
+            if klines_1h and len(klines_1h) >= 30:
+                highs_1h = [k['high'] for k in klines_1h]
+                lows_1h = [k['low'] for k in klines_1h]
+                closes_1h = [k['close'] for k in klines_1h]
+                atr = calc_atr(highs_1h, lows_1h, closes_1h)
+                if atr > 0 and entry > 0:
+                    atr_pct = atr / entry
+        except Exception as ex:
+            logger.debug(f"run_scan: ATR计算失败: {ex}")
+
+        if age_hours > 24:
+            if atr_pct > 0:
+                price_moved_pct = abs(current - entry) / entry
+                if price_moved_pct < atr_pct * 0.5:
+                    position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损(24h+ATR确认震荡)', 'urgency': 7, 'pnl_pct': pnl_pct})
+            else:
+                # Fallback to fixed time stop if no ATR
+                position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'时间止损({age_hours:.0f}h)', 'urgency': 7, 'pnl_pct': pnl_pct})
 
         if pnl_pct > 0.03:
             peak_pnl = trade.get('peak_pnl_pct', pnl_pct)
             if pnl_pct > peak_pnl:
                 trade['peak_pnl_pct'] = pnl_pct
-                trade['peak_price'] = current  # Track peak price for trailing stop
+                # peak_price含义：LONG=最高价, SHORT=最低价(nadir)
+                # LONG: 价格新高→提升trailing SL
+                # SHORT: 价格新低→降低trailing SL
+                trade['peak_price'] = current
             else:
                 # ATR-based trailing stop (自适应波动率)
                 # 用ATR×2取代固定3%，高波动币允许更大回撤
                 trailing_mult = max(0.015, atr_pct * 2.0) if atr_pct > 0 else 0.03
-                peak_price = trade.get('peak_price', entry)
+                extreme_price = trade.get('peak_price', entry)  # LONG=peak, SHORT=nadir
                 if direction == 'long':
-                    trailing_sl = peak_price * (1 - trailing_mult)
+                    trailing_sl = extreme_price * (1 - trailing_mult)
                     if current <= trailing_sl:
-                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(ATR回撤{(peak_price - current)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(ATR回撤{(extreme_price - current)/extreme_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
                 else:
-                    trailing_sl = peak_price * (1 + trailing_mult)
+                    trailing_sl = extreme_price * (1 + trailing_mult)
                     if current >= trailing_sl:
-                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(ATR回撤{(current - peak_price)/peak_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
+                        position_decisions.append({'action': 'close', 'symbol': sym, 'reason': f'移动止损(ATR回撤{(current - extreme_price)/extreme_price:.1%})', 'urgency': 6, 'pnl_pct': pnl_pct})
 
         # ── Trailing TP: 趋势完好时跳过固定TP，让利润奔跑 ──
         # 趋势强(ADX>25)：价格超过原TP也不止盈，靠移动止损出场

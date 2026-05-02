@@ -467,10 +467,8 @@ class ICWeightManager:
             return 0
 
         elif factor_name == 'adx':
-            # ADX > 25 表示趋势确认, 但不指明方向
-            # 结合其他因子判断, 这里返回0表示中立
-            if val > 25:
-                return 1   # 有趋势,正向处理
+            # ADX衡量趋势强度, 不指示方向
+            # 在IC计算中保持中立(0), 避免污染方向预测
             return 0
 
         elif factor_name == 'bollinger':

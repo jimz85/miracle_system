@@ -152,10 +152,10 @@ class TestICCalculation:
         assert predicted == -1
 
     def test_calculate_ic_adx_strong_trend(self):
-        """ADX > 25 indicates strong trend"""
+        """ADX measures trend STRENGTH, not direction — should return neutral"""
         manager = ICWeightManager()
         predicted = manager._predict_direction("adx", 30)
-        assert predicted == 1  # has trend
+        assert predicted == 0  # ADX不指示方向
 
     def test_calculate_ic_bollinger_lower_band(self):
         """Bollinger < 0.2 indicates lower band touch = LONG"""
