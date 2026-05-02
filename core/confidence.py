@@ -182,3 +182,82 @@ def multi_tf_adjust(confidence: float, direction: str,
         confidence = confidence * boost
 
     return min(confidence, 1.0)
+
+
+# ==================== G4: 市场情报推荐逻辑 (统一) ====================
+
+_INTEL_RECOMMENDATIONS = {
+    (True, True): "看多",
+    (True, False): "观望",
+    (False, True): "看空",
+    (False, False): "观望",
+}
+
+_INTEL_CAUTIOUS = {
+    "positive": "谨慎看多",
+    "negative": "谨慎看空",
+    "neutral": "观望",
+}
+
+
+def market_intel_recommendation(
+    combined_score: float,
+    signal_values: list,
+    alignment_boost: float = 0.0,
+    threshold: float = 0.3,
+    min_confidence: float = 0.3,
+    max_confidence: float = 0.95,
+) -> tuple:
+    """
+    统一的市场情报推荐方向+置信度生成。
+
+    从 agent_market_intel.py 和 market_intel_llm_agent.py 的重复实现中提取。
+
+    规则:
+        - combined_score > 0.3 + majority positive → 看多, conf由score计算
+        - combined_score < -0.3 + majority negative → 看空, conf由score计算
+        - 混合信号 → 谨慎方向, conf = 0.35 + count*0.05
+        - 完全中性 → 观望, conf = 0.5
+
+    Args:
+        combined_score: 加权综合评分 [-1, 1]
+        signal_values: 各信号评分列表，用于判断方向一致性
+        alignment_boost: 一致性对齐加成 (默认0，LLM版传 alignment_strength*0.1)
+        threshold: 信号显著阈值 (默认0.3)
+        min_confidence: 最小置信度 (默认0.3)
+        max_confidence: 最大置信度 (默认0.95)
+
+    Returns:
+        tuple: (recommendation: str, confidence: float)
+    """
+    positive_count = sum(1 for s in signal_values if s > 0.2)
+    negative_count = sum(1 for s in signal_values if s < -0.2)
+
+    if combined_score > threshold:
+        if positive_count >= 2:
+            recommendation = "看多"
+            confidence = 0.6 + (combined_score - threshold) * 0.5 + alignment_boost
+        else:
+            recommendation = "观望"
+            confidence = 0.4
+    elif combined_score < -threshold:
+        if negative_count >= 2:
+            recommendation = "看空"
+            confidence = 0.6 + abs(combined_score) - threshold * 0.5 + alignment_boost
+        else:
+            recommendation = "观望"
+            confidence = 0.4
+    else:
+        # 混合信号或中性区域
+        if positive_count > negative_count:
+            recommendation = "谨慎看多"
+            confidence = 0.35 + positive_count * 0.05 + alignment_boost
+        elif negative_count > positive_count:
+            recommendation = "谨慎看空"
+            confidence = 0.35 + negative_count * 0.05 + alignment_boost
+        else:
+            recommendation = "观望"
+            confidence = 0.5
+
+    confidence = max(min_confidence, min(max_confidence, confidence))
+    return recommendation, confidence

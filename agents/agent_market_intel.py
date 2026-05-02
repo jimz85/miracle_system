@@ -950,47 +950,19 @@ class MarketIntelAgent:
                                   flow_signal: float,
                                   concentration_signal: float) -> tuple:
         """
-        生成推荐方向和置信度
+        生成推荐方向和置信度（委托 core.confidence.market_intel_recommendation）
 
         Returns:
             (recommendation: str, confidence: float)
         """
-        # 信号一致性分析：三个信号方向是否一致
+        from core.confidence import market_intel_recommendation
+
         signals = [news_result.get("score", 0), flow_signal, concentration_signal]
-        positive_count = sum(1 for s in signals if s > 0.2)
-        negative_count = sum(1 for s in signals if s < -0.2)
-
-        # 推荐逻辑
-        if combined_score > 0.3:
-            if positive_count >= 2:
-                recommendation = "看多"
-                confidence = 0.6 + (combined_score - 0.3) * 0.5
-            else:
-                recommendation = "观望"
-                confidence = 0.4
-        elif combined_score < -0.3:
-            if negative_count >= 2:
-                recommendation = "看空"
-                confidence = 0.6 + abs(combined_score) - 0.3 * 0.5
-            else:
-                recommendation = "观望"
-                confidence = 0.4
-        else:
-            # 混合信号或中性区域
-            if positive_count > negative_count:
-                recommendation = "谨慎看多"
-                confidence = 0.35 + positive_count * 0.05
-            elif negative_count > positive_count:
-                recommendation = "谨慎看空"
-                confidence = 0.35 + negative_count * 0.05
-            else:
-                recommendation = "观望"
-                confidence = 0.5
-
-        # 限制置信度范围
-        confidence = max(0.3, min(0.95, confidence))
-
-        return recommendation, confidence
+        return market_intel_recommendation(
+            combined_score=combined_score,
+            signal_values=signals,
+            alignment_boost=0.0,
+        )
 
     def get_brief_report(self) -> str:
         """获取简洁的文字报告（用于快速展示）"""

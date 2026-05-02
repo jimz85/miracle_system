@@ -327,46 +327,22 @@ class MarketIntelAgentLLM:
     def _generate_recommendation(self, combined_score: float,
                                  sentiment: Dict, onchain: Dict,
                                  whale: Dict, context) -> Tuple[str, float]:
-        """生成推荐"""
+        """生成推荐（委托 core.confidence.market_intel_recommendation）"""
+        from core.confidence import market_intel_recommendation
+
         signals = [
             sentiment.get("score", 0),
             onchain.get("signal", 0),
             whale.get("signal", 0)
         ]
-
-        positive_count = sum(1 for s in signals if s > 0.2)
-        negative_count = sum(1 for s in signals if s < -0.2)
-
         alignment = context.correlation_data.get("signal_alignment", {})
-        alignment_strength = alignment.get("strength", 0)
+        alignment_boost = alignment.get("strength", 0) * 0.1
 
-        if combined_score > 0.3:
-            if positive_count >= 2:
-                recommendation = "看多"
-                confidence = 0.6 + (combined_score - 0.3) * 0.5 + alignment_strength * 0.1
-            else:
-                recommendation = "观望"
-                confidence = 0.4
-        elif combined_score < -0.3:
-            if negative_count >= 2:
-                recommendation = "看空"
-                confidence = 0.6 + abs(combined_score) - 0.3 * 0.5 + alignment_strength * 0.1
-            else:
-                recommendation = "观望"
-                confidence = 0.4
-        else:
-            if positive_count > negative_count:
-                recommendation = "谨慎看多"
-                confidence = 0.35 + positive_count * 0.05 + alignment_strength * 0.1
-            elif negative_count > positive_count:
-                recommendation = "谨慎看空"
-                confidence = 0.35 + negative_count * 0.05 + alignment_strength * 0.1
-            else:
-                recommendation = "观望"
-                confidence = 0.5
-
-        confidence = max(0.3, min(0.95, confidence))
-        return recommendation, confidence
+        return market_intel_recommendation(
+            combined_score=combined_score,
+            signal_values=signals,
+            alignment_boost=alignment_boost,
+        )
 
     def _identify_market_patterns(self, sentiment: Dict, onchain: Dict,
                                   whale: Dict) -> List[Dict]:
