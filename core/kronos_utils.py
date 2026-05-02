@@ -530,7 +530,7 @@ def parallel_scan_coins(
                         if result is not None:
                             results.append(result)
                     except Exception:
-                        pass
+                        logger.debug(f"多币种并发: {future_to_coin[future]} 超时收集失败", exc_info=True)
     
     return results
 

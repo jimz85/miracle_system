@@ -124,7 +124,7 @@ def load_coin_klines_4h(coin: str) -> List[Dict]:
             logger.debug(f"{coin}: 从缓存加载 {len(records)} 根4H K线")
             return records
         except Exception:
-            pass
+            logger.debug(f"{coin}: 缓存读取失败，回退到CSV加载")
     
     # 加载CSV
     try:
@@ -171,6 +171,7 @@ def load_coin_klines_4h(coin: str) -> List[Dict]:
         with open(cache_file, 'wb') as f:
             pickle.dump(records, f)
     except Exception:
+        logger.debug(f"{coin}: 缓存写入失败（非关键）")
         pass
     
     logger.debug(f"{coin}: 从CSV加载 {len(records)} 根4H K线")
@@ -463,7 +464,7 @@ def scan_all_coins():
                             **result,
                         }
                 except Exception as e:
-                    pass
+                    logger.warning(f"{coin}: 策略{strat_name}回测失败: {e}")
         
         if best_result and best_result['sharpe'] > -999:
             all_results.append(best_result)

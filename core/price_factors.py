@@ -39,6 +39,7 @@ class PriceFactors:
                 result = talib.RSI(np.array(prices, dtype=np.float64), period)
                 return float(result)
             except Exception:
+                logger.debug("TA-Lib RSI计算失败，使用pandas回退")
                 pass
 
         # Fallback: pandas ewm vectorized (no Python for-loop)
@@ -96,6 +97,7 @@ class PriceFactors:
                     "minus_di": float(minus_di),
                 }
             except Exception:
+                logger.debug("TA-Lib ADX计算失败，使用numpy回退")
                 pass
 
         # Vectorized numpy (no Python for-loops for main smoothing)

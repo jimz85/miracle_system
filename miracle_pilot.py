@@ -152,6 +152,7 @@ def get_system_status() -> Dict[str, Any]:
                 last_line = lines[-1]
                 status['last_scan'] = last_line[:19] if len(last_line) > 19 else last_line
         except Exception:
+            logger.debug("pilot日志读取失败（非关键）")
             pass
     
     # 检查持仓
@@ -201,6 +202,7 @@ def get_account_summary() -> Dict[str, Any]:
             data = json.load(open(equity_cache))
             summary['equity'] = data.get('equity', 0.0)
         except Exception:
+            logger.debug("pilot权益缓存读取失败")
             pass
     
     # 从交易记录计算
@@ -367,6 +369,7 @@ def get_positions_detail() -> List[Dict[str, Any]]:
             if ticker:
                 pos['current_price'] = ticker.get('last', 0)
         except Exception:
+            logger.warning(f"获取{pos.get('symbol', '?')} ticker失败，当前价格=0")
             pass
         
         # 计算未实现盈亏
@@ -391,6 +394,7 @@ def get_positions_detail() -> List[Dict[str, Any]]:
                 else:
                     pos['hold_time'] = f"{hours:.1f}小时"
             except Exception:
+                logger.debug(f"持仓时间解析失败: {pos.get('opened_at', '?')}")
                 pass
         
         positions.append(pos)
@@ -552,6 +556,7 @@ def generate_live_signals(symbols: List[str] = None) -> List[Dict[str, Any]]:
         with open(SIGNALS_FILE, 'w') as f:
             json.dump({'signals': signals, 'updated': datetime.now().isoformat()}, f, indent=2)
     except Exception:
+        logger.debug("pilot信号缓存写入失败")
         pass
     
     return signals

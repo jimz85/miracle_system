@@ -270,6 +270,7 @@ class StateReconciler:
                         if algo_id:
                             algo_ids.append(algo_id)
             except Exception:
+                logger.warning(f"获取algo订单失败 for pos {pos.get('posId', '?')}", exc_info=True)
                 pass
         return algo_ids
     
@@ -492,6 +493,7 @@ class StateReconciler:
                                 algo_type=pos_data.get('algo_type', 'oco')
                             )
             except Exception:
+                logger.warning(f"获取algo订单失败 for pos {pos.get('posId', '?')}", exc_info=True)
                 pass
 
         return orders

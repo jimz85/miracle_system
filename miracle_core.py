@@ -1253,7 +1253,7 @@ def _notify_fallback(reason: str, detail: str):
         }
         _req.post(webhook, json=payload, timeout=5)
     except Exception:
-        pass
+        logger.warning(f"Webhook告警发送失败: reason={reason}")
 
 
 def _get_mock_account_state(simulated: bool = True) -> Dict[str, Any]:

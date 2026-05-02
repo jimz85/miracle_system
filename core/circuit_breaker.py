@@ -122,6 +122,7 @@ class EquitySnapshot:
                 for item in data:
                     f.write(json.dumps(item, ensure_ascii=False) + "\n")
         except Exception:
+            logger.debug("电路断路器归档失败（非关键）")
             pass  # 归档失败不影响主流程
 
     def _load_from_archive(self, history_type: str) -> List[dict]:
@@ -152,6 +153,7 @@ class EquitySnapshot:
                             except json.JSONDecodeError:
                                 continue
         except Exception:
+            logger.debug("电路断路器归档加载失败，返回空列表")
             pass  # 加载失败返回空列表
         return archived_data
 

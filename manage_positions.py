@@ -46,6 +46,7 @@ def release_lock(fd):
         try:
             LOCK_FILE.unlink()
         except Exception:
+            logger.debug("持仓锁文件清理失败")
             pass  # silently ignore if lock file already removed
 
 # ===== 导入核心函数 =====

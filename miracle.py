@@ -40,6 +40,7 @@ def _load_last_equity() -> float:
             d = json.load(open(EQUITY_CACHE_FILE))
             return d.get("equity", 0.0)
         except Exception:
+            logger.debug("权益缓存读取失败，返回0.0（拒绝交易）")
             pass
     return 0.0  # 首次运行且API失败 → 返回0，拒绝交易
 

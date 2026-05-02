@@ -449,6 +449,7 @@ class VectorMemory:
                     try:
                         memory['embedding'] = json.loads(row['embedding'])
                     except Exception:
+                        logger.debug("向量内存: embedding反序列化失败")
                         pass
                 results.append(memory)
         

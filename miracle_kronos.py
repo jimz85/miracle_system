@@ -2297,6 +2297,7 @@ def _ai_trader_decision(coin: str, closes: list, highs: list, lows: list,
                     result['model'] = 'qwen3-nvidia'
                     return result
     except Exception:
+        logger.warning("qwen3 LLM输出JSON解析失败", exc_info=True)
         pass
 
     # 后备方案1: 本地Qwen2.5-7B (Ollama)
@@ -2320,9 +2321,10 @@ def _ai_trader_decision(coin: str, closes: list, highs: list, lows: list,
                             result['model'] = 'qwen-local'
                             return result
                     except Exception:
+                        logger.debug("Qwen单行JSON解析失败，继续下一行")
                         pass
     except Exception:
-        pass
+        logger.debug("Qwen整体响应解析失败，尝试后备Gemma4")
     
     # 后备方案2: Gemma4-2B快速投票
     try:
@@ -2906,7 +2908,7 @@ def main():
             try:
                 lock_file.unlink()
             except OSError:
-                pass
+                logger.debug(f"锁文件清理失败: {lock_file}")
         return
     
     result = run_scan(equity, btc_trend, args.mode)

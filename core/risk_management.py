@@ -108,6 +108,7 @@ class DynamicPositionSizer:
                 for item in data:
                     f.write(json.dumps(item, ensure_ascii=False) + "\n")
         except Exception:
+            logger.debug(f"_archive_{history_type} 归档失败", exc_info=True)
             pass
 
     def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
@@ -564,6 +565,7 @@ class CrossCurrencyRiskMonitor:
                 for item in data:
                     f.write(json.dumps(item, ensure_ascii=False) + "\n")
         except Exception:
+            logger.debug(f"_archive_{history_type} 归档失败", exc_info=True)
             pass
 
     def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
@@ -790,6 +792,7 @@ class SlippageFeeSimulator:
                 for item in data:
                     f.write(json.dumps(item, ensure_ascii=False) + "\n")
         except Exception:
+            logger.debug(f"_archive_{history_type} 归档失败", exc_info=True)
             pass
 
     def _trim_history(self, history: List, max_size: int, history_type: str) -> None:
