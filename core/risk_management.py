@@ -380,6 +380,122 @@ class TargetVolatilitySizing:
 
 
 # ========================
+# Kelly 动态仓位公式
+# ========================
+
+class KellyPositionSizer:
+    """Kelly公式动态仓位计算器
+
+    核心公式: f* = (p * b - q) / b
+    - p = 胜率 (win_rate)
+    - q = 败率 (1 - p)
+    - b = 平均盈亏比 (avg_win / avg_loss)
+
+    使用 Fractional Kelly (25-50%) 防止过度激进。
+    当胜率<50%时自动使用保守版。
+
+    Args:
+        win_rate: 历史胜率 (0.0~1.0)
+        win_loss_ratio: 平均盈/平均亏比 (>0)
+        fractional_kelly: Kelly比例 (0.0~1.0)，默认0.25保守
+        max_position_pct: 最大仓位占比 (0.0~1.0)
+        min_position_pct: 最小仓位占比 (0.0~1.0)
+    """
+
+    def __init__(
+        self,
+        win_rate: float = 0.55,
+        win_loss_ratio: float = 2.0,
+        fractional_kelly: float = 0.25,
+        max_position_pct: float = 0.20,
+        min_position_pct: float = 0.02,
+    ):
+        self.win_rate = max(0.01, min(0.99, win_rate))
+        self.win_loss_ratio = max(0.1, win_loss_ratio)
+        self.fractional_kelly = max(0.0, min(1.0, fractional_kelly))
+        self.max_pct = max_position_pct
+        self.min_pct = min_position_pct
+
+    @property
+    def kelly_fraction(self) -> float:
+        """计算最优Kelly比例 f* = (p * b - q) / b"""
+        p = self.win_rate
+        b = self.win_loss_ratio
+        q = 1.0 - p
+        if b <= 0:
+            return 0.0
+        kelly = (p * b - q) / b
+        return max(0.0, kelly)
+
+    @property
+    def half_kelly(self) -> float:
+        """Half-Kelly: 更保守，减少回撤"""
+        return self.kelly_fraction * 0.5
+
+    def calculate_position_pct(self, use_half_kelly: bool = True) -> float:
+        """计算推荐仓位比例
+
+        Args:
+            use_half_kelly: 使用Half-Kelly（默认True，更安全）
+
+        Returns:
+            仓位占总资金比例 (0.0~1.0)
+        """
+        base = self.half_kelly if use_half_kelly else self.kelly_fraction
+
+        # 对低胜率策略自动调整
+        if self.win_rate < 0.40:
+            # 胜率<40%时，强约束风险
+            base = min(base, 0.05)
+
+        # 应用Fractional Kelly
+        pct = base * self.fractional_kelly
+
+        # 约束范围
+        return max(self.min_pct, min(self.max_pct, pct))
+
+    def calculate_position_size(
+        self,
+        account_balance: float,
+        use_half_kelly: bool = True,
+    ) -> Dict[str, Any]:
+        """计算仓位金额
+
+        Args:
+            account_balance: 账户总资金
+            use_half_kelly: 使用Half-Kelly
+
+        Returns:
+            dict with position_pct, position_value, kelly_pct, params
+        """
+        pct = self.calculate_position_pct(use_half_kelly)
+        return {
+            "position_pct": round(pct, 4),
+            "position_value": round(account_balance * pct, 2),
+            "account_balance": account_balance,
+            "kelly_pct": round(self.kelly_fraction, 4),
+            "half_kelly_pct": round(self.half_kelly, 4),
+            "win_rate": self.win_rate,
+            "win_loss_ratio": self.win_loss_ratio,
+            "fractional_kelly": self.fractional_kelly,
+        }
+
+    def update_stats(self, win_rate: float, win_loss_ratio: float) -> None:
+        """更新胜率和盈亏比（可以在交易过程中动态调整）"""
+        self.win_rate = max(0.01, min(0.99, win_rate))
+        self.win_loss_ratio = max(0.1, win_loss_ratio)
+
+    def __repr__(self) -> str:
+        k = self.kelly_fraction
+        hk = self.half_kelly
+        fp = self.calculate_position_pct(use_half_kelly=True)
+        return (f"KellyPositionSizer(WR={self.win_rate:.2%}, "
+                f"WLR={self.win_loss_ratio:.2f}, "
+                f"Kelly={k:.2%}, HalfKelly={hk:.2%}, "
+                f"Fractional({self.fractional_kelly:.0%})=>{fp:.2%})")
+
+
+# ========================
 # 跨币种风险监控
 # ========================
 
