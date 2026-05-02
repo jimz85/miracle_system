@@ -211,14 +211,18 @@ def run_autoresearch(
     timeframe: str = "1h",
     baseline_config: StrategyConfig = None,
     start_from_best: bool = True,
-    improvement_threshold: float = 0.0,  # Sharpe改善 > threshold 才keep
+    improvement_threshold: float = 0.1,  # Sharpe改善 > 0.1 才keep（防过拟合）
     max_time_minutes: int = 480,  # 最多运行8小时
     wf_mode: str = "expanding",  # walkforward模式
     bear_only: bool = True,  # 只用熊市数据
     data_dir: Path = None,  # 数据目录
+    oos_ratio: float = 0.2,  # OOS验证保留比例（最后20%不参与任何实验）
 ):
     """
     主Autoresearch循环
+    
+    OOS验证: 保留最后 oos_ratio 比例的数据完全不参与实验，
+    在找到最优参数后用OOS数据验证，防止过拟合。
     """
     coins = coins or DEFAULT_COINS
     ensure_dirs()
@@ -228,19 +232,43 @@ def run_autoresearch(
     print(f"KRONOS AUTORESEARCH | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"Coins: {coins} | Timeframe: {timeframe} | WF mode: {wf_mode} | Bear only: {bear_only}")
     print(f"Max experiments: {n_experiments} | Max time: {max_time_minutes}min")
+    print(f"OOS holdout: {oos_ratio*100:.0f}% (last {oos_ratio*100:.0f}% untouched)")
     print(f"{'='*70}\n")
 
     # Step 1: 加载数据
     print("[1/5] Loading data...")
     start_load = time.time()
-    data = load_all_data(timeframe, bear_only=bear_only, coins=coins, data_dir=data_dir)
-    print(f"Loaded {len(data)} coins in {time.time()-start_load:.1f}s\n")
+    all_data = load_all_data(timeframe, bear_only=bear_only, coins=coins, data_dir=data_dir)
+    print(f"Loaded {len(all_data)} coins in {time.time()-start_load:.1f}s\n")
 
-    if not data:
+    if not all_data:
         print("ERROR: No data loaded. Check data paths.")
-        # 写失败标记，供gemma4检查
         Path("/tmp/autoresearch_last_failure").write_text(f"{datetime.now().isoformat()}: No data loaded for coins={coins}")
         return
+
+    # OOS分割：保留最后 oos_ratio 数据作为完全没见过的验证集
+    data = {}
+    oos_data = {}
+    for coin, df in all_data.items():
+        # 确保按时间排序
+        if 'datetime_utc' in df.columns:
+            df = df.sort_values('datetime_utc').reset_index(drop=True)
+        split_idx = int(len(df) * (1 - oos_ratio))
+        if split_idx < 200:
+            print(f"  {coin}: SKIP OOS (train set too small: {split_idx} rows)")
+            data[coin] = df
+            continue
+        data[coin] = df.iloc[:split_idx].copy()
+        oos_df = df.iloc[split_idx:].copy()
+        if len(oos_df) >= 30:
+            oos_data[coin] = oos_df
+        print(f"  {coin}: {len(data[coin])} train + {len(oos_df)} OOS holdout")
+
+    if not data:
+        print("ERROR: No training data after OOS split. Aborting.")
+        return
+
+    print(f"\nOOS holdout coins: {list(oos_data.keys())}\n")
 
     # Step 2: 建立baseline
     if baseline_config is None:
@@ -261,8 +289,8 @@ def run_autoresearch(
     best_sharpe = best.sharpe if best else 0.0
     print(f"Current best Sharpe: {best_sharpe:.3f}\n")
 
-    # Step 4: 运行实验
-    print(f"[2/5] Running {n_experiments} experiments...\n")
+    # Step 4: 运行实验（仅在训练集上）
+    print(f"[2/5] Running {n_experiments} experiments on training data ({len(data)} coins)...\n")
     start_time = time.time()
     kept_count = 0
     discarded_count = 0
@@ -355,6 +383,57 @@ def run_autoresearch(
 
     from experiment_logger import read_results
     print_summary(read_results())
+
+    # Step 6: OOS验证 — 用完全没见过的数据验证最佳策略
+    print(f"\n{'='*70}")
+    print("🔬 OOS VALIDATION — 样本外验证")
+    print(f"{'='*70}")
+    if oos_data and best and best.config:
+        try:
+            best_config = StrategyConfig.from_dict(best.config)
+            oos_results = run_experiment(best_config, oos_data, list(oos_data.keys()),
+                                        n_windows=min(4, n_windows), wf_mode=wf_mode)
+            oos_metrics = aggregate_results(oos_results)
+
+            oos_sharpe = oos_metrics["avg_sharpe"]
+            oos_return = oos_metrics["avg_return"]
+            oos_dd = oos_metrics["avg_dd"]
+            oos_wr = oos_metrics["avg_win_rate"]
+            oos_trades = oos_metrics["total_trades"]
+
+            print(f"\n  Training Sharpe: {best.sharpe:.3f}")
+            print(f"  OOS Sharpe:      {oos_sharpe:.3f}")
+            print(f"  OOS Return:      {oos_return:.1f}%")
+            print(f"  OOS Max DD:      {oos_dd:.1f}%")
+            print(f"  OOS Win Rate:    {oos_wr:.1f}%")
+            print(f"  OOS Trades:      {oos_trades}")
+
+            # 判定标准
+            oos_passed = True
+            if oos_trades < 10:
+                print(f"\n  ⚠️  OOS交易太少({oos_trades})，结论不可靠")
+                oos_passed = False
+            if oos_sharpe < 0:
+                print(f"\n  ❌ OOS Sharpe为负！策略在样本外亏损")
+                oos_passed = False
+            if best.sharpe > 0 and oos_sharpe < best.sharpe * 0.3:
+                print(f"\n  ❌ OOS Sharpe严重退化({oos_sharpe:.3f} < {best.sharpe*0.3:.3f})，强烈过拟合信号")
+                oos_passed = False
+            if oos_dd > 25:
+                print(f"\n  ❌ OOS最大回撤{oos_dd:.1f}% > 25%，风险过高")
+                oos_passed = False
+
+            if oos_passed:
+                print(f"\n  ✅ OOS验证通过 — 策略具备泛化能力")
+            else:
+                print(f"\n  ⚠️  OOS验证未完全通过 — 最佳策略可能存在过拟合")
+                print(f"     建议检查参数范围或增加OOS数据量")
+        except Exception as e:
+            print(f"\n  ⚠️  OOS验证异常: {e}")
+            traceback.print_exc()
+    else:
+        print(f"\n  ⏭️  跳过OOS验证 (oos_data={len(oos_data) if oos_data else 0}, best_config={'yes' if best and best.config else 'no'})")
+    print(f"{'='*70}\n")
 
     # 保存最优配置
     best = get_best_result()
@@ -705,6 +784,8 @@ if __name__ == "__main__":
                         help="使用完整历史数据（不用熊市过滤）")
     parser.add_argument("--data-dir", type=str, default=None,
                         help="数据目录路径，默认使用 ~/kronos/")
+    parser.add_argument("--oos", type=float, default=0.2,
+                        help="OOS验证保留比例 (0~1)，默认0.2=保留最后20%做样本外验证")
     args = parser.parse_args()
 
     coins = args.coins.split(",")
@@ -725,4 +806,5 @@ if __name__ == "__main__":
             wf_mode=args.wf_mode,
             bear_only=not args.no_bear_only,
             data_dir=data_dir,
+            oos_ratio=args.oos,
         )
