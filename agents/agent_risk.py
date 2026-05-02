@@ -22,6 +22,47 @@ from typing import Any, Dict, Optional, Tuple
 from core.circuit_breaker import MiracleCircuitBreaker, SurvivalTier
 
 # ============================================================
+# Kelly 仓位辅助
+# ============================================================
+
+class KellyPositionSizer:
+    """Kelly公式动态仓位计算器 (Agent-R内置版)
+    
+    核心公式: f* = (p * b - q) / b
+    使用 Half-Kelly (50%) + Fractional 25% 保守策略。
+    当胜率<40%时自动使用最小仓位。
+    """
+    
+    def __init__(self, win_rate: float = 0.50, win_loss_ratio: float = 2.0,
+                 min_position_pct: float = 2.0, max_position_pct: float = 15.0):
+        self.win_rate = max(0.01, min(0.99, win_rate))
+        self.win_loss_ratio = max(0.1, win_loss_ratio)
+        self.min_pct = min_position_pct
+        self.max_pct = max_position_pct
+    
+    def get_kelly_fraction(self) -> float:
+        """f* = (p * b - q) / b"""
+        p, b, q = self.win_rate, self.win_loss_ratio, 1.0 - self.win_rate
+        if b <= 0:
+            return 0.0
+        return max(0.0, (p * b - q) / b)
+    
+    def get_half_kelly(self) -> float:
+        return self.get_kelly_fraction() * 0.5
+    
+    def get_position_pct(self) -> float:
+        """Half-Kelly * 25% fractional, 约束到 [min, max]"""
+        base = self.get_half_kelly()
+        if self.win_rate < 0.40:
+            base = min(base, 5.0)  # 低胜率最多5%
+        pct = base * 0.25
+        return max(self.min_pct, min(self.max_pct, pct))
+    
+    def update(self, win_rate: float, win_loss_ratio: float) -> None:
+        self.win_rate = max(0.01, min(0.99, win_rate))
+        self.win_loss_ratio = max(0.1, win_loss_ratio)
+
+# ============================================================
 # 数据结构
 # ============================================================
 
@@ -125,14 +166,14 @@ class CircuitBreaker:
 
         return True, None
 
-    def check_consecutive_losses(self, loss_streak: int, last_trade_time: datetime | None) -> Tuple[bool, str | None, datetime | None]:
+    def check_consecutive_losses(self, loss_streak: int, last_trade_time: datetime | None,
+                                 account_balance: float = 1) -> Tuple[bool, str | None, datetime | None]:
         """
         检查连续亏损是否触发冷却期
         Returns: (can_trade, reason_if_blocked, resume_time)
         """
-        # 五级生存层前置检查
-        # 使用account_balance占位（check_consecutive_losses不直接持有余额，从调用方传入）
-        result = self._mc.check(equity=0, positions=[])
+        # 五级生存层前置检查（用实际余额代替之前的equity=0占位）
+        result = self._mc.check(equity=account_balance, positions=[])
         if result.tier in (SurvivalTier.CRITICAL, SurvivalTier.PAUSED):
             return False, f"[五级生存层] {result.reason}", None
 
@@ -230,6 +271,15 @@ class AgentRisk:
         self.base_position_pct: float = self.config.get("base_position_pct", 2.0)  # 基础仓位2%
         self.max_position_pct: float = self.config.get("max_position_pct", 15.0)   # 最大仓位15%
 
+        # Kelly 动态仓位（覆盖固定base_position_pct）
+        self.use_kelly: bool = self.config.get("use_kelly", True)  # 默认启用Kelly
+        self.kelly_sizer = KellyPositionSizer(
+            win_rate=0.50,
+            win_loss_ratio=2.0,
+            min_position_pct=self.base_position_pct,
+            max_position_pct=self.max_position_pct,
+        )
+
         # 止损配置
         self.min_stop_loss_pct: float = self.config.get("min_stop_loss_pct", 0.5)   # 最小止损0.5%
         self.max_stop_loss_pct: float = self.config.get("max_stop_loss_pct", 5.0)  # 最大止损5%
@@ -242,6 +292,24 @@ class AgentRisk:
         # 趋势/置信度阈值（高频模式调低）
         self.min_confidence: float = self.config.get("min_confidence", 0.15)       # 最低置信度 0.15
         self.min_trend_strength: float = 15.0  # 最低趋势强度阈值（高频模式）
+
+    def set_trade_stats(self, win_rate: float, win_loss_ratio: float) -> None:
+        """从外部设置交易统计数据（用于Kelly仓位计算）
+        
+        应在每次交易后由系统调用，更新最近N笔交易的胜率和盈亏比。
+        """
+        self.kelly_sizer.update(win_rate, win_loss_ratio)
+
+    def get_kelly_info(self) -> Dict[str, Any]:
+        """返回当前Kelly计算状态（用于日志/调试）"""
+        return {
+            "use_kelly": self.use_kelly,
+            "kelly_pct": round(self.kelly_sizer.get_kelly_fraction(), 4),
+            "half_kelly_pct": round(self.kelly_sizer.get_half_kelly(), 4),
+            "position_pct": round(self.kelly_sizer.get_position_pct(), 2),
+            "win_rate": round(self.kelly_sizer.win_rate, 4),
+            "win_loss_ratio": round(self.kelly_sizer.win_loss_ratio, 2),
+        }
 
     # --------------------------------------------------------
     # 1. 杠杆计算
@@ -283,17 +351,20 @@ class AgentRisk:
         """
         科学计算仓位百分比
         公式: 仓位% = 基础仓位 × 杠杆系数 × 置信度系数 × 恢复系数
-        - 基础仓位 = 账户2%
+        - 基础仓位 = Kelly动态计算（默认2%保守起步）或 固定2%
         - 杠杆系数: 1x=1.0, 2x=1.5, 3x=1.8
         - 置信度系数: 0.5-1.0 线性
         - 恢复系数: 连亏后渐进恢复（0.25-1.0）
-        - 最大仓位 ≤ 15%单币
+        - 最大仓位 ≤ max_position_pct
         """
         if leverage == 0:
             return 0.0
 
-        # 基础仓位
-        base_pos = self.base_position_pct / 100.0  # 2%
+        # 基础仓位: Kelly动态 vs 固定配置
+        if self.use_kelly:
+            base_pos = self.kelly_sizer.get_position_pct() / 100.0
+        else:
+            base_pos = self.base_position_pct / 100.0  # 固定2%
 
         # 杠杆系数
         leverage_factor = {1: 1.0, 2: 1.5, 3: 1.8}.get(leverage, 1.0)
@@ -427,7 +498,8 @@ class AgentRisk:
 
         # 1.3 连续亏损检查
         passed, reason, resume_time = self.circuit_breaker.check_consecutive_losses(
-            account_state.loss_streak, account_state.last_trade_time
+            account_state.loss_streak, account_state.last_trade_time,
+            account_balance=account_state.balance
         )
         if not passed:
             approval.rejection_reason = f"[熔断-连亏] {reason}"
