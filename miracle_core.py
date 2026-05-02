@@ -1023,6 +1023,16 @@ def update_factor_weights(trade_history: List[Trade], use_ic: bool = True) -> Di
     # 将更新后的因子权重写回全局 CONFIG
     update_config("factors", factors)
 
+    # 持久化到磁盘（重启后不丢失）
+    try:
+        factors_file = Path(__file__).parent / "data" / "factor_weights.json"
+        factors_file.parent.mkdir(exist_ok=True)
+        with open(factors_file, "w") as f:
+            json.dump({"weights": factors, "updated": datetime.now().isoformat()},
+                      f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"因子权重持久化失败: {e}")
+
     return factors
 
 # ===== 交易频次控制 =====
