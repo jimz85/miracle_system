@@ -10,7 +10,10 @@ PriceFactors: 价格技术指标计算器
 
 from typing import Any, Dict, List
 
+import logging
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:
     import pandas as pd

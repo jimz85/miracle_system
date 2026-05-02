@@ -27,6 +27,7 @@ Miracle Circuit Breaker - 熔断机制封装
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+import logging
 import os
 import threading
 from datetime import datetime
@@ -40,6 +41,8 @@ except ImportError:
         pass
 
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════
 # Survival Tier Enum

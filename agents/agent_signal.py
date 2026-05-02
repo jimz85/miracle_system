@@ -20,6 +20,8 @@ Agent-S: Signal Generation Agent for Miracle 1.0.1
 import logging
 import uuid
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 

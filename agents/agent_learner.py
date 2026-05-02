@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import sqlite3
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -708,9 +709,18 @@ class PatternLearner:
             self.pattern_db = {}
 
     def _save(self):
-        """保存模式库"""
-        with open(self.pattern_db_path, 'w') as f:
-            json.dump(self.pattern_db, f, indent=2)
+        """保存模式库（原子写）"""
+        fd, tmp = tempfile.mkstemp(suffix='.json.tmp', dir=os.path.dirname(self.pattern_db_path))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(self.pattern_db, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.pattern_db_path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def extract_pattern(self, trade_data: Dict[str, Any]) -> str:
         """
@@ -819,8 +829,17 @@ class PatternLearner:
             with open(blacklist_path) as f:
                 blacklist = set(json.load(f))
         blacklist.update(pattern_keys)
-        with open(blacklist_path, 'w') as f:
-            json.dump(list(blacklist), f)
+        fd, tmp = tempfile.mkstemp(suffix='.json.tmp', dir=os.path.dirname(blacklist_path))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(list(blacklist), f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, blacklist_path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
         logger.info(f"Added patterns to blacklist: {pattern_keys}")
 
 
@@ -850,12 +869,21 @@ class WhitelistManager:
             self.last_update = ''
 
     def _save(self):
-        """保存白名单"""
-        with open(self.whitelist_path, 'w') as f:
-            json.dump({
-                'patterns': self.whitelist,
-                'last_update': datetime.now().isoformat()
-            }, f, indent=2)
+        """保存白名单（原子写）"""
+        fd, tmp = tempfile.mkstemp(suffix='.json.tmp', dir=os.path.dirname(self.whitelist_path))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'patterns': self.whitelist,
+                    'last_update': datetime.now().isoformat()
+                }, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.whitelist_path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def add_to_whitelist(
         self,
@@ -1111,9 +1139,18 @@ class StrategyOptimizer:
         }
 
     def _save_config(self):
-        """保存配置"""
-        with open(self.config_path, 'w') as f:
-            json.dump(self.config, f, indent=2)
+        """保存配置（原子写）"""
+        fd, tmp = tempfile.mkstemp(suffix='.json.tmp', dir=os.path.dirname(self.config_path))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.config_path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
 
     def check_and_adjust(self) -> Dict[str, Any]:
         """
