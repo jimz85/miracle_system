@@ -277,10 +277,10 @@ class CircuitBreaker:
 
     五级生存层机制:
     - NORMAL: 亏损 0% (相对于初始权益)
-    - CAUTION: 亏损 0-5%
-    - LOW: 亏损 5-10%
-    - CRITICAL: 亏损 10-20%
-    - PAUSED: 亏损 >20%
+    - CAUTION: 亏损 0~5%
+    - LOW: 亏损 5~10%
+    - CRITICAL: 亏损 10~20%
+    - PAUSED: 亏损 20~30%
 
     渐进恢复:
     - 连亏计数重置后，需要一定盈利才能恢复层级

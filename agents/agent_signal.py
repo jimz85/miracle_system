@@ -147,6 +147,7 @@ class SignalGenerator:
         """
         score = 0.0
         weights_sum = 0.0
+        regime = factors.get("regime", "sideways")
 
         # RSI 评分 (权重 0.25)
         # 与WhitelistFilter保持一致的阈值设计
@@ -163,6 +164,14 @@ class SignalGenerator:
             rsi_score = -0.6  # 偏高 → 卖出
         else:
             rsi_score = -1.0  # 超买 → 强烈卖出
+
+        # Regime-aware RSI filter: 趋势市场抑制逆势信号
+        # BULL趋势：不做空(RSI信号压低)，但回调买入(RSI<40)保留
+        # BEAR趋势：不做多(RSI信号压低)，但反弹卖出(RSI>60)保留
+        if regime == "bull" and rsi_score < 0:
+            rsi_score = 0  # 牛市不做空
+        elif regime == "bear" and rsi_score > 0:
+            rsi_score = 0  # 熊市不做多
         score += rsi_score * 0.25
         weights_sum += 0.25
 
@@ -177,14 +186,18 @@ class SignalGenerator:
             macd_normalized = 0.0
         # 映射到 -1 ~ 1 范围（0.01 = 1%价格变动）
         macd_score = max(-1.0, min(1.0, macd_normalized / 0.01))
-        score += macd_score * 0.25
-        weights_sum += 0.25
+        # 震荡市：MACD趋势信号不可靠，压低权重避免假突破
+        macd_weight = 0.125 if regime == "sideways" else 0.25
+        score += macd_score * macd_weight
+        weights_sum += macd_weight
 
         # 动量评分 (权重 0.25)
         momentum = factors.get("momentum", 0)
         momentum_score = max(min(momentum / 10, 1.0), -1.0)  # ±10% 归一化
-        score += momentum_score * 0.25
-        weights_sum += 0.25
+        # 震荡市：动量信号不可靠，压低权重
+        momentum_weight = 0.125 if regime == "sideways" else 0.25
+        score += momentum_score * momentum_weight
+        weights_sum += momentum_weight
 
         # 趋势评分 (权重 0.25)
         trend = factors.get("trend", "range")
@@ -194,6 +207,7 @@ class SignalGenerator:
             trend_score = -1.0
         else:
             trend_score = 0.0
+        # 趋势评分震荡市已在内生为0，权重不变
         score += trend_score * 0.25
         weights_sum += 0.25
 

@@ -2140,6 +2140,19 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
                 leverage = 2  # Weak trend
             else:
                 leverage = 3  # Strong trend
+
+            # P2: 波动率感知杠杆 — 高波币种降低杠杆上限
+            # BTC/ETH (ATR~2%) = 3x, 主流(ATR 3-5%) = 2x, 山寨(ATR>5%) = 1x
+            coin_sym = best['symbol'].upper().replace('USDT','')
+            if coin_sym in ('BTC', 'ETH'):
+                leverage = min(leverage, 3)
+            elif coin_sym in ('SOL', 'AVAX', 'LINK', 'DOT', 'XRP', 'BNB'):
+                leverage = min(leverage, 2)
+            elif coin_sym in ('DOGE', 'ALGO', 'FIL', 'GRT', 'CVC', 'GAS', 'BNT'):
+                leverage = min(leverage, 1)
+            else:
+                leverage = min(leverage, 2)  # 未知币种保守2x
+
             result = place_oco(
                 best['instId'], best['direction'], sz,
                 entry, best['sl'], best['tp'], equity, leverage
