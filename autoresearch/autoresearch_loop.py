@@ -74,7 +74,10 @@ def load_all_data(timeframe: str = "1h", bear_only: bool = True, coins=None, dat
                 df["datetime_utc"] = pd.to_datetime(df["datetime_utc"])
                 # 动态结束日期：使用数据中的最新日期
                 dynamic_end = df["datetime_utc"].max().strftime("%Y-%m-%d")
-                mask = (df["datetime_utc"] >= "2025-08-01") & (df["datetime_utc"] <= dynamic_end)
+                # 动态熊市窗口：使用最近18个月数据（代替硬编码日期）
+                # 防止时间推移后硬编码日期逐渐失效
+                dynamic_start = (df["datetime_utc"].max() - pd.Timedelta(days=548)).strftime("%Y-%m-%d")
+                mask = (df["datetime_utc"] >= dynamic_start) & (df["datetime_utc"] <= dynamic_end)
                 df = df[mask].copy()
                 if len(df) < 200:
                     print(f"    {coin}: SKIP (bear period has only {len(df)} rows)")

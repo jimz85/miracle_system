@@ -25,6 +25,7 @@ import re
 import sys
 import time
 import traceback
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -400,7 +401,7 @@ class HypothesisGenerator:
 
         reasoning = result.get("reasoning", "LLM分析")[:120]
         confidence = max(0.3, min(0.95, result.get("confidence", 0.5)))
-        hyp_id = f"hyp_{datetime.now().strftime('%m%d%H%M%S')}_{random.randint(1000,9999)}"
+        hyp_id = f"hyp_{uuid.uuid4().hex[:12]}"
 
         logger.info("LLM假设: %s | 突变: %s | 置信度: %.2f", reasoning, valid_mutations, confidence)
         return Hypothesis(
@@ -453,7 +454,7 @@ class HypothesisGenerator:
 
         desc = f"random_mutate({', '.join(f'{k}={v}' for k, v in mutations.items())})"
         return Hypothesis(
-            id=f"hyp_{datetime.now().strftime('%m%d%H%M%S')}_{random.randint(1000,9999)}",
+            id=f"hyp_{uuid.uuid4().hex[:12]}",
             description=desc,
             mutations=mutations,
             confidence=0.5,
@@ -512,7 +513,7 @@ class HypothesisGenerator:
 
         desc = f"trend_extrapolate({', '.join(f'{k}={v}' for k, v in mutations.items())})"
         return Hypothesis(
-            id=f"hyp_{datetime.now().strftime('%m%d%H%M%S')}_{random.randint(1000,9999)}",
+            id=f"hyp_{uuid.uuid4().hex[:12]}",
             description=desc,
             mutations=mutations,
             confidence=0.7,
@@ -554,7 +555,7 @@ class HypothesisGenerator:
 
         desc = f"focused_optimize({', '.join(f'{k}={v}' for k, v in mutations.items())})"
         return Hypothesis(
-            id=f"hyp_{datetime.now().strftime('%m%d%H%M%S')}_{random.randint(1000,9999)}",
+            id=f"hyp_{uuid.uuid4().hex[:12]}",
             description=desc,
             mutations=mutations,
             confidence=0.6,
@@ -974,11 +975,20 @@ class AutonomousLoop:
         hypothesis = validation_result.get("hypothesis")
 
         current_sharpe = metrics.get("avg_sharpe", 0)
+        current_win_rate = metrics.get("avg_win_rate", 0)
+        current_max_dd = metrics.get("avg_dd", 0)
         improvement = current_sharpe - self.state.best_sharpe
 
-        # 判断是否keep
-        improvement_threshold = 0.0
-        if improvement > improvement_threshold:
+        # 判断是否keep — 三重条件防过拟合
+        # 1. Sharpe必须明显改善(>0.1)
+        # 2. 胜率 > 40%（排除随机水平）
+        # 3. 最大回撤 < 20%（防止高风险策略）
+        improvement_threshold = 0.1
+        passes_sharpe = improvement > improvement_threshold
+        passes_win_rate = current_win_rate > 0.40
+        passes_drawdown = current_max_dd < 20.0
+
+        if passes_sharpe and passes_win_rate and passes_drawdown:
             status = "keep"
             self.state.kept_count += 1
             if current_sharpe > self.state.best_sharpe:
