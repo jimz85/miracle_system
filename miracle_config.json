@@ -70,6 +70,14 @@
       "metrics": [
         "holder_concentration"
       ]
+    },
+    "orderbook": {
+      "enabled": true,
+      "weight": 0.1,
+      "metrics": [
+        "bid_ask_pressure",
+        "order_flow_imbalance"
+      ]
     }
   },
   "feishu": {

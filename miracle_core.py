@@ -359,6 +359,8 @@ from core.data_feeds import (
     calc_wallet_metrics as _real_wallet,
     calc_news_sentiment as _real_news,
 )
+# 订单簿微观结构信号
+from core.orderbook_analyzer import compute_orderbook_signal
 
 
 def calc_onchain_metrics(coin: str = "BTC") -> Dict[str, float]:
@@ -398,7 +400,8 @@ def calc_news_sentiment(coin: str = "BTC") -> float:
     return _real_news(coin)
 
 def calc_factors(price_data: Dict, onchain_data: Dict | None = None, 
-                 news_data: Dict | None = None, coin: str = "BTC") -> Dict[str, Any]:
+                 news_data: Dict | None = None, coin: str = "BTC",
+                 orderbook_data: Dict | None = None) -> Dict[str, Any]:
     """
     计算所有因子值
     
@@ -406,6 +409,8 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
         price_data: 包含 highs, lows, closes 的字典
         onchain_data: 链上数据（可选）
         news_data: 新闻数据（可选）
+        coin: 币种符号
+        orderbook_data: 订单簿数据（可选），包含 bids/asks 列表
     
     Returns:
         因子字典
@@ -449,6 +454,23 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
     holder_conc = wallet.get("holder_concentration", 0.5)
     wallet_score = holder_conc * 100
     
+    # 订单簿因子 (10%) — 微观结构信号: 买卖盘压力比
+    orderbook_score = 50.0
+    orderbook_pressure = 0.0
+    orderbook_confidence = 0.0
+    if orderbook_data:
+        try:
+            bids = orderbook_data.get("bids", [])
+            asks = orderbook_data.get("asks", [])
+            ob_signal = compute_orderbook_signal(bids, asks, depth=20)
+            orderbook_pressure = ob_signal.pressure_score
+            orderbook_confidence = ob_signal.confidence
+            # pressure_score (-1~1) -> score (0~100)
+            orderbook_score = 50 + orderbook_pressure * 50
+        except Exception as e:
+            logger.warning("订单簿因子计算失败: %s", e)
+            orderbook_score = 50.0
+    
     # 加权综合得分 — 只考虑启用的因子，权重重新归一化
     factors_cfg = CONFIG["factors"]
     
@@ -468,12 +490,14 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
     news_weight = enabled_weights.get("news_sentiment", 0)
     onchain_weight = enabled_weights.get("onchain", 0)
     wallet_weight = enabled_weights.get("wallet", 0)
+    orderbook_weight = enabled_weights.get("orderbook", 0)
     
     composite = (
         price_score * price_weight +
         news_score * news_weight +
         onchain_score * onchain_weight +
-        wallet_score * wallet_weight
+        wallet_score * wallet_weight +
+        orderbook_score * orderbook_weight
     )
     
     return {
@@ -492,12 +516,16 @@ def calc_factors(price_data: Dict, onchain_data: Dict | None = None,
         "onchain_score": onchain_score,
         "holder_concentration": holder_conc,
         "wallet_score": wallet_score,
+        "orderbook_pressure": orderbook_pressure,
+        "orderbook_confidence": orderbook_confidence,
+        "orderbook_score": orderbook_score,
         "composite_score": composite,
         "weights": {
             "price": price_weight,
             "news": news_weight,
             "onchain": onchain_weight,
-            "wallet": wallet_weight
+            "wallet": wallet_weight,
+            "orderbook": orderbook_weight,
         }
     }
 
