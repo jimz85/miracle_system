@@ -213,6 +213,49 @@ def calc_news_sentiment(coin: str = "BTC") -> float:
 # 链上因子 (替换 calc_onchain_metrics)
 # ============================================================
 
+# Fear & Greed 指数 API (免费, 无需API Key)
+FEAR_GREED_API = "https://api.alternative.me/fng/?limit=1"
+
+# F&G缓存: (value, timestamp)
+_fng_cache: Dict[str, tuple[Optional[int], float]] = {"value": (None, 0)}
+FNG_CACHE_TTL = 600  # 10分钟缓存
+
+def _fetch_fear_greed_api() -> Optional[int]:
+    """从Alternative.me获取实时恐惧贪婪指数
+    
+    Returns:
+        0~100的指数值, None表示失败
+        0-24=极度恐惧, 25-44=恐惧, 45-54=中性,
+        55-74=贪婪, 75-100=极度贪婪
+    """
+    now = time.time()
+    cached_val, cached_at = _fng_cache["value"]
+    if cached_val is not None and (now - cached_at) < FNG_CACHE_TTL:
+        return cached_val
+
+    try:
+        resp = requests.get(FEAR_GREED_API, timeout=10)
+        if resp.status_code != 200:
+            logger.warning("Fear & Greed API: HTTP %d", resp.status_code)
+            return None
+
+        data = resp.json()
+        fng_data = data.get("data", [])
+        if not fng_data:
+            return None
+
+        value = int(fng_data[0].get("value", 50))
+        classification = fng_data[0].get("value_classification", "中性")
+        logger.info("Fear & Greed: %d (%s)", value, classification)
+
+        _fng_cache["value"] = (value, now)
+        return value
+
+    except Exception as e:
+        logger.warning("Fear & Greed API异常: %s", e)
+        return None
+
+
 def _read_market_sentiment() -> Optional[Dict]:
     """读取Kronos定时写入的market_sentiment.json"""
     paths = [
@@ -233,19 +276,21 @@ def calc_onchain_metrics(coin: str = "BTC") -> Dict[str, float]:
     """
     计算链上因子 (替换STUB)
     
-    数据源: market_sentiment.json (Kronos写入)
+    数据源（优先级）:
+      1. Alternative.me Fear & Greed API (实时, 免费)
+      2. market_sentiment.json (Kronos写入, fallback)
       - exchange_flow: CEX净流入/流出百分比
       - large_transfer: Fear & Greed 指数归一化
     
     降级: 无数据时返回中性值
     """
     try:
-        data = _read_market_sentiment()
-        if not data:
-            logger.info("%s: market_sentiment.json 不可用，返回中性值", coin)
-            return {"exchange_flow": 0.0, "large_transfer": 0.0}
-
-        sentiment_data = data.get("data", {})
+        # 数据源1: 直接调用Fear & Greed API (实时, 更可靠)
+        fng_value = _fetch_fear_greed_api()
+        
+        # 数据源2: market_sentiment.json (fallback)
+        data = _read_market_sentiment() if fng_value is None else None
+        sentiment_data = data.get("data", {}) if data else {}
 
         # 1. 交易所净流量: 取所有CEX的7天变化均值
         cex_flows = sentiment_data.get("cex_flows", {})
@@ -256,19 +301,23 @@ def calc_onchain_metrics(coin: str = "BTC") -> Dict[str, float]:
                 flow_changes.append(change)
 
         if flow_changes:
-            # 负变化 = 资金流出交易所 = 偏利好(囤积) / 正变化 = 流入 = 偏利空(派发)
-            # 归一化到 -1.0 ~ 1.0
             avg_flow = sum(flow_changes) / len(flow_changes)
-            # 映射: 均值通常 -5%~5%，饱和截断
             exchange_flow = max(-1.0, min(1.0, avg_flow / 5.0))
         else:
             exchange_flow = 0.0
 
-        # 2. Fear & Greed 指数 (26 = 恐惧 → 可能过度悲观，反弹机会)
-        fear_greed = sentiment_data.get("fear_greed", {})
-        fg_value = fear_greed.get("value", 50)
-        # Fear→偏多(均值回归), Greed→偏空(过热)
-        large_transfer = (50 - fg_value) / 50.0  # 0~100映射到-1~1
+        # 2. Fear & Greed 指数 (优先用API实时值, fallback到JSON)
+        if fng_value is not None:
+            # Fear→偏多(均值回归), Greed→偏空(过热)
+            large_transfer = (50 - fng_value) / 50.0  # 0~100映射到-1~1
+            logger.info("%s 链上因子: F&G_API=%d → large_transfer=%.2f",
+                        coin, fng_value, large_transfer)
+        else:
+            fear_greed = sentiment_data.get("fear_greed", {})
+            fg_value = fear_greed.get("value", 50)
+            large_transfer = (50 - fg_value) / 50.0
+            logger.info("%s 链上因子: F&G_JSON=%d → large_transfer=%.2f",
+                        coin, fg_value, large_transfer)
 
         result = {
             "exchange_flow": round(exchange_flow, 4),
