@@ -737,6 +737,65 @@ def reset_weights() -> Dict[str, float]:
     return get_ic_manager().reset_to_default()
 
 
+# ==================== IC权重 → 信号因子映射 (G6统一) ====================
+
+_SIGNAL_FACTORS = ("price_momentum", "news_sentiment", "onchain", "wallet")
+
+
+def map_ic_to_signal_factors(ic_weights: Dict[str, float],
+                              strategy: str = "kronos") -> Dict[str, float]:
+    """
+    将技术指标级 IC 权重映射到 4 个信号因子的归一化权重。
+
+    处理两种命名约定:
+        - 大写: RSI, ADX, MACD, Bollinger, Momentum, Trend, Vol, News (Kronos风格)
+        - 小写: rsi, adx, macd, bollinger, momentum (ICWeightManager风格)
+
+    两种策略:
+        - "kronos": 所有技术指标求和 → price_momentum (miracle_core式)
+        - "signal": 前三指标平均 → price_momentum, ADX → news (agent_signal式)
+
+    Args:
+        ic_weights: 原始 IC 权重字典 (大小写均可)
+        strategy: 映射策略, "kronos" 或 "signal"
+
+    Returns:
+        Dict[str, float]: 归一化的 4 因子权重 (总和 = 1.0)
+    """
+    # 归一化键名: 全部小写, 方便匹配
+    w = {k.lower(): v for k, v in ic_weights.items() if v is not None}
+
+    if strategy == "signal":
+        # agent_signal 策略: top-3平均 + ADX映射
+        top3 = [w.get('rsi', 0.2), w.get('macd', 0.2), w.get('momentum', 0.2)]
+        price_ic = sum(top3) / 3.0
+        news_ic = w.get('adx', 0.2)
+        onchain_ic = 0.1
+        wallet_ic = 0.1
+    else:
+        # kronos 策略: 所有技术指标求和
+        tech_sum = sum(
+            w.get(k, 0) for k in ('rsi', 'adx', 'macd', 'bollinger',
+                                   'momentum', 'trend', 'vol')
+        )
+        price_ic = tech_sum if tech_sum > 0 else 0.6
+        news_ic = w.get('news', 0.2)
+        onchain_ic = w.get('onchain', 0.1)
+        wallet_ic = w.get('wallet', 0.1)
+
+    total = price_ic + news_ic + onchain_ic + wallet_ic
+    if total <= 0:
+        return {"price_momentum": 0.6, "news_sentiment": 0.2,
+                "onchain": 0.1, "wallet": 0.1}
+
+    return {
+        "price_momentum": price_ic / total,
+        "news_sentiment": news_ic / total,
+        "onchain": onchain_ic / total,
+        "wallet": wallet_ic / total
+    }
+
+
 # ==================== 自检 ====================
 
 if __name__ == '__main__':

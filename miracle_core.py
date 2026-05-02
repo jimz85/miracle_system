@@ -58,7 +58,7 @@ def get_ic_adjusted_weights() -> Dict[str, float]:
     try:
         tracker = MiracleICTracker(sync_with_kronos=True)
         ic_weights = tracker.get_all_weights()
-        
+
         if not ic_weights:
             # 无IC历史数据，返回基准权重
             return {
@@ -67,48 +67,11 @@ def get_ic_adjusted_weights() -> Dict[str, float]:
                 "onchain": 0.1,
                 "wallet": 0.1
             }
-        
-        # 将IC权重归一化到price/news/onchain/wallet结构
-        # IC权重是针对单个技术指标的（如RSI, ADX等）
-        # 我们需要把它们聚合成大类
-        
-        price_weight = (
-            ic_weights.get('RSI', 0) +
-            ic_weights.get('ADX', 0) +
-            ic_weights.get('MACD', 0) +
-            ic_weights.get('Bollinger', 0) +
-            ic_weights.get('Momentum', 0) +
-            ic_weights.get('Trend', 0) +
-            ic_weights.get('Vol', 0)
-        )
-        news_weight = ic_weights.get('News', 0)
-        onchain_weight = ic_weights.get('Onchain', 0)
-        wallet_weight = ic_weights.get('Wallet', 0)
-        
-        total = price_weight + news_weight + onchain_weight + wallet_weight
-        if total > 0:
-            return {
-                "price_momentum": price_weight / total,
-                "news_sentiment": news_weight / total,
-                "onchain": onchain_weight / total,
-                "wallet": wallet_weight / total
-            }
-        else:
-            return {
-                "price_momentum": 0.6,
-                "news_sentiment": 0.2,
-                "onchain": 0.1,
-                "wallet": 0.1
-            }
-            
-    except ImportError:
-        # IC模块不存在，返回基准权重
-        return {
-            "price_momentum": 0.6,
-            "news_sentiment": 0.2,
-            "onchain": 0.1,
-            "wallet": 0.1
-        }
+
+        # 使用共享的 IC → 信号因子映射 (G6统一)
+        from core.ic_weights import map_ic_to_signal_factors
+        return map_ic_to_signal_factors(ic_weights, strategy="kronos")
+
     except Exception as e:
         logger.warning(f"获取IC权重失败: {e}")
         return {

@@ -181,6 +181,16 @@ _KRONOS_IC_DEFAULT = Path.home() / '.hermes' / 'cron' / 'output' / 'ic_weights.j
 KRONOS_IC_FILE = Path(os.environ.get('KRONOS_IC_FILE', str(_KRONOS_IC_DEFAULT)))
 
 def load_ic_weights():
+    # 优先：委托 core.ic_weights.ICWeightManager (G5统一)
+    try:
+        from core.ic_weights import get_weights
+        w = get_weights()
+        if w and sum(w.values()) > 0:
+            return w
+    except Exception as ex:
+        logger.debug(f"load_ic_weights: ICWeightManager失败: {ex}")
+
+    # 回退：直接从文件读取
     if KRONOS_IC_FILE.exists():
         try:
             with open(KRONOS_IC_FILE) as f:
@@ -189,14 +199,14 @@ def load_ic_weights():
             if w and sum(w.values()) > 0:
                 return w
         except Exception as ex:
-            logger.debug(f"get_ic_adjusted_weights: 读取KRONOS_IC_FILE失败: {ex}")
+            logger.debug(f"load_ic_weights: 读取KRONOS_IC_FILE失败: {ex}")
     if IC_WEIGHTS_FILE.exists():
         try:
             with open(IC_WEIGHTS_FILE) as f:
                 d = json.load(f)
                 return d.get('weights', DEFAULT_WEIGHTS)
         except Exception as ex:
-            logger.debug(f"get_ic_adjusted_weights: 读取IC_WEIGHTS_FILE失败: {ex}")
+            logger.debug(f"load_ic_weights: 读取IC_WEIGHTS_FILE失败: {ex}")
     return DEFAULT_WEIGHTS.copy()
 
 def save_ic_weights(weights):
@@ -424,12 +434,8 @@ def voting_vote(factors: dict, weights: dict) -> dict:
                 score = 0
 
     # confidence计算：extreme RSI用固定高信心(0.80)，普通信号用score归一化
-    if extreme and direction != 'wait':
-        conf = 0.80   # RSI<5或>95是最强信号，且未被ADX过滤
-    elif direction == 'wait':
-        conf = 0.0    # 被过滤的信号，零信心
-    else:
-        conf = min(abs(score) / 2.0, 1.0)
+    from core.confidence import kronos_confidence
+    conf = kronos_confidence(score, extreme, direction, factors)
 
     # ── 多时间框架确认：4H趋势反向则重罚 ──
     _4h_dir = factors.get('_4h_direction', 'neutral')

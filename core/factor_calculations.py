@@ -60,20 +60,17 @@ def calc_combined_score(price_score: float, news_score: float,
                         onchain_score: float, wallet_score: float,
                         weights: Dict[str, float]) -> float:
     """
-    多因子加权综合得分
+    多因子加权综合得分（委托 core.confidence.weighted_fusion）
     """
-    price_weight = weights.get("price_momentum", 0.6)
-    news_weight = weights.get("news_sentiment", 0.2)
-    onchain_weight = weights.get("onchain", 0.1)
-    wallet_weight = weights.get("wallet", 0.1)
+    from core.confidence import weighted_fusion
 
-    total = price_weight + news_weight + onchain_weight + wallet_weight
-    if total == 0:
-        return 50.0
-
-    return (
-        price_score * price_weight +
-        news_score * news_weight +
-        onchain_score * onchain_weight +
-        wallet_score * wallet_weight
-    ) / total
+    return weighted_fusion(
+        {"price_momentum": price_score,
+         "news_sentiment": news_score,
+         "onchain": onchain_score,
+         "wallet": wallet_score},
+        {"price_momentum": weights.get("price_momentum", 0.6),
+         "news_sentiment": weights.get("news_sentiment", 0.2),
+         "onchain": weights.get("onchain", 0.1),
+         "wallet": weights.get("wallet", 0.1)}
+    )

@@ -79,52 +79,16 @@ class SignalGenerator:
     def _load_ic_weights(self) -> None:
         """
         从IC权重系统加载动态权重，替换硬编码权重
-        
-        IC权重因子: rsi, macd, adx, bollinger, momentum
-        信号因子: price_momentum, news_sentiment, onchain, wallet
-        
-        映射策略:
-        - price_momentum: 基于IC权重最高的三个技术因子(rsi, macd, momentum)的平均
-        - news_sentiment: 基于IC权重中的macd(技术信号)
-        - onchain: 使用固定较低权重(链上数据置信度低)
-        - wallet: 使用固定较低权重(钱包数据置信度低)
+
+        使用 core.ic_weights.map_ic_to_signal_factors 进行统一映射 (G6)
         """
         try:
-            ic_weights = get_ic_weights()
-            
-            # price_momentum: 综合RSI、MACD、动量的IC权重
-            price_ic = (ic_weights.get('rsi', 0.2) + 
-                        ic_weights.get('macd', 0.2) + 
-                        ic_weights.get('momentum', 0.2)) / 3.0
-            
-            # news_sentiment: 使用ADX的IC权重(趋势确认类似新闻信号)
-            news_ic = ic_weights.get('adx', 0.2)
-            
-            # onchain和wallet使用较低的固定权重(数据质量和覆盖率问题)
-            onchain_ic = 0.1
-            wallet_ic = 0.1
-            
-            # 归一化使总和为1.0
-            total = price_ic + news_ic + onchain_ic + wallet_ic
-            if total > 0:
-                self.weights = {
-                    "price_momentum": price_ic / total,
-                    "news_sentiment": news_ic / total,
-                    "onchain": onchain_ic / total,
-                    "wallet": wallet_ic / total
-                }
-            else:
-                # 回退到默认值
-                self.weights = {
-                    "price_momentum": 0.6,
-                    "news_sentiment": 0.2,
-                    "onchain": 0.1,
-                    "wallet": 0.1
-                }
-                
+            from core.ic_weights import get_weights, map_ic_to_signal_factors
+            ic_weights = get_weights()
+            self.weights = map_ic_to_signal_factors(ic_weights, strategy="signal")
             logger = logging.getLogger(__name__)
             logger.info(f"[SignalGenerator] IC权重已加载: {self.weights}")
-            
+
         except Exception as e:
             # 如果IC加载失败，使用硬编码默认值
             self.weights = {
@@ -134,7 +98,7 @@ class SignalGenerator:
                 "wallet": 0.1
             }
             logger = logging.getLogger(__name__)
-            logger.warning(f"[SignalGenerator] IC权重加载失败，使用默认权重: {e}")
+            logger.warning(f"[SignalGenerator] IC加载失败({e}), 使用默认权重: {self.weights}")
 
     def _load_pattern_history(self) -> Dict[str, Any]:
         """从pattern_history.json加载历史胜率数据"""
@@ -363,11 +327,13 @@ class SignalGenerator:
         # 但实际calc_price_score返回-1~1，其他也是-1~1，直接加权即可
         # 唯一问题：price_score * 0.6 范围是-0.6~0.6，其他类似
         # 结果范围是-1~1，这是对的
-        combined = (
-            price_score * self.weights["price_momentum"] +
-            news_score * self.weights["news_sentiment"] +
-            onchain_score * self.weights["onchain"] +
-            wallet_score * self.weights["wallet"]
+        from core.confidence import weighted_fusion
+        combined = weighted_fusion(
+            {"price_momentum": price_score,
+             "news_sentiment": news_score,
+             "onchain": onchain_score,
+             "wallet": wallet_score},
+            self.weights
         )
 
         # 额外检查：如果因子数据全为0（未接入真实API），降低置信度
@@ -487,27 +453,21 @@ class SignalGenerator:
         # === 5b. Pattern历史胜率置信度调整 ===
         # 基于该pattern历史胜率调整置信度
         pattern_win_rate, has_pattern_history = self._get_pattern_win_rate(pattern_key)
-        signal_score = abs(combined_score)  # 使用综合得分绝对值作为信号强度指标
-        if has_pattern_history:
-            # 有历史数据：根据胜率调整置信度
-            # 胜率映射到 [0.5, 1.5] 范围
-            history_confidence_factor = 0.5 + pattern_win_rate
-            signal_score = signal_score * history_confidence_factor
-        else:
-            # 无历史数据：降低置信度
-            history_confidence_factor = 0.5
-            signal_score = signal_score * 0.5
+        signal_score = abs(combined_score)
+        from core.confidence import pattern_adjust_confidence
+        signal_score = pattern_adjust_confidence(signal_score, pattern_win_rate,
+                                                  has_pattern_history)
 
         # === 6. 计算基础置信度 ===
         # 基础置信度 = 趋势强度 + 信号得分（已根据历史调整）
-        base_confidence = (trend_info["strength"] / 100 * 0.4 +
-                          signal_score * 0.6)
-        # 成交量惩罚（缩量突破降低置信度）
-        volume_penalty = volume_filter_result["confidence_penalty"]
-        # 真实数据接入程度因子（未接入API时降低置信度）
-        confidence = base_confidence * confidence_modifier * real_data_score
-        confidence = confidence * (1.0 - volume_penalty)  # 成交量惩罚
-        confidence = max(0.0, min(confidence, 1.0))
+        from core.confidence import signal_base_confidence
+        confidence = signal_base_confidence(
+            trend_strength=trend_info["strength"],
+            signal_score=signal_score,
+            confidence_modifier=confidence_modifier,
+            real_data_score=real_data_score,
+            volume_penalty=volume_filter_result["confidence_penalty"]
+        )
 
         # === 6b. 多周期过滤 (1H + 4H) ===
         mt_filter_result = {
@@ -539,15 +499,11 @@ class SignalGenerator:
                 mt_filter_result = MultiTimeframeFilter.confirm(temp_signal, factors, factors_4h)
                 
                 # 根据确认结果调整置信度
-                if mt_filter_result["confirmed"]:
-                    # 确认通过：提升置信度
-                    confidence_boost = mt_filter_result["confidence_boost"]
-                    confidence = confidence * (1.0 + confidence_boost * 0.2)
-                    confidence = min(confidence, 1.0)  # 不超过1.0
-                else:
-                    # 确认失败：降低置信度
-                    confidence_boost = mt_filter_result["confidence_boost"]
-                    confidence = confidence * confidence_boost  # 按比例降低
+                from core.confidence import multi_tf_adjust
+                confidence = multi_tf_adjust(
+                    confidence, direction, mt_filter_result,
+                    inplace_boost=0.2
+                )
                 
                 mt_filter_result["applied"] = True
 
