@@ -758,24 +758,24 @@ class ReflectionImprover:
             if ret_col is None or sh_col is None:
                 logger.debug(f"TSV header缺少return/sharpe列，跳过IC权重更新")
                 return
-            shames, returns = [], []
+            sharpes, returns = [], []
             for line in lines[2:][-200:]:  # skip 2 header rows, use last 200 data rows
                 cols = line.split('\t')
                 if len(cols) <= max(ret_col, sh_col):
                     continue
                 try:
-                    shames.append(float(cols[sh_col]))
+                    sharpes.append(float(cols[sh_col]))
                     returns.append(float(cols[ret_col]))
                 except Exception:
                     continue
 
-            if not shames:
+            if not sharpes:
                 return
 
-            avg_sharpe = sum(shames) / len(shames)
+            avg_sharpe = sum(sharpes) / len(sharpes)
             avg_return = sum(returns) / len(returns)
-            keep_rate = sum(1 for s in shames if s > 0) / len(shames)
-            keep_returns = [returns[i] for i, s in enumerate(shames) if s > 0]
+            keep_rate = sum(1 for s in sharpes if s > 0) / len(sharpes)
+            keep_returns = [returns[i] for i, s in enumerate(sharpes) if s > 0]
             keep_avg_return = sum(keep_returns) / len(keep_returns) if keep_returns else 0.0
 
             # 策略质量反馈

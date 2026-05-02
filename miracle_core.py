@@ -254,18 +254,37 @@ def load_config(config_path: str = None) -> Dict:
     with open(config_path) as f:
         return json.load(f)
 
-CONFIG = load_config()
+_CONFIG_DATA = None
 _config_lock = threading.Lock()
 
+class _ConfigProxy:
+    """懒加载配置代理 — 模块导入时不读文件，首次访问才加载"""
+    def __getitem__(self, key):
+        return self._load()[key]
+    def __setitem__(self, key, value):
+        self._load()[key] = value
+    def get(self, key, default=None):
+        return self._load().get(key, default)
+    def __contains__(self, key):
+        return key in self._load()
+    @staticmethod
+    def _load():
+        global _CONFIG_DATA
+        if _CONFIG_DATA is None:
+            _CONFIG_DATA = load_config()
+        return _CONFIG_DATA
+
+CONFIG = _ConfigProxy()
+
 def get_config() -> Dict:
-    """线程安全地获取CONFIG"""
+    """线程安全地获取CONFIG（懒加载）"""
     with _config_lock:
-        return CONFIG
+        return _ConfigProxy._load()
 
 def update_config(key: str, value: Any) -> None:
     """线程安全地更新CONFIG"""
     with _config_lock:
-        CONFIG[key] = value
+        _ConfigProxy._load()[key] = value
 
 # ===== 数据结构 =====
 
