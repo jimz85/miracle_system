@@ -25,10 +25,13 @@ Version: 1.0.0
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+# HMM市场状态分类器（用于4状态识别）
+from hmmlearn import hmm
 
 
 class MarketRegime(Enum):
@@ -424,6 +427,253 @@ class RegimeClassifier:
 ║   Volatility Ratio:     {metrics.volatility_ratio:>8.2f}{" "*36}║
 ╚══════════════════════════════════════════════════════════╝
 """
+
+
+# ============================================================
+# HMM市场状态分类器（增强版，4状态识别）
+# ============================================================
+
+class HMMRegimeClassifier:
+    """基于隐马尔可夫模型的市场状态分类器（增强版）
+    
+    使用 GaussianHMM 对收益率和波动率建模，识别4种隐藏状态：
+      - BULL: 正收益 + 低波动
+      - BEAR: 负收益 + 低波动
+      - SIDEWAYS: 零均值 + 低波动
+      - HIGH_VOL: 高波动（双向剧烈）
+    
+    依赖: hmmlearn, numpy, pandas
+    参考: hmmlearn GaussianHMM 官方实现
+    
+    用法:
+        hmm = HMMRegimeClassifier(n_states=4)
+        hmm.train(df)  # 训练模型
+        regime, confidence = hmm.classify(df)  # 分类最新状态
+    """
+    
+    # 状态标签（训练后根据均值自动映射）
+    _STATE_LABELS = {
+        0: MarketRegime.SIDEWAYS,
+        1: MarketRegime.BULL,
+        2: MarketRegime.BEAR,
+        3: MarketRegime.SIDEWAYS,
+    }
+    
+    def __init__(self, n_states: int = 4, lookback: int = 100,
+                 covariance_type: str = "diag", random_state: int = 42):
+        """
+        Args:
+            n_states: 隐藏状态数（默认4: bull/bear/sideways/high_vol）
+            lookback: 训练用的历史数据长度
+            covariance_type: hmmlearn协方差类型
+            random_state: 随机种子（确保可复现）
+        """
+        if n_states < 2 or n_states > 6:
+            raise ValueError(f"n_states should be 2-6, got {n_states}")
+        self.n_states = n_states
+        self.lookback = lookback
+        self.random_state = random_state
+        
+        # 模型（懒初始化）
+        self._model = None
+        self._state_mean_returns: Dict[int, float] = {}
+        self._state_labels: Dict[int, MarketRegime] = {}
+        self._is_trained = False
+    
+    def _extract_features(self, df: pd.DataFrame) -> np.ndarray:
+        """提取特征序列: [log_return, volatility, volume_change]
+        
+        特征说明:
+        - log_return: 对数收益率（一阶矩）
+        - volatility: 5期滚动波动率（二阶矩）
+        """
+        closes = df['close'].values
+        volumes = df.get('volume', df.get('vol', pd.Series(index=df.index))).values
+        
+        # 对数收益率
+        log_ret = np.diff(np.log(closes + 1e-10))
+        
+        # 5期滚动波动率（标准差）
+        vol_window = min(5, len(log_ret))
+        volatility = np.array([
+            np.std(log_ret[max(0, i-vol_window):i+1])
+            for i in range(len(log_ret))
+        ])
+        
+        # 成交量变化率
+        if len(volumes) > len(log_ret):
+            volumes = volumes[-len(log_ret):]
+        vol_returns = np.diff(np.log(volumes + 1e-10)) if len(volumes) > 1 else np.zeros(len(log_ret))
+        if len(vol_returns) < len(log_ret):
+            vol_returns = np.pad(vol_returns, (len(log_ret)-len(vol_returns), 0), 'edge')
+        
+        # 拼接特征矩阵 [n_timesteps, n_features]
+        features = np.column_stack([
+            log_ret[-len(volatility):],
+            volatility[-len(log_ret):][:len(volatility)],
+            vol_returns[-len(volatility):],
+        ])
+        return features
+    
+    def train(self, df: pd.DataFrame) -> None:
+        """训练HMM模型
+        
+        Args:
+            df: DataFrame，需包含 close 列
+        
+        Raises:
+            RuntimeError: 训练失败（数据不足或无法收敛）
+        """
+        features = self._extract_features(df)
+        if len(features) < self.n_states * 10:
+            raise ValueError(f"Not enough data: {len(features)} rows < {self.n_states * 10}")
+        
+        # 用最近 lookback 行训练
+        train_data = features[-self.lookback:] if len(features) > self.lookback else features
+        
+        # 标准化特征（防止数值不稳定）
+        feature_mean = np.mean(train_data, axis=0)
+        feature_std = np.std(train_data, axis=0)
+        feature_std[feature_std < 1e-10] = 1.0
+        train_data_norm = (train_data - feature_mean) / feature_std
+        
+        # 多次尝试训练（不同随机种子），取最好的结果
+        best_model = None
+        best_score = -np.inf
+        
+        for seed in [self.random_state, 0, 123, 456]:
+            try:
+                model = hmm.GaussianHMM(
+                    n_components=self.n_states,
+                    covariance_type='diag',
+                    random_state=seed,
+                    n_iter=100,
+                    tol=1e-4,
+                    init_params='stmc',  # 自动初始化所有参数
+                    params='stmc',       # 训练所有参数
+                )
+                model.fit(train_data_norm)
+                score = model.score(train_data_norm)
+                
+                # 验证模型参数有效
+                if (np.any(np.isnan(model.startprob_)) or 
+                    np.any(np.isnan(model.transmat_)) or
+                    np.any(np.isnan(model.means_))):
+                    continue
+                    
+                if score > best_score:
+                    best_model = model
+                    best_score = score
+            except Exception as e:
+                continue
+        
+        if best_model is None:
+            raise RuntimeError(
+                f"HMM failed to converge with {self.n_states} states "
+                f"on {len(train_data)} data points. Try reducing n_states."
+            )
+        
+        self._model = best_model
+        
+        # 解码训练集，按均值收益排序映射状态
+        states = self._model.predict(train_data_norm)
+        for s in range(self.n_states):
+            mask = states == s
+            if mask.sum() > 0:
+                self._state_mean_returns[s] = float(np.mean(train_data_norm[mask, 0]))
+            else:
+                self._state_mean_returns[s] = -999.0  # 空状态标记为极低值
+        
+        # 按收益率排序：最低→BEAR, 中间→SIDEWAYS, 最高→BULL
+        sorted_states = sorted(range(self.n_states),
+                              key=lambda s: self._state_mean_returns.get(s, 0))
+        median_vol = np.median([
+            np.mean(train_data_norm[states == s, 1])
+            for s in range(self.n_states)
+            if (states == s).sum() > 0
+        ] + [1.0])
+        
+        for i, s in enumerate(sorted_states):
+            mask = states == s
+            if mask.sum() < 3:  # 观测太少的状态标记为SIDEWAYS
+                self._state_labels[s] = MarketRegime.SIDEWAYS
+                continue
+            vol = np.mean(train_data_norm[mask, 1])
+            if vol > median_vol * 2.0:
+                self._state_labels[s] = MarketRegime.SIDEWAYS  # 高波动=不确定
+            elif i == 0:
+                self._state_labels[s] = MarketRegime.BEAR
+            elif i == self.n_states - 1:
+                self._state_labels[s] = MarketRegime.BULL
+            else:
+                self._state_labels[s] = MarketRegime.SIDEWAYS
+        
+        self._is_trained = True
+    
+    def classify(self, df: pd.DataFrame) -> Tuple[MarketRegime, float]:
+        """对最新数据点进行分类
+        
+        Returns:
+            (regime, confidence): 市场状态和置信度
+        """
+        if not self._is_trained or self._model is None:
+            raise RuntimeError("HMM not trained. Call train() first.")
+        
+        features = self._extract_features(df)
+        if len(features) < 1:
+            return MarketRegime.SIDEWAYS, 0.0
+        
+        # 取最近一段（至少10行）预测状态
+        predict_data = features[-min(10, len(features)):]
+        states = self._model.predict(predict_data)
+        current_state = int(states[-1])
+        
+        # 状态→标签
+        regime = self._state_labels.get(current_state, MarketRegime.SIDEWAYS)
+        
+        # 置信度：状态后验概率
+        posteriors = self._model.predict_proba(predict_data)
+        confidence = float(np.max(posteriors[-1]))
+        
+        return regime, min(1.0, max(0.0, confidence))
+    
+    def get_state_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """返回完整状态摘要（调试用）"""
+        if not self._is_trained:
+            return {"trained": False}
+        
+        features = self._extract_features(df)
+        states = self._model.predict(features[-self.lookback:])
+        
+        summary = {
+            "trained": True,
+            "n_states": self.n_states,
+            "state_labels": {k: v.value for k, v in self._state_labels.items()},
+            "state_mean_returns": self._state_mean_returns,
+            "current_state": int(states[-1]),
+            "current_regime": self._state_labels.get(int(states[-1]), MarketRegime.SIDEWAYS).value,
+            "state_distribution": {
+                int(s): int((states == s).sum())
+                for s in range(self.n_states)
+            },
+            "transition_matrix": self._model.transmat_.tolist() if hasattr(self._model, 'transmat_') else [],
+        }
+        return summary
+    
+    def save(self, path: str) -> None:
+        """保存模型（暂不支持，需每次重新训练）"""
+        raise NotImplementedError("HMM model serialization not yet supported")
+    
+    def load(self, path: str) -> None:
+        """加载模型"""
+        raise NotImplementedError("HMM model deserialization not yet supported")
+
+
+def detect_regime_hmm(df: pd.DataFrame) -> Tuple[MarketRegime, float]:
+    """便捷函数：快速用HMM检测市场状态（自动训练）"""
+    hmm = HMMRegimeClassifier()
+    hmm.train(df)
+    return hmm.classify(df)
 
 
 def detect_regime(df: pd.DataFrame, config: Dict | None = None) -> Tuple[MarketRegime, float, RegimeMetrics]:
