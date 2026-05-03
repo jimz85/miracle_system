@@ -233,6 +233,88 @@ def save_pattern_history(history):
     except Exception as ex:
         logger.debug(f"save_pattern_history: 写入失败: {ex}")
 
+def _backfill_learning_from_paper_trades():
+    """学习闭环修复(2026-05-03)：启动时从paper_trades.json回填历史交易到pattern_history
+    解决45笔亏损从未被系统学习的问题。"""
+    import json as _json
+    paper_file = Path.home() / ".hermes" / "cron" / "output" / "paper_trades.json"
+    if not paper_file.exists():
+        logger.debug("paper_trades.json不存在，跳过回填")
+        return
+
+    try:
+        with open(paper_file) as f:
+            paper_trades = _json.load(f)
+    except Exception as e:
+        logger.warning(f"读取paper_trades.json失败: {e}")
+        return
+
+    if not paper_trades:
+        return
+
+    # 检查是否已回填过（通过idempotency标记）
+    already_backfilled = False
+    for t in paper_trades:
+        if t.get('_backfilled'):
+            already_backfilled = True
+            break
+
+    if already_backfilled:
+        logger.debug("历史交易已回填，跳过")
+        return
+
+    count = 0
+    for trade in paper_trades:
+        # 跳过OPEN状态的交易
+        if trade.get('status') != 'CLOSED':
+            continue
+
+        # 从open_reason中提取pattern_key
+        open_reason = trade.get('open_reason', '')
+        if not open_reason or open_reason in ('历史手动开仓', 'None'):
+            continue
+
+        # 从open_reason中解析: "RSI=33<35超卖 | IC=-0.xxx | ..."
+        pattern_key = None
+        if 'RSI=' in open_reason:
+            parts = open_reason.split('|')
+            if parts:
+                pattern_key = parts[0].strip()  # e.g. "RSI=33<35超卖"
+
+        if not pattern_key:
+            continue
+
+        # 从close_reason判断是否盈利
+        close_reason = trade.get('close_reason', '')
+        won = False
+        if '止损' not in close_reason and 'phantom' not in close_reason:
+            pnl = trade.get('pnl', 0)
+            if pnl > 0:
+                won = True
+
+        pnl_pct = trade.get('result_pct', 0) or 0
+        if pnl_pct == 0:
+            pnl = trade.get('pnl', 0)
+            entry = trade.get('entry_price', 1)
+            if entry > 0:
+                pnl_pct = pnl / (entry * trade.get('size_usd', 1))
+
+        try:
+            record_pattern_outcome(pattern_key, won, pnl_pct)
+            trade['_backfilled'] = True
+            count += 1
+        except Exception as e:
+            logger.debug(f"回填失败 {pattern_key}: {e}")
+
+    # 标记已回填并写回paper_trades
+    if count > 0:
+        try:
+            with open(paper_file, 'w') as f:
+                _json.dump(paper_trades, f, indent=2, ensure_ascii=False)
+            logger.info(f"学习回填完成: {count}笔历史交易已学习")
+        except Exception as e:
+            logger.warning(f"回填标记写入失败: {e}")
+
 def record_pattern_outcome(pattern_key: str, won: bool, pnl_pct: float):
     """记录一个模式的出场结果，含期望值计算"""
     history = load_pattern_history()
@@ -354,19 +436,19 @@ def voting_vote(factors: dict, weights: dict) -> dict:
             rsi_vote = -0.5
         elif rsi < 30:      # 严重超卖 → 可能反弹，但趋势向下不逆势
             rsi_vote = 0.3
-    # trend_neutral: RSI极端值轻仓做反转
-    elif rsi < 25:
-        rsi_vote = 0.5       # 极端超卖
-    elif rsi > 75:
-        rsi_vote = -0.5      # 极端超买
+    # trend_neutral: RSI高抛低吸（震荡市不做极端要求，RSI到高低区域就动）
+    elif rsi < 35:
+        rsi_vote = 0.5       # 偏超卖 → 轻仓做多
+    elif rsi > 65:
+        rsi_vote = -0.5      # 偏超买 → 轻仓做空
 
     # ---- ADX因子 ----
     adx_vote = 0
-    if adx > 30:
-        adx_vote = 1   # 强趋势确认 (上限1.0，与其他因子对齐)
-    elif adx > 22:
+    if adx > 25:
+        adx_vote = 1   # 趋势确认
+    elif adx > 18:
         adx_vote = 0.5
-    elif adx < 15:
+    elif adx < 12:
         adx_vote = 0   # 无趋势
 
     # ---- Bollinger ----
@@ -423,8 +505,8 @@ def voting_vote(factors: dict, weights: dict) -> dict:
                 direction = 'wait'
                 score = 0
     else:
-        # 加权得分
-        score = sum(weights.get(k, 0) * v for k, v in votes.items())
+        # 加权得分 (使用小写key匹配IC权重文件)
+        score = sum(weights.get(k.lower(), 0) * v for k, v in votes.items())
         direction = 'long' if score > 0.05 else ('short' if score < -0.05 else 'wait')
         # ADX>30强趋势时，方向需与趋势一致
         if adx > 30:
@@ -1473,7 +1555,7 @@ def scan_coin(instId, symbol, equity, btc_trend, weights, exchange=None, coin_co
     regime_weights = weights.copy()
     if adx < 20:
         # 震荡市 → RSI+0.08, Bollinger+0.08, ADX-0.06, MACD-0.06, BTC-0.04
-        for k, delta in {'RSI': 0.08, 'Bollinger': 0.08, 'ADX': -0.06, 'MACD': -0.06, 'BTC': -0.04}.items():
+        for k, delta in {'rsi': 0.08, 'bollinger': 0.08, 'adx': -0.06, 'macd': -0.06, 'btc': -0.04}.items():
             if k in regime_weights:
                 regime_weights[k] = max(0.0, regime_weights.get(k, 0) + delta)
         total = sum(regime_weights.values())
@@ -1786,13 +1868,8 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
     else:
         logger.debug("Memory置信度乘数:1.0(无调整)")
 
-    # FOMC宏观事件置信度乘数 (窗口期降低50%)
-    fomc_multiplier = get_fomc_confidence_multiplier(1.0)  # 1.0基准，返回实际乘数
-    if fomc_multiplier < 1.0:
-        for c in candidates:
-            c['score'] = c['score'] * fomc_multiplier
-        candidates.sort(key=lambda x: x['score'], reverse=True)
-        logger.warning(f"FOMC窗口期! 置信度降{fomc_multiplier:.0%}, 候选重排后top={candidates[0]['symbol'] if candidates else 'none'}")
+    # FOMC宏观事件置信度乘数 (已禁用，2026-05-03)
+    fomc_multiplier = 1.0
 
     # 市场状态检测 (Regime Classification)
     # 根据BTC 4H ADX判断当前市场状态，趋势市场/震荡市场采用不同因子权重
@@ -2931,7 +3008,10 @@ def main():
     if not IC_WEIGHTS_FILE.exists():
         save_ic_weights(DEFAULT_WEIGHTS)
         logger.info("factor_weights.json已初始化: 写入DEFAULT_WEIGHTS")
-    
+
+    # 学习闭环修复(2026-05-03)：启动时从paper_trades回填历史亏损到pattern_history
+    _backfill_learning_from_paper_trades()
+
     # P0-3 Fix: 启动时检测账户模式（hedge vs net），影响place_oco和close_position的posSide行为
     pos_mode = _detect_pos_mode()
     print(f"账户模式: {pos_mode} | ", end='')
