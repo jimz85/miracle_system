@@ -58,8 +58,74 @@ TRADES_FILE = STATE_DIR / 'miracle_trades.json'
 IC_WEIGHTS_FILE = STATE_DIR / 'factor_weights.json'
 IDEMPOTENCY_LOG = STATE_DIR / 'trade_idempotency.json'
 PATTERN_HISTORY_FILE = STATE_DIR / 'pattern_history.json'  # 模式胜率历史
+COOLDOWN_FILE = STATE_DIR / 'cooldown.json'  # P2-1: 单币种cooldown追踪
 
-# 日志配置
+# ===== P2-1: 单币种cooldown机制 =====
+# 止损后该币种进入N小时冷却期，防止重复在同一方向开仓
+_COOLDOWN_TTL_HOURS = 4  # 冷却4小时
+_cooldown_cache = None  # 进程内缓存
+
+def _load_cooldown() -> dict:
+    """加载cooldown状态"""
+    global _cooldown_cache
+    if _cooldown_cache is not None:
+        return _cooldown_cache
+    if COOLDOWN_FILE.exists():
+        try:
+            import json as _json
+            with open(COOLDOWN_FILE) as f:
+                _cooldown_cache = _json.load(f)
+        except Exception:
+            _cooldown_cache = {}
+    else:
+        _cooldown_cache = {}
+    return _cooldown_cache
+
+def _save_cooldown(data: dict):
+    """保存cooldown状态"""
+    global _cooldown_cache
+    _cooldown_cache = data
+    try:
+        import json as _json
+        with open(COOLDOWN_FILE, 'w') as f:
+            _json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning(f"cooldown保存失败: {e}")
+
+def check_coin_cooldown(coin: str, direction: str) -> Tuple[bool, str]:
+    """检查币种是否在cooldown期
+    Returns: (is_cooldown, reason_if_cooldown)
+    """
+    import time as _time
+    cd = _load_cooldown()
+    key = f"{coin.upper()}_{direction.upper()}"
+    expiry = cd.get(key, 0)
+    now = _time.time()
+    if now < expiry:
+        remaining_h = (expiry - now) / 3600
+        return True, f"cooldown剩余{round(remaining_h,1)}h"
+    return False, ""
+
+def set_coin_cooldown(coin: str, direction: str, ttl_hours: float = None):
+    """设置币种cooldown（止损后调用）"""
+    import time as _time
+    if ttl_hours is None:
+        ttl_hours = _COOLDOWN_TTL_HOURS
+    cd = _load_cooldown()
+    key = f"{coin.upper()}_{direction.upper()}"
+    cd[key] = _time.time() + ttl_hours * 3600
+    _save_cooldown(cd)
+    logger.info(f"cooldown设置: {coin} {direction} {ttl_hours}h")
+
+def clear_coin_cooldown(coin: str, direction: str):
+    """清除cooldown（盈利后调用）"""
+    cd = _load_cooldown()
+    key = f"{coin.upper()}_{direction.upper()}"
+    if key in cd:
+        del cd[key]
+        _save_cooldown(cd)
+
+# ===== 日志配置 =====
 logger = logging.getLogger('miracle_kronos')
 
 # ===== 全局仓位模式检测 =====
@@ -274,12 +340,23 @@ def _backfill_learning_from_paper_trades():
         if not open_reason or open_reason in ('历史手动开仓', 'None'):
             continue
 
-        # 从open_reason中解析: "RSI=33<35超卖 | IC=-0.xxx | ..."
+        # 从open_reason中解析原始指标并生成标准pattern_key
+        # open_reason格式: "RSI=33<35超卖 | IC=-0.xxx | RSI(33)<35+ADX(37)>22 | [1H]"
+        import re as _re
         pattern_key = None
-        if 'RSI=' in open_reason:
-            parts = open_reason.split('|')
-            if parts:
-                pattern_key = parts[0].strip()  # e.g. "RSI=33<35超卖"
+        try:
+            # 解析 RSI(xxx) 和 ADX(xxx)
+            rsi_match = _re.search(r'RSI\((\d+\.?\d*)\)', open_reason)
+            adx_match = _re.search(r'ADX\((\d+\.?\d*)\)', open_reason)
+            if rsi_match and adx_match:
+                rsi = float(rsi_match.group(1))
+                adx = float(adx_match.group(1))
+                bb_pos = 50.0  # 回填数据没有布林带位置，默认中间值
+                # 解析方向: "超卖"=LONG(做多), "超买"=SHORT(做空)
+                direction = 'long' if '超卖' in open_reason else 'short'
+                pattern_key = get_pattern_key(rsi, adx, bb_pos, direction)
+        except Exception as ex:
+            logger.debug(f"回填解析指标失败: {ex}")
 
         if not pattern_key:
             continue
@@ -2108,6 +2185,13 @@ def run_scan(equity, btc_trend='neutral', mode='audit'):
             'regime': regime,
         }
     
+    # P2-1: cooldown检查 — 止损后该币种方向需冷却4小时才能重新开仓
+    if best:
+        is_cd, cd_reason = check_coin_cooldown(best.get('symbol', ''), best.get('direction', ''))
+        if is_cd:
+            logger.info(f"cooldown跳过: {best.get('symbol')} {best.get('direction')} ({cd_reason})")
+            best = None
+
     if best and best['score'] > 0.5:
         if tier == 'caution':
             best['score'] *= 0.5
@@ -2880,9 +2964,25 @@ def _execute_management_decision(dec: dict, equity: float):
         close_data = close_position(coin, reason=reason)
         if close_data.get('code') == '0':
             _mark_trade_closed(coin, reason, trade_id, pnl_pct=pnl_pct)
+            # P2-1: 亏损平仓 → 设cooldown；盈利平仓 → 清除cooldown
+            direction = dec.get('direction', '')
+            if pnl_pct < 0:
+                set_coin_cooldown(coin, direction, ttl_hours=_COOLDOWN_TTL_HOURS)
+            else:
+                clear_coin_cooldown(coin, direction)
             logger.info(f'持仓管理平仓: {coin} {reason}')
         else:
-            logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
+            # P1-2 Fix: 平仓失败时验证OKX是否真有此持仓
+            # 如果OKX返回0持仓但paper_trades有OPEN → 幽灵仓位，强制从paper_trades清理
+            real_positions = get_positions()
+            inst_id_check = f'{coin}-USDT-SWAP'
+            real_pos = next((p for p in real_positions if inst_id_check.upper() in p.get('instId','').upper()), None)
+            if real_pos is None:
+                # OKX无此持仓 → 幽灵仓位，从paper_trades清理
+                _mark_trade_closed(coin, f'phantom_cleanup:平仓失败OKX无持仓', trade_id, pnl_pct=pnl_pct)
+                logger.warning(f'幽灵仓位已清理: {coin} (OKX无持仓但paper_trades有OPEN)')
+            else:
+                logger.warning(f'持仓管理平仓失败: {coin} {close_data.get("msg")}')
 
     elif action_type == 'partial_tp':
         close_pct = dec.get('close_pct', 0.50)
